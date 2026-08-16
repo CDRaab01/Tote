@@ -664,3 +664,70 @@ async def test_replaying_after_the_draft_was_confirmed_does_not_file_it_twice(
     assert replay.json()["id"] == draft["id"]
     assert (await auth_client.get("/drafts")).json() == []
     assert len((await auth_client.get("/items")).json()) == 1
+
+
+async def test_a_catalogued_item_reports_its_photo_count(auth_client, monkeypatch):
+    """The client needs to know whether to draw a thumbnail BEFORE it asks for one.
+
+    Without this it would have to fire a photo request per row and render whatever a 404 looks
+    like — on the screen someone opens standing in front of an open bin, over the attic's Wi-Fi.
+    """
+    import app.services.scan_pipeline as pipeline
+    from app.services.ai.identify_prompts import IdentifyDraft
+
+    async def fake_identify(urls, categories=None, client=None):
+        return IdentifyDraft(name="Toddler bed comforter", confidence="high")
+
+    monkeypatch.setattr(pipeline, "identify_item", fake_identify)
+
+    tote = (await auth_client.post("/totes", json={"code": "D1"})).json()
+    draft = (await _scan(auth_client, photo_bytes())).json()
+    filed = (
+        await auth_client.post(
+            f"/drafts/{draft['id']}/confirm",
+            json={"tote_id": tote["id"], "name": "Toddler bed comforter"},
+        )
+    ).json()
+    assert filed["photo_count"] == 1
+
+    # And on the list paths, which is where it is actually used.
+    contents = (await auth_client.get(f"/totes/{tote['id']}")).json()
+    assert contents["items"][0]["photo_count"] == 1
+
+    # An item added by hand has none, and that is the common case for anything not photographed.
+    by_hand = (
+        await auth_client.post("/items", json={"name": "Second comforter", "tote_id": tote["id"]})
+    ).json()
+    assert by_hand["photo_count"] == 0
+
+
+async def test_deleting_an_item_deletes_its_photographs_from_disk(auth_client, monkeypatch):
+    """The rows cascade; the files did not.
+
+    Deleting an item used to leave its photographs on the volume forever — invisible to the app,
+    listed by nothing, and archived faithfully by every nightly backup. The photos ARE the
+    artefact in this app; the rows are paths pointing at them.
+    """
+    import app.services.scan_pipeline as pipeline
+    from app.services import photo_store
+    from app.services.ai.identify_prompts import IdentifyDraft
+
+    async def fake_identify(urls, categories=None, client=None):
+        return IdentifyDraft(name="Comforter", confidence="high")
+
+    monkeypatch.setattr(pipeline, "identify_item", fake_identify)
+
+    tote = (await auth_client.post("/totes", json={"code": "D2"})).json()
+    draft = (await _scan(auth_client, photo_bytes())).json()
+    filed = (
+        await auth_client.post(
+            f"/drafts/{draft['id']}/confirm",
+            json={"tote_id": tote["id"], "name": "Comforter"},
+        )
+    ).json()
+
+    directory = photo_store.item_dir(uuid.UUID(filed["id"]))
+    assert any(directory.iterdir())
+
+    assert (await auth_client.delete(f"/items/{filed['id']}")).status_code == 204
+    assert not directory.exists() or not any(directory.iterdir())

@@ -110,6 +110,19 @@ class ToteDetailViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Delete an item outright — the row, its ledger, and its photographs.
+     *
+     * NOT the same operation as disposing of something. "We no longer own this" is a `disposed`
+     * movement and keeps the history; this is for a row that should never have existed, which in
+     * practice means a duplicate or a typo. The server takes the photo files with it.
+     */
+    fun deleteItem(itemId: String) {
+        viewModelScope.launch {
+            runCatching { repo.deleteItem(itemId) }.onSuccess { load() }
+        }
+    }
+
     fun moveOut(itemId: String) {
         viewModelScope.launch {
             runCatching {

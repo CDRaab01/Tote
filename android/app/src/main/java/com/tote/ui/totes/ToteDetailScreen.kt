@@ -1,5 +1,7 @@
 package com.tote.ui.totes
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
@@ -30,12 +33,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
+import com.tote.data.remote.PhotoUrls
 import com.tote.data.remote.ItemDto
 import com.tote.data.remote.PersonDto
 import com.tote.data.remote.ToteDetailDto
@@ -45,6 +53,7 @@ import com.tote.nfc.NfcWriteSession
 import com.tote.nfc.WriteState
 import com.tote.nfc.hasNfc
 import com.tote.ui.components.HazardRule
+import com.tote.ui.components.ItemThumbnail
 import com.tote.ui.components.ToteButton
 import com.tote.ui.theme.ToteTheme
 import com.tote.util.UiState
@@ -61,6 +70,7 @@ fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
     val writeState by viewModel.write.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
     var lending by remember { mutableStateOf<String?>(null) }
+    var openItem by remember { mutableStateOf<ItemDto?>(null) }
     var cardUrl by remember { mutableStateOf<String?>(null) }
     val people by viewModel.people.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -92,11 +102,30 @@ fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
                 onPutBack = viewModel::putBack,
                 onWriteTag = { if (hasNfc(context)) viewModel.beginWrite() },
                 onPrintCard = { cardUrl = viewModel.cardUrl() },
-                onLend = {
-                    viewModel.loadPeople()
-                    lending = it
-                },
+                onOpenItem = { openItem = it },
             )
+            openItem?.let { item ->
+                ItemSheet(
+                    item = item,
+                    onDismiss = { openItem = null },
+                    onDelete = {
+                        viewModel.deleteItem(item.id)
+                        openItem = null
+                    },
+                    // Only offered for something that is actually in the bin: you cannot lend
+                    // out what is already lent out, and offering it would be a 422 dressed as
+                    // a button.
+                    onLend = if (item.status == "stored") {
+                        {
+                            viewModel.loadPeople()
+                            openItem = null
+                            lending = item.id
+                        }
+                    } else {
+                        null
+                    },
+                )
+            }
             lending?.let { itemId ->
                 LendDialog(
                     people = people,
@@ -146,7 +175,7 @@ fun ToteDetailContent(
     onRepackAll: () -> Unit,
     onTakeOut: (String) -> Unit,
     onPutBack: (String) -> Unit,
-    onLend: (String) -> Unit = {},
+    onOpenItem: (ItemDto) -> Unit = {},
     modifier: Modifier = Modifier,
     onWriteTag: () -> Unit = {},
     onPrintCard: () -> Unit = {},
@@ -229,8 +258,7 @@ fun ToteDetailContent(
                     item,
                     actionLabel = "Take out",
                     onAction = { onTakeOut(item.id) },
-                    secondaryLabel = "Lend",
-                    onSecondary = { onLend(item.id) },
+                    onOpen = { onOpenItem(item) },
                 )
             }
 
@@ -242,7 +270,12 @@ fun ToteDetailContent(
                     SectionHeader(label = "Out of this tote", channel = colors.attention.base)
                 }
                 items(tote.itemsOut, key = { "out-${it.id}" }) { item ->
-                    ItemRow(item, actionLabel = "Put back", onAction = { onPutBack(item.id) })
+                    ItemRow(
+                        item,
+                        actionLabel = "Put back",
+                        onAction = { onPutBack(item.id) },
+                        onOpen = { onOpenItem(item) },
+                    )
                 }
             }
         }
@@ -302,19 +335,30 @@ private fun ItemRow(
     item: ItemDto,
     actionLabel: String,
     onAction: () -> Unit,
-    secondaryLabel: String? = null,
-    onSecondary: () -> Unit = {},
+    onOpen: (() -> Unit)? = null,
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
 
-    PanelCard(channel = if (item.isOverdue) colors.attention.base else null) {
+    PanelCard(
+        onClick = onOpen,
+        channel = if (item.isOverdue) colors.attention.base else null,
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            // The picture leads. A bin's contents are recognised by sight long before they are
+            // read, and two rows both saying "Toddler Bed Comforter" are indistinguishable as
+            // text and obviously different as photographs.
+            ItemThumbnail(item)
+            Spacer(Modifier.width(spacing.md))
             Column(Modifier.weight(1f)) {
                 Text(
                     if (item.quantity > 1) "${item.name} ×${item.quantity}" else item.name,
                     style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
+                    // Two lines, not one. With a thumbnail and an action on the row there is not
+                    // enough width for a real item name on one line — "Toddler Bed Comforter"
+                    // truncated to "Toddler Be…" is a row that has failed at its only job, and
+                    // two of them are indistinguishable exactly when it matters most.
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 val status = when {
@@ -335,24 +379,11 @@ private fun ItemRow(
                     Caption(text = sub)
                 }
             }
-            if (secondaryLabel != null) {
-                ToteButton(
-                    text = secondaryLabel,
-                    onClick = onSecondary,
-                    tonal = true,
-                    compact = true,
-                )
-                Spacer(Modifier.width(spacing.sm))
-            }
-            // Compact once there are two buttons on the row: at full width they squeeze the
-            // item name into an ellipsis, and the name is the one thing this screen exists to
-            // show — a row reading "Ornament box …" is a row that failed at its job.
-            ToteButton(
-                text = actionLabel,
-                onClick = onAction,
-                tonal = true,
-                compact = secondaryLabel != null,
-            )
+            // ONE action on the row — the everyday one. Lending and deleting live in the
+            // sheet behind a tap: a second button here costs the name the width it needs, and
+            // a destructive action next to an everyday one is a mis-tap away from deleting a
+            // photograph that cannot be retaken.
+            ToteButton(text = actionLabel, onClick = onAction, tonal = true, compact = true)
         }
     }
 }
@@ -506,6 +537,111 @@ private fun LendDialog(
             ) { Text("Lend") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+
+/**
+ * One item, up close — and the only place it can be deleted.
+ *
+ * Deleting exists because the catalog gets things wrong in exactly one recoverable way: a row
+ * that should never have existed. A duplicate, a typo, a photograph of the wrong thing. Without
+ * it the only fix is to live with a bin that claims two comforters when it holds one, which is
+ * how a catalog stops being believed.
+ *
+ * It is deliberately NOT on the row. "Take out" and "Lend" are everyday taps and a destructive
+ * action sitting beside them is a mis-tap away from taking the photographs with it — and they
+ * are the one artefact here that cannot be recreated once the bin is taped shut. It lives one
+ * tap deeper, behind its own confirmation, in the app's error voice rather than its accent.
+ *
+ * Disposing of something is a different operation and stays a `disposed` movement: "we no longer
+ * own this" is history worth keeping, and this is not that.
+ */
+@Composable
+private fun ItemSheet(
+    item: ItemDto,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit,
+    onLend: (() -> Unit)? = null,
+) {
+    var confirming by remember { mutableStateOf(false) }
+    val spacing = ToteTheme.spacing
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (confirming) "Delete this item?" else item.name) },
+        text = {
+            Column {
+                if (item.photoCount > 0) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(200.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(ToteTheme.colors.panelHigh),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        AsyncImage(
+                            model = PhotoUrls.item(item.id, 0),
+                            contentDescription = "Photo of ${item.name}",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxWidth().height(200.dp),
+                        )
+                    }
+                    Spacer(Modifier.height(spacing.md))
+                }
+                if (confirming) {
+                    Text(
+                        if (item.photoCount > 0) {
+                            "This removes the item, its history, and its photograph. There is no undo."
+                        } else {
+                            "This removes the item and its history. There is no undo."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(spacing.sm))
+                    // Said plainly, because the two are easy to confuse and only one is
+                    // recoverable.
+                    Caption(text = "If you still own it and it is just not here, take it out instead.")
+                } else {
+                    if (onLend != null) {
+                        ToteButton(
+                            text = "Lend it out",
+                            onClick = onLend,
+                            tonal = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(spacing.md))
+                    }
+                    val facts = listOfNotNull(
+                        if (item.quantity > 1) "${item.quantity} of them" else null,
+                        item.apparel?.sizeRaw?.let { "Size $it" },
+                        item.toteCode?.let { code -> listOfNotNull(code, item.locationName).joinToString(" · ") },
+                        item.description,
+                    )
+                    facts.forEach {
+                        Text(it, style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(spacing.xs))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (confirming) {
+                TextButton(onClick = onDelete) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            } else {
+                TextButton(onClick = { confirming = true }) {
+                    Text("Delete item", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { if (confirming) confirming = false else onDismiss() }) {
+                Text(if (confirming) "Keep it" else "Close")
+            }
+        },
     )
 }
 

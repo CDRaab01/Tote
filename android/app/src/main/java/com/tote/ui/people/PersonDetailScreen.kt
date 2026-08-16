@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -40,6 +41,7 @@ import com.tote.data.remote.ItemDto
 import com.tote.data.remote.PersonDto
 import com.tote.data.remote.PersonSizeDto
 import com.tote.ui.components.HazardRule
+import com.tote.ui.components.ItemThumbnail
 import com.tote.ui.components.ToteButton
 import com.tote.ui.theme.ToteTheme
 import design.pulse.ui.components.Caption
@@ -186,6 +188,8 @@ fun PersonDetailContent(
                 items(state.onLoan, key = { "loan-${it.id}" }) { item ->
                     PanelCard {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            ItemThumbnail(item)
+                            Spacer(Modifier.width(spacing.md))
                             Column(Modifier.weight(1f)) {
                                 Text(
                                     item.name,
@@ -290,6 +294,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.fitsSection(
             items(fits.items, key = { "fit-${it.id}" }) { item ->
                 PanelCard(onClick = { item.currentToteId?.let(onOpenTote) }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        ItemThumbnail(item)
+                        Spacer(Modifier.width(ToteTheme.spacing.md))
                         Column(Modifier.weight(1f)) {
                             Text(
                                 item.name,

@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **252 server** (pytest, real Postgres) + **114 Android** (measured 2026-08-16) |
+| Tests | **255 server** (pytest, real Postgres) + **117 Android** (measured 2026-08-16) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -582,6 +582,18 @@ Two things landed here that are worth knowing:
   its own Roborazzi baseline. ARCHITECTURE.md has the rule.
 
 *Exit: v1 feature-complete, deployed tailnet-only, CI/CD green end to end.*
+
+**Post-v1, from using it (#20).** Two gaps the owner hit on the first real bin:
+**items are now shown, not just listed** — every item list carries its photograph, driven by
+`ItemOut.photo_count` (a correlated subquery, no N+1) rather than by requesting a photo and seeing
+what comes back. Two rows reading "Toddler Bed Comforter" are identical as text and obviously
+different as pictures, which is how you notice you filed one twice. The row could not hold a
+thumbnail, a name and two buttons — the name truncated to "Toddler Be…" — so lending moved into
+an **item sheet** behind a tap, which is also where **delete** lives.
+**Delete existed on the server and nowhere in the UI**, so a duplicate was permanent. It is a hard
+delete, distinct from a `disposed` movement, behind its own confirmation and in the error voice —
+and it now removes the photo FILES too, which it never did: the rows cascaded, the files did not,
+so every deleted item leaked its photographs onto the volume forever.
 
 ---
 
