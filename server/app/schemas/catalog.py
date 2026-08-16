@@ -275,6 +275,10 @@ class ItemOut(BaseModel):
     is_overdue: bool = False
     # Present only for clothing. Absent is normal — most items in a house are not garments.
     apparel: ApparelOut | None = None
+    # Who has it, for a loaned item. Resolved from the LEDGER (the newest `loaned` movement),
+    # because the item row knows it is out and only the movement knows to whom — which is the
+    # entire reason "who has the drill" needs the ledger to be answerable at all.
+    loaned_to: str | None = None
 
     model_config = {"from_attributes": True}
 

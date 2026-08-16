@@ -16,6 +16,7 @@ from app.config import settings
 from app.models.item import Item, ItemApparel
 from app.models.location import Location
 from app.models.movement import Movement
+from app.models.person import Person
 from app.models.tote import Tote
 from app.schemas.catalog import ApparelOut, ItemOut, ToteOut
 from app.sizing import SIZE_SYSTEMS, comparable, parse_size
@@ -100,7 +101,43 @@ def to_item_out(item: Item, tote_code: str | None, location_name: str | None) ->
 
 async def items_for(db: AsyncSession, query: Select) -> list[ItemOut]:
     rows = (await db.execute(query)).all()
-    return [to_item_out(item, code, loc) for item, code, loc in rows]
+    out = [to_item_out(item, code, loc) for item, code, loc in rows]
+    await attach_borrowers(db, out)
+    return out
+
+
+async def attach_borrowers(db: AsyncSession, items: list[ItemOut]) -> None:
+    """Fill in `loaned_to` for whichever of these items are on loan.
+
+    ONE query for the whole page, not one per row: "who has it" appears on every list, and a
+    per-item lookup would make the ledger join quietly quadratic on the screen people use most.
+
+    The borrower comes from the newest `loaned` movement, because the item row knows only that it
+    is out — which is the whole reason lending needs the ledger to be answerable at all.
+    """
+    loaned = [i for i in items if i.status == "loaned"]
+    if not loaned:
+        return
+
+    newest = (
+        select(Movement.item_id, func.max(Movement.moved_at).label("at"))
+        .where(Movement.item_id.in_([i.id for i in loaned]), Movement.reason == "loaned")
+        .group_by(Movement.item_id)
+        .subquery()
+    )
+    rows = (
+        await db.execute(
+            select(Movement.item_id, Person.name)
+            .join(
+                newest, (Movement.item_id == newest.c.item_id) & (Movement.moved_at == newest.c.at)
+            )
+            .join(Person, Person.id == Movement.person_id)
+            .where(Movement.reason == "loaned")
+        )
+    ).all()
+    by_item = {item_id: name for item_id, name in rows}
+    for item in loaned:
+        item.loaned_to = by_item.get(item.id)
 
 
 async def tote_counts(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, int]:

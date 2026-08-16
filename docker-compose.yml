@@ -72,6 +72,18 @@ services:
       LM_STUDIO_VISION_MODEL: ${LM_STUDIO_VISION_MODEL:-google/gemma-4-e4b}
       # Where item photos live inside the container; the volume below maps it out.
       PHOTOS_DIR: /data/photos
+      # Overdue-loan nudges. LITERALS, and the self-hosted ntfy only.
+      #
+      # `host.docker.internal` because ntfy runs on the host, not in this compose project — from
+      # inside the container `localhost` is the container. And NEVER ntfy.sh: its topics are
+      # effectively public URLs, and these messages name what you own and who has it, which is
+      # the same reasoning that keeps this whole service tailnet-only. `services/ntfy.py` refuses
+      # to send to that host rather than trusting this line.
+      #
+      # Not `${NTFY_TOPIC:-}` — that is exactly the shape that made Crate's notifications
+      # silently empty for weeks, interpolating from a root .env the repo did not have.
+      NTFY_BASE_URL: http://host.docker.internal:8095
+      NTFY_TOPIC: tote-alerts
     volumes:
       # Item photos (originals + cleaned) live on a named volume, NOT in the container — they
       # must survive a redeploy, and unlike the catalog rows they cannot be re-derived from

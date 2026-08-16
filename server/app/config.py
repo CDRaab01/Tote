@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     # back to UTC rather than crashing, because a slightly-early nudge beats a dead endpoint.
     local_timezone: str = "UTC"
 
+    # Self-hosted ntfy only. Pinned as compose `environment:` literals, never env_file — Compose
+    # does not re-read an env_file on recreate, and Crate's NTFY_TOPIC was silently empty for
+    # weeks because it interpolated from a root .env that repo did not have.
+    #
+    # NEVER ntfy.sh: its topics are effectively public URLs, and these messages name what you own
+    # and who has it. `services/ntfy.py` refuses to send there rather than trusting this value.
+    ntfy_base_url: str = ""
+    ntfy_topic: str = ""
+
     # --- Photo capture (Phase 4) -----------------------------------------------------------
     # Binaries on a volume, paths in the DB. The 8 MB cap matches the client's <=1600px JPEG
     # downscale contract; anything larger means the client skipped it, and a 413 says so rather
