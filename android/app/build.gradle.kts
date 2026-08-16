@@ -140,6 +140,12 @@ dependencies {
     implementation(libs.hilt.navigation.compose)
 
     implementation(libs.datastore.preferences)
+
+    // Room: a read cache of the catalog, so the app works in the attic and the garage where
+    // the Wi-Fi is worst. The server stays the source of truth.
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)
