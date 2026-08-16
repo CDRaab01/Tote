@@ -173,6 +173,70 @@ async def test_users_me_returns_the_logged_in_user(client, suite_enabled):
     assert r.json()["name"] == "Sam"
 
 
+async def test_refresh_returns_a_working_new_session(client, suite_enabled):
+    """The whole point: a session must be renewable without the browser SSO flow. Without this
+    endpoint the app wedged in production 30 minutes after every sign-in, every call 401ing."""
+    email = f"refresh-{uuid.uuid4().hex[:8]}@dragonflymedia.org"
+    first = (await client.post("/auth/suite", json={"suite_token": mint(email)})).json()
+
+    r = await client.post("/auth/refresh", json={"refresh_token": first["refresh_token"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["access_token"] and body["refresh_token"]
+
+    me = await client.get("/users/me", headers={"Authorization": f"Bearer {body['access_token']}"})
+    assert me.status_code == 200
+    assert me.json()["email"] == email
+
+
+async def test_refresh_rotates_and_the_new_refresh_token_also_works(client, suite_enabled):
+    """The client persists whatever comes back, so a returned refresh token that could not
+    itself be redeemed would strand the session one renewal later — a bug with a 30-minute
+    fuse, which is the kind that reaches a phone in an attic."""
+    email = f"rotate-{uuid.uuid4().hex[:8]}@dragonflymedia.org"
+    first = (await client.post("/auth/suite", json={"suite_token": mint(email)})).json()
+    second = (
+        await client.post("/auth/refresh", json={"refresh_token": first["refresh_token"]})
+    ).json()
+    third = await client.post("/auth/refresh", json={"refresh_token": second["refresh_token"]})
+    assert third.status_code == 200
+
+
+async def test_refresh_rejects_an_access_token(client, suite_enabled):
+    """Same secret, so only the `type` claim separates them. Accepting an access token here
+    would let a leaked one renew itself forever, outliving its 30-minute blast radius."""
+    body = (
+        await client.post(
+            "/auth/suite",
+            json={"suite_token": mint(f"acc-{uuid.uuid4().hex[:8]}@dragonflymedia.org")},
+        )
+    ).json()
+    r = await client.post("/auth/refresh", json={"refresh_token": body["access_token"]})
+    assert r.status_code == 401
+
+
+async def test_refresh_rejects_garbage(client):
+    assert (
+        await client.post("/auth/refresh", json={"refresh_token": "not-a-jwt"})
+    ).status_code == 401
+
+
+async def test_refresh_works_while_sso_is_disabled(client, monkeypatch, suite_enabled):
+    """Deliberate asymmetry with `/auth/suite`: refresh redeems Tote's OWN HS256 token and needs
+    no identity server, so an unreachable or misconfigured dragonfly-id must not log out every
+    already-signed-in phone."""
+    body = (
+        await client.post(
+            "/auth/suite",
+            json={"suite_token": mint(f"nosso-{uuid.uuid4().hex[:8]}@dragonflymedia.org")},
+        )
+    ).json()
+    monkeypatch.setattr(settings, "suite_jwks_url", None)
+    monkeypatch.setattr(settings, "suite_issuer", None)
+    r = await client.post("/auth/refresh", json={"refresh_token": body["refresh_token"]})
+    assert r.status_code == 200
+
+
 async def test_a_refresh_token_cannot_be_used_as_an_access_token(client, suite_enabled):
     """Both are signed with the same secret, so only the `type` claim separates them. If that
     check regressed, a long-lived refresh token would silently become a long-lived session."""
