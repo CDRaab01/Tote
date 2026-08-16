@@ -366,7 +366,13 @@ async def test_overdue_uses_the_household_timezone_not_the_containers(auth_clien
     ahead = local_today()
     monkeypatch.setattr(settings, "local_timezone", "Pacific/Midway")  # UTC-11
     behind = local_today()
-    assert (ahead - behind).days == 1, "the configured zone is not being honoured"
+
+    # STRICTLY later, not "exactly one day later". These zones are 25 hours apart, so their
+    # local dates differ by one day for 23 hours out of every 24 and by TWO for the remaining
+    # hour. An `== 1` assertion therefore passes locally almost always and fails in a one-hour
+    # window each day -- which is exactly what it did on CI, at 10:03 UTC, having passed here.
+    # The invariant that actually matters is that the configured zone changes the answer at all.
+    assert ahead > behind, "the configured zone is not being honoured"
 
     # An unknown zone must degrade to UTC rather than 500 the endpoint.
     monkeypatch.setattr(settings, "local_timezone", "Not/AZone")
