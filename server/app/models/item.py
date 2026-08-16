@@ -3,6 +3,7 @@ import uuid
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Computed,
     Date,
     DateTime,
@@ -55,6 +56,25 @@ class Item(Base):
         DateTime(timezone=True), nullable=True
     )
     expected_back: Mapped[datetime.date | None] = mapped_column(Date, nullable=True)
+
+    # --- Draft state (migration 0002) -----------------------------------------------------
+    # A scanned item is a DRAFT until a human confirms it. Excluded from search and from a
+    # tote's contents until then: the house rule is that nothing AI-generated enters the catalog
+    # without explicit approval, and a draft appearing in search would be exactly that.
+    is_draft: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Where the draft is HEADED, not where it is. Applied only on confirmation, which is what
+    # writes the `initial` movement row.
+    draft_tote_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("totes.id", ondelete="SET NULL"), nullable=True
+    )
+    # "identify_unavailable" when the model could not be reached. Deliberately distinct from a
+    # low-confidence draft: one means the photo was hard, the other means the server is
+    # misconfigured, and they need different responses from a human.
+    scan_error: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    scan_confidence: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    processed_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     value_est: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     acquired_at: Mapped[datetime.date | None] = mapped_column(Date, nullable=True)

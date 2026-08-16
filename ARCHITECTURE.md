@@ -7,7 +7,7 @@ suite-wide rule; silently-drifting docs have burned two sibling repos already.
 The build plan and the reasoning behind the locked decisions live in [CLAUDE.md](CLAUDE.md).
 This file describes what exists **now**.
 
-## Current state: Phase 3 (NFC + the index card)
+## Current state: Phase 4 (photo capture → AI draft) — server side
 
 ```
 Tote/
@@ -38,13 +38,17 @@ Tote/
 │  │  ├─ security.py            session JWTs + CurrentUser dependency
 │  │  ├─ limiter.py             slowapi rate limiting
 │  │  ├─ models/                the eleven tables of §4
-│  │  ├─ routers/               suite_auth, users, catalog, totes, items, public
+│  │  ├─ routers/               suite_auth, users, catalog, totes, items, public, scan
 │  │  ├─ schemas/               request/response models
 │  │  └─ services/
 │  │     ├─ suite_auth.py       JWKS validation + find-or-create
 │  │     ├─ movement.py         THE single writer of whereabouts
 │  │     ├─ catalog.py          read-side joins, counts, local_today()
-│  │     └─ card.py             the printable index card + the shared tag URI
+│  │     ├─ card.py             the printable index card + the shared tag URI
+│  │     ├─ cleanup.py          rembg + Pillow; levels BEFORE compositing
+│  │     ├─ photo_store.py      binaries on the volume, paths in the DB
+│  │     ├─ scan_pipeline.py    photo → draft
+│  │     └─ ai/                 vision transport, prompt, salvage parser
 │  ├─ alembic/versions/0001_    the whole schema
 │  └─ tests/                    pytest, asyncio_mode=auto
 ├─ scripts/synthetic_smoke.py   post-deploy smoke (SSO-only apps have no login to script)
@@ -471,9 +475,80 @@ matched; the seam test is what keeps it true without a 60 MB OpenCV install on e
 The card is mono on purpose. Most people print on a mono printer, and the yellow that makes the
 app read as a tote would come out grey.
 
+## Photo capture
+
+### Nothing a model produces enters the catalog
+
+A scan produces a **draft**: excluded from search, from `/items`, and from a tote's contents
+until a human confirms it. `POST /drafts/{id}/confirm` is the only path from a photograph to a
+catalogued item, and it is what writes the `initial` movement row. The house AI rule is that
+nothing model-generated is committed without explicit approval, and Tote has no exception to it —
+unlike Crate, which has one documented carve-out for its deterministic price-drop scheduler.
+
+The exclusion lives in `item_query`, so it applies to every read path at once. Adding a new
+listing endpoint cannot accidentally surface drafts.
+
+### The order of the pipeline is the design
+
+1. **Persist the originals.** First, before anything else runs.
+2. Clean them (rembg + Pillow), in a worker thread.
+3. Identify (LM Studio).
+4. Save the draft.
+
+Step 1 is first because the photograph is the only artefact that cannot be re-derived. The item
+was in someone's hands in a garage and is back in a bin by the time anything downstream fails.
+Everything after the write degrades: a failed cleanup logs and continues, and an unreachable model
+still yields a draft with the photo attached.
+
+**Identification reads the ORIGINALS, not the cleaned copies.** Measured in Crate: originals win,
+and cleanup is unpredictable on some subjects — it once decided a woven brand tab was "the
+subject" and cropped the shirt away. A cropped photo cannot be un-cropped for the model. The
+cleaned copies exist for display.
+
+### Three inherited fixes that must not be lost
+
+| Fix | Why |
+|---|---|
+| **No `max_tokens`** on the vision call | the pinned model is a *reasoning* model: hidden reasoning tokens share that budget and it emits no content until done. An answer-sized cap silently returns `""`, which every parser reads as "unreadable photo" — a total failure that looks like a model limitation rather than a config mistake. A test asserts the request body never grows one. |
+| **Levels before compositing** | applying them after makes the subject the darkest content in a synthetic white-ground composite, so the shadow clip lands on the subject. In Crate this turned *every* garment colourway pure black. Guarded by a pure-black-fraction assertion on decoded pixels. |
+| **`preserve_tone=True`** | per-channel stretching wrecks a saturated subject's hue. Measured on the test fixture: a red subject at (183, 82, 85) keeps its red as (173, 56, 57) with the flag and collapses to a muddy (81, 58, 59) without. |
+
+### Transport failure ≠ content failure
+
+They are mapped to different outcomes because they need different responses from a human:
+
+- **Transport** (unreachable 503 / timeout 504 / rejected 502) raises, and the pipeline records
+  `scan_error = "identify_unavailable"` **and logs a warning**. A stored-but-unlogged failure
+  would leave `docker logs` silent during exactly the outage someone is diagnosing.
+- **Content** (garbled or unparseable reply) degrades to a low-confidence empty draft. The photo
+  was hard; a human can fill the rest in.
+
+Collapsing the two would make a dead container and a bad model pin indistinguishable from a
+blurry photograph.
+
+### The model may only use the user's own vocabulary
+
+Categories are listed in the prompt and matched back **case-insensitively against the real list**.
+A near-miss is dropped, not fuzzy-matched — filing something into the wrong category is the quiet
+error that makes a catalog untrustworthy. Same asymmetry as everywhere else: vision output
+degrades to null, a human `PATCH` of the same field rejects with a 422.
+
+An implausible `quantity` (zero, 100000, `"four"`, `true`) is dropped rather than coerced. A wrong
+count silently changes what the catalog claims you own.
+
+### Storage
+
+Binaries on a named `photos` volume, paths in the DB, filenames **server-generated** so a crafted
+upload name cannot traverse paths. The `order` integer in the filename is the same one on
+`item_photos.order`, which is why that column is never renumbered — renumbering orphans every
+file. Discarding a draft deletes its directory, for the same reason from the other direction.
+
+The U2-Net weights are **baked into the image** at build time. Otherwise the first scan after
+every deploy stalls on a ~170 MB download, and fails outright on a host with no egress.
+
 ## Not yet built
 
-Photo capture and the AI draft pipeline (Phase 4)
+The Android capture queue and review stack (the client half of Phase 4)
 (Phase 3); photo capture and the AI draft pipeline (Phase 4); the sizing ladder (Phase 5);
 people and lending (Phase 6); backups (Phase 7, once there are photos to lose).
 
