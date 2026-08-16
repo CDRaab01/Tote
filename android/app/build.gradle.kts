@@ -34,7 +34,7 @@ android {
         // previous one; defaults to a low value for local/debug builds. Suite invariant 2: a
         // local debug build therefore CANNOT install over a CI release without uninstalling.
         versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
-        versionName = System.getenv("VERSION_NAME") ?: "0.1.0"
+        versionName = System.getenv("VERSION_NAME") ?: "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // AppAuth's redirect receiver activity binds to this scheme — the custom-scheme half of
         // the com.tote:/oauth2redirect URI registered in dragonfly-id (Phase 1).

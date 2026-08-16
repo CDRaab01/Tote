@@ -1,4 +1,4 @@
-"""Photo cleanup: background removal → white replacement → crop-to-subject → levels.
+"""Photo cleanup: levels → background removal → crop-to-subject, kept TRANSPARENT.
 
 All local CPU (rembg U2-Net + Pillow), no cloud. The U2-Net weights are baked into the
 Docker image (see Dockerfile) so the container works offline. Degrades honestly: rembg
@@ -84,13 +84,15 @@ def clean_photo(image_bytes: bytes) -> bytes:
     """Original bytes → cleaned PNG bytes. Never raises on bad model output — worst case
     is a levels-only pass of the original.
 
-    Order matters: levels are applied to the ORIGINAL photo, before any background
-    replacement. Applying them afterwards reads the histogram of a synthetic composite —
-    the garment plus a field of pure white — in which the garment is by definition the
-    darkest content, so the 1% clip lands on the garment itself and maps it toward black.
-    On a flat, evenly lit tee that was total: every colourway, including a light heather
-    grey, came out pure black. Correcting the capture's exposure and then compositing keeps
-    the white ground white and leaves the garment where the camera saw it.
+    Order matters: levels are applied to the ORIGINAL photo, before the background is
+    removed. Applying them afterwards reads the histogram of a cut-out subject sitting on a
+    synthetic ground, in which the garment is by definition the darkest content — so the 1%
+    clip lands on the garment itself and maps it toward black. On a flat, evenly lit tee that
+    was total: every colourway, including a light heather grey, came out pure black.
+    Correcting the capture's exposure first leaves the garment where the camera saw it.
+
+    The result keeps its alpha. Compositing onto white was inherited from Crate, where an
+    eBay listing wants exactly that; a household catalog read in dark mode does not.
     """
     corrected = _levels(Image.open(io.BytesIO(image_bytes)).convert("RGB"))
 
@@ -101,10 +103,20 @@ def clean_photo(image_bytes: bytes) -> bytes:
     cutout = _remove_background(corrected_bytes.getvalue())
 
     if cutout is not None and cutout.getchannel("A").getbbox() is not None:
-        subject = _crop_to_subject(cutout)
-        canvas = Image.new("RGB", subject.size, (255, 255, 255))
-        canvas.paste(subject, mask=subject.getchannel("A"))
-        cleaned = canvas
+        # Kept as an RGBA cutout — NOT composited onto white.
+        #
+        # White is the eBay convention Crate needs and it was inherited wholesale. It is wrong
+        # here: Tote's catalog is read on a phone that is usually in dark mode, where every
+        # photograph became a glaring white card in a charcoal list. Transparency lets each
+        # photo sit on whatever surface it is on and look right in both themes, which is the
+        # same reasoning as the accent's light/dark role swap.
+        #
+        # Safe for the model too, because the model never sees this file: `scan_pipeline`
+        # sends the ORIGINALS to both the identify and the label pass, measured in Crate as
+        # the better input. Worth knowing before anyone points a vision call at a cleaned
+        # copy — most stacks flatten alpha to BLACK, which would put a dark subject on a
+        # dark ground and be strictly worse than the white this used to store.
+        cleaned = _crop_to_subject(cutout)
     else:
         cleaned = corrected
 

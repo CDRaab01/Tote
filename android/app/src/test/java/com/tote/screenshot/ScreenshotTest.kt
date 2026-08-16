@@ -503,6 +503,18 @@ class ScreenshotTest {
         )
     }
 
+
+    /**
+     * An empty cache with a dead server, which is NOT the same screen as an empty catalog.
+     *
+     * "No totes yet" over a household with fourteen bins is a lie that invites someone to create
+     * A14 for the second time — the same shape as the review tab that read "Nothing waiting"
+     * over a badge of 4.
+     */
+    @Test fun totes_unreachable_dark() = capture("totes_unreachable_dark", dark = true) {
+        ToteListContent(totes = emptyList(), onOpenTote = {}, onNewTote = {}, unreachable = true)
+    }
+
     // LoginContent is the stateless body precisely so it can be captured here: the stateful
     // LoginScreen needs Hilt and a real AppAuth service, neither of which exists in a JVM test.
     @Test fun login_light() =
