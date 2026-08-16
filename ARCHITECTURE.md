@@ -990,6 +990,13 @@ that left Crate's notifications silently empty for weeks.
 nudge becomes noise, so the comparison is strictly `expected_back < local_today()` — in the
 household's timezone, since the container runs UTC and the house does not.
 
+The per-user topic override lives on `user_settings`, **not** on `users`. Reading it off the user
+500'd on the first real call in production while every test passed — the test environment has no
+ntfy configured, so the send path had never once been executed. A test that configures ntfy and
+asserts on what reaches the transport (stubbed; CI never makes an outbound request) is what closes
+that gap, and it is the general lesson: **a branch guarded by configuration the test environment
+lacks is a branch with no coverage at all**, however many tests surround it.
+
 ## Not yet built
 
 Phases 0-4 and the backup half of Phase 7 are complete. What remains: the sizing ladder

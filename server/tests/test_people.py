@@ -402,3 +402,47 @@ async def test_the_nudge_reports_why_it_sent_nothing(auth_client):
     assert unconfigured["sent"] is False
     assert unconfigured["reason"] == "ntfy_not_configured"
     assert unconfigured["title"] == "1 item is overdue"
+
+
+async def test_the_nudge_actually_sends_when_ntfy_is_configured(auth_client, monkeypatch):
+    """The test that was missing, and the reason a 500 reached production.
+
+    Every earlier nudge test asserted the `ntfy_not_configured` branch, because the test
+    environment has no ntfy — so the send path was never executed once, and it contained an
+    attribute that does not exist (`user.ntfy_topic`; the override lives on `user_settings`).
+    Green tests, green CI, and a 500 on the first real call.
+
+    Configuring ntfy here and asserting on what was *handed to the transport* is what makes the
+    send path real. The transport itself stays stubbed — CI must never make an outbound request.
+    """
+    from app.config import settings
+    from app.services import ntfy
+
+    sent: dict = {}
+
+    async def capture(title, message, *, topic=None, priority=3, tags=None, client=None):
+        sent.update(title=title, message=message, topic=topic, priority=priority)
+        return True
+
+    monkeypatch.setattr(settings, "ntfy_base_url", "http://host.docker.internal:8095")
+    monkeypatch.setattr(settings, "ntfy_topic", "tote-alerts")
+    monkeypatch.setattr(ntfy, "send", capture)
+
+    tote = (await auth_client.post("/totes", json={"code": "G06"})).json()
+    dave = await _person(auth_client, "Dave")
+    item = (await auth_client.post("/items", json={"name": "Ladder", "tote_id": tote["id"]})).json()
+    await auth_client.post(
+        f"/items/{item['id']}/move",
+        json={
+            "reason": "loaned",
+            "person_id": dave["id"],
+            "expected_back": str(TODAY - datetime.timedelta(days=5)),
+        },
+    )
+
+    result = (await auth_client.post("/overdue/nudge")).json()
+    assert result == {"overdue": 1, "sent": True, "reason": None, "title": "1 item is overdue"}
+    assert "Ladder · with Dave" in sent["message"]
+    # No per-user override configured, so the compose default topic is used.
+    assert sent["topic"] is None
+    assert sent["priority"] == 4
