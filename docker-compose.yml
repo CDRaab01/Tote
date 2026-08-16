@@ -56,6 +56,11 @@ services:
       # are higher here — this string gets baked into physical tags in an attic, where a wrong
       # value cannot be fixed by redeploying.
       NFC_URI_BASE: https://dragonfly.tail2ce561.ts.net:8448
+      # The household's timezone, for date-only questions ("is this loan overdue"). The
+      # container runs UTC and the house is US Eastern, so without this an item due today is
+      # reported overdue from 7pm local. A literal, not an interpolation, for the same reason
+      # as everything else in this block.
+      LOCAL_TIMEZONE: America/New_York
     depends_on:
       db:
         condition: service_healthy

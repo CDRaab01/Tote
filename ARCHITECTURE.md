@@ -7,7 +7,7 @@ suite-wide rule; silently-drifting docs have burned two sibling repos already.
 The build plan and the reasoning behind the locked decisions live in [CLAUDE.md](CLAUDE.md).
 This file describes what exists **now**.
 
-## Current state: Phase 1 (SSO + data model)
+## Current state: Phase 2 (catalog, ledger, search) — server side
 
 ```
 Tote/
@@ -33,9 +33,12 @@ Tote/
 │  │  ├─ security.py            session JWTs + CurrentUser dependency
 │  │  ├─ limiter.py             slowapi rate limiting
 │  │  ├─ models/                the eleven tables of §4
-│  │  ├─ routers/               suite_auth, users
+│  │  ├─ routers/               suite_auth, users, catalog, totes, items
 │  │  ├─ schemas/               request/response models
-│  │  └─ services/suite_auth    JWKS validation + find-or-create
+│  │  └─ services/
+│  │     ├─ suite_auth.py       JWKS validation + find-or-create
+│  │     ├─ movement.py         THE single writer of whereabouts
+│  │     └─ catalog.py          read-side joins, counts, local_today()
 │  ├─ alembic/versions/0001_    the whole schema
 │  └─ tests/                    pytest, asyncio_mode=auto
 ├─ scripts/synthetic_smoke.py   post-deploy smoke (SSO-only apps have no login to script)
@@ -229,9 +232,84 @@ absent and the tests that prove them would be testing a schema that never ships.
 `search_vector` covers the item's own name, description and notes. Category lives in another
 table and a generated column cannot join, so category is a **filter**, not a search term.
 
+## The movement ledger
+
+`app/services/movement.py` is the **single writer** of `current_tote_id`, `status`,
+`out_reason`, `out_since` and `expected_back`. Every change appends a `movements` row; nothing
+else assigns those columns, and `PATCH /items` deliberately cannot (asserted in tests). A
+convenience assignment elsewhere would be a hole in the history exactly where someone was in a
+hurry, and a hole is invisible until the day you need the answer.
+
+The invariant, enforced in one place and asserted for **every** reason rather than a sample:
+
+```
+current_tote_id is NOT NULL  <=>  status == "stored"
+```
+
+The contradiction it prevents is invisible in the UI — an item that is both in bin A14 and lent
+to Dave renders perfectly and is only wrong in the attic.
+
+Reasons are split into inbound (`initial`, `moved`, `repacked`, `returned`, `corrected`) and
+outbound (`unpacked`, `outgrown`, `loaned`, `disposed`). An inbound reason without a destination
+is a 422, and so is an outbound reason *with* one: "lent to Dave, into bin A14" is a
+contradiction, not a shorthand.
+
+`record_move` does not commit. The caller owns the transaction, so unpacking forty items is one
+atomic operation rather than forty chances to half-succeed.
+
+### Bulk operations
+
+`unpack` and `repack` exist because that is what the holidays actually look like. Modelling it
+as fifty individual edits means nobody does it, and a catalog nobody updates is worse than no
+catalog — it is one you trust and shouldn't.
+
+- **`repack` without a selection takes back only the items whose *last* movement left THIS
+  tote.** A naive "items with no tote" query would sweep up the whole house, including things
+  that are lent out.
+- **`item_ids: null` means everything; `[]` is an explicit selection of nothing.** Conflating
+  them would let a UI bug empty a whole bin.
+
+## Read side
+
+`app/services/catalog.py` owns the joins so that "which bin, and where is it" is answered one
+way. A search hit, a tote's contents and an item detail all carry the same denormalised
+`tote_code` / `location_name`, computed once — three implementations is how they end up
+disagreeing.
+
+All joins are **outer**: an item with no tote is a normal state (out for the holidays, lent), and
+an inner join would silently hide exactly the items someone is most likely hunting for.
+
+`item_count` and `out_count` are computed per request and fetched **once for a whole list**, not
+per row — the tote list backs the browse-by-location screen and a per-tote count would be a clean
+N+1.
+
+### Overdue, and why timezone is load-bearing
+
+`is_overdue` is computed server-side so a screen and a notification cannot disagree. It resolves
+through `local_today()` against a configured `LOCAL_TIMEZONE`, **not** `date.today()`: the
+container runs UTC and the house is US Eastern, so a loan due today was being reported overdue
+from 7pm local. That is the same class of failure as a test that passes in CI's UTC and fails at
+home. An unrecognised zone degrades to UTC rather than raising — a nudge a few hours eager beats
+a dead endpoint. `tzdata` is a runtime dependency because slim images ship no tz database.
+
+## Search
+
+`GET /search` uses **`websearch_to_tsquery`**, not `plainto_tsquery`: quoted phrases, `or`, and
+stray punctuation are what people actually type, and throwing a 500 at them is not an option. No
+matches returns `[]` — "no results" is an answer, and an error there reads as the app being
+broken. Ordering is rank then name so ties are stable; an unstable order in a list someone is
+scanning also reads as broken.
+
+## Ownership
+
+Every route resolves rows scoped to the authenticated user and returns **404, not 403**, for
+someone else's — asserted across GET/PATCH/DELETE and `move`. 403 would let an authenticated user
+probe which ids exist and tell "not yours" apart from "does not exist".
+
 ## Not yet built
 
-Tote/item CRUD, the movement service, and search endpoints (Phase 2); NFC and the index card
+The Android half of Phase 2 (tote list, tote detail, item add/edit, search screen, Room cache for
+offline search); NFC and the index card
 (Phase 3); photo capture and the AI draft pipeline (Phase 4); the sizing ladder (Phase 5);
 people and lending (Phase 6); backups (Phase 7, once there are photos to lose).
 

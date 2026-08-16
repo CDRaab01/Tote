@@ -42,6 +42,14 @@ class Settings(BaseSettings):
 
     external_timeout_seconds: float = 8.0
 
+    # The household's timezone, for date-only questions like "is this loan overdue".
+    #
+    # This is NOT cosmetic. The container runs UTC and the house is US Eastern, so comparing
+    # `expected_back` against a UTC date marks an item overdue at 7pm local on the day it is
+    # actually still due. Pinned as a literal in compose `environment:`; an unknown zone falls
+    # back to UTC rather than crashing, because a slightly-early nudge beats a dead endpoint.
+    local_timezone: str = "UTC"
+
     # The base the NFC tag's URI record is written against. Read from settings rather than a
     # constant because a written tag is a PHYSICAL object in an attic — it cannot be patched by
     # a deploy, so the value that gets baked into tags must be changeable without a code change.
