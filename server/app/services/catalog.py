@@ -47,6 +47,11 @@ def item_query(user_id: uuid.UUID) -> Select:
         .outerjoin(Tote, Item.current_tote_id == Tote.id)
         .outerjoin(Location, Tote.location_id == Location.id)
         .where(Item.user_id == user_id)
+        # Drafts are excluded EVERYWHERE this query is used — search, tote contents, item lists.
+        # The house rule is that nothing AI-generated enters the catalog without explicit
+        # approval, and a draft turning up in search results would be exactly that. The review
+        # stack queries drafts explicitly instead.
+        .where(Item.is_draft.is_(False))
     )
 
 
@@ -73,7 +78,11 @@ async def tote_counts(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, i
     rows = (
         await db.execute(
             select(Item.current_tote_id, func.count())
-            .where(Item.user_id == user_id, Item.current_tote_id.is_not(None))
+            .where(
+                Item.user_id == user_id,
+                Item.current_tote_id.is_not(None),
+                Item.is_draft.is_(False),
+            )
             .group_by(Item.current_tote_id)
         )
     ).all()

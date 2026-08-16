@@ -255,3 +255,44 @@ class NfcResolveOut(BaseModel):
     # True when a tote with this code exists but its stored uid is a DIFFERENT tag. The tap is
     # still resolved — refusing would be useless in an attic — but the app says so.
     tag_mismatch: bool = False
+
+
+class DraftOut(ItemOut):
+    """A scanned item awaiting confirmation.
+
+    Carries the scan's own metadata so the review screen can be honest about how much to trust
+    it — a low-confidence draft and an `identify_unavailable` one look identical otherwise, and
+    they mean completely different things.
+    """
+
+    is_draft: bool = True
+    scan_error: str | None = None
+    scan_confidence: str | None = None
+    draft_tote_id: uuid.UUID | None = None
+    photo_count: int = 0
+
+
+class DraftConfirm(BaseModel):
+    """The human's decision. Everything is editable — the model's answer is a suggestion.
+
+    `tote_id` is required: confirming a draft is what files it, and that is the moment the
+    `initial` movement row is written. A confirmation with nowhere to go would leave an item in
+    the catalog that is in no bin and never was, which is indistinguishable from a bug.
+    """
+
+    tote_id: uuid.UUID
+    name: str = Field(min_length=1, max_length=160)
+    description: str | None = None
+    notes: str | None = None
+    category_id: uuid.UUID | None = None
+    quantity: int = Field(default=1, ge=1)
+    condition: str | None = None
+
+    @field_validator("condition")
+    @classmethod
+    def known_condition(cls, v: str | None) -> str | None:
+        # Strict, unlike the vision write path which drops unknown values. A value a person
+        # typed is a claim; a value a model produced is a suggestion.
+        if v is not None and v not in ITEM_CONDITIONS:
+            raise ValueError(f"condition must be one of {ITEM_CONDITIONS}")
+        return v

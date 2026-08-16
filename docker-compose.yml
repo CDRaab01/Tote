@@ -61,6 +61,22 @@ services:
       # reported overdue from 7pm local. A literal, not an interpolation, for the same reason
       # as everything else in this block.
       LOCAL_TIMEZONE: America/New_York
+      # LM Studio vision (item identification). Non-secret and REQUIRED, so pinned here as
+      # literals rather than living in an env_file compose will not re-read.
+      #
+      # The config default is http://localhost:1234/v1, which is correct only for bare-metal
+      # local dev: inside this container localhost IS the container, so every scan would fail
+      # with a connect-refused 503 while LM Studio ran happily on the host.
+      # host.docker.internal is the host from in here.
+      LM_STUDIO_BASE_URL: ${LM_STUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
+      LM_STUDIO_VISION_MODEL: ${LM_STUDIO_VISION_MODEL:-google/gemma-4-e4b}
+      # Where item photos live inside the container; the volume below maps it out.
+      PHOTOS_DIR: /data/photos
+    volumes:
+      # Item photos (originals + cleaned) live on a named volume, NOT in the container — they
+      # must survive a redeploy, and unlike the catalog rows they cannot be re-derived from
+      # anywhere. The database stores paths only.
+      - photos:/data/photos
     depends_on:
       db:
         condition: service_healthy
@@ -74,3 +90,4 @@ services:
 
 volumes:
   pgdata:
+  photos:

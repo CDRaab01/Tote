@@ -6,6 +6,12 @@ import os
 # known local-pytest failure mode — "Task attached to a different loop").
 os.environ.setdefault("DB_NULLPOOL", "true")
 
+# Photos must not land in the real volume path during tests. Set before app.config is imported,
+# for the same reason DB_NULLPOOL is: settings are read at import time.
+import tempfile
+
+os.environ.setdefault("PHOTOS_DIR", tempfile.mkdtemp(prefix="tote-test-photos-"))
+
 import pytest
 import pytest_asyncio
 from alembic.config import Config

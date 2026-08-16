@@ -50,6 +50,29 @@ class Settings(BaseSettings):
     # back to UTC rather than crashing, because a slightly-early nudge beats a dead endpoint.
     local_timezone: str = "UTC"
 
+    # --- Photo capture (Phase 4) -----------------------------------------------------------
+    # Binaries on a volume, paths in the DB. The 8 MB cap matches the client's <=1600px JPEG
+    # downscale contract; anything larger means the client skipped it, and a 413 says so rather
+    # than letting one gallery pick fill the volume.
+    photos_dir: str = "/data/photos"
+    photo_max_bytes: int = 8 * 1024 * 1024
+
+    # rembg background removal (local U2-Net, CPU). Disabled => Pillow-only cleanup. The pipeline
+    # DEGRADES rather than failing: a draft is never blocked on cleanup, because the photo has
+    # already been saved by then and it is the part that cannot be recreated.
+    background_removal_enabled: bool = True
+
+    # LM Studio vision. Both are pinned in compose `environment:` in production — the default
+    # below is correct only for bare-metal local dev, because inside the container `localhost` is
+    # the container, so a scan would fail with a connect-refused 503 while LM Studio ran happily
+    # on the host.
+    lm_studio_base_url: str = "http://localhost:1234/v1"
+    lm_studio_vision_model: str = "google/gemma-4-e4b"
+    # Generous on purpose: the pinned model is a reasoning model and spends real time thinking
+    # before it emits anything. Measured at ~15 s per item in Crate, so 60 s is headroom rather
+    # than optimism.
+    lm_studio_timeout: float = 60.0
+
     # The base the NFC tag's URI record is written against. Read from settings rather than a
     # constant because a written tag is a PHYSICAL object in an attic — it cannot be patched by
     # a deploy, so the value that gets baked into tags must be changeable without a code change.

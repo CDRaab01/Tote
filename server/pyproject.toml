@@ -27,6 +27,11 @@ dependencies = [
     # physical object; the QR encodes the same URI as the NFC tag so the two can never fork.
     "reportlab==4.4.4",
     "qrcode[pil]==8.2",
+    # Photo cleanup. rembg pulls onnxruntime, which is large — the U2-Net weights are baked
+    # into the image (see Dockerfile) so the container works offline and the first scan does
+    # not stall on a ~170 MB download at request time.
+    "pillow==12.3.0",
+    "rembg[cpu]==2.0.78",
 ]
 
 [project.optional-dependencies]
