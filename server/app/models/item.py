@@ -15,7 +15,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import TSVECTOR
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
@@ -101,6 +101,24 @@ class Item(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    # `lazy="selectin"`, not the default, and this is load-bearing rather than a tuning choice.
+    #
+    # Under asyncio a lazy load raises MissingGreenlet, and Pydantic's `from_attributes` touches
+    # every field — so the moment this relationship existed, `DraftOut.model_validate(item)` blew
+    # up on a path that never mentions apparel at all. Eager-loading at the relationship means a
+    # read path cannot forget: one extra query per result set (this is one-to-one and small), and
+    # no way to reintroduce the fault by adding an endpoint that omits an `.options()`.
+    #
+    # `delete-orphan` matters too — clearing an item's clothing specifics must actually remove the
+    # row, not leave an orphan the next read would resurrect.
+    apparel: Mapped["ItemApparel | None"] = relationship(
+        back_populates="item",
+        uselist=False,
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
 
 class ItemApparel(Base):
     """Clothing specifics, a one-to-one nullable extension of `items`.
@@ -116,6 +134,7 @@ class ItemApparel(Base):
     item_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("items.id", ondelete="CASCADE"), primary_key=True
     )
+    item: Mapped["Item"] = relationship(back_populates="apparel")
     size_raw: Mapped[str | None] = mapped_column(String(32), nullable=True)
     size_system: Mapped[str | None] = mapped_column(String(24), nullable=True)
     size_ordinal: Mapped[float | None] = mapped_column(nullable=True)

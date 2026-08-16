@@ -498,9 +498,17 @@ cleanup mocked in CI; live LM Studio smoke locally. **Bake the U2-Net weights in
 image** so the container works offline and cold-starts fast.
 *Exit: photo → reviewed item in a tote, end-to-end on device against real LM Studio.*
 
-**Phase 5 — Sizing + apparel.** Copy Crate's `app/apparel/`, build `app/sizing/` (§5), wire
-the label pass into the scan pipeline **before** any signature/matching work, apparel fields
-in the review and detail UI, size-aware filtering.
+**Phase 5 — Sizing + apparel.** 🔶 **SERVER DONE 2026-08-16 (#11); ANDROID UI NOT STARTED.**
+`app/sizing/` (the ladder, 90 table-driven tests), `app/apparel/` copied from Crate and trimmed,
+the narrow label pass wired into the scan pipeline with **its own `except`**, and apparel on
+`ItemOut`/`ItemPatch`. Verified live against the real model, **including the negative controls**:
+a drawn `4T / GIRLS` tag parsed to toddler/4.0, and both a no-size label and a non-label returned
+no size. Three things to know before touching it, all in ARCHITECTURE.md: a **bare number does not
+parse** without a department (youth 8 vs women's 8 — designed, not a gap); `size_system`/
+`size_ordinal` are **never client-settable**, they are re-derived from `size_raw` on every write;
+and `Item.apparel` is `lazy="selectin"` because a lazy load under asyncio raises MissingGreenlet
+from inside Pydantic's `from_attributes`, on paths that never mention apparel.
+**Still to do:** apparel fields in the review + detail UI, and size-aware filtering.
 *Exit: a garment photographed with its tag lands with `size_raw` verbatim and a correct
 ordinal; an unreadable tag lands with a null ordinal and no invented size; the ladder's
 table-driven tests cover every system including 6X.*
