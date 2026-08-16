@@ -66,7 +66,7 @@ class CaptureQueueRepositoryTest {
 
     @Test
     fun `a successful drain deletes the row and the local photos`() = runTest {
-        api.stub { onBlocking { scanItem(any(), anyOrNull()) } doAnswer { draft() } }
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
         val files = photoFiles()
 
         val repository = repo()
@@ -81,7 +81,7 @@ class CaptureQueueRepositoryTest {
 
     @Test
     fun `offline keeps the row pending and asks WorkManager to come back`() = runTest {
-        api.stub { onBlocking { scanItem(any(), anyOrNull()) } doAnswer { throw IOException("offline") } }
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer { throw IOException("offline") } }
         val repository = repo()
         repository.enqueue(photoFiles())
 
@@ -95,7 +95,7 @@ class CaptureQueueRepositoryTest {
     fun `a rejection marks the row failed, and the drain keeps going`() = runTest {
         var calls = 0
         api.stub {
-            onBlocking { scanItem(any(), anyOrNull()) } doAnswer {
+            onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer {
                 calls++
                 if (calls == 1) throw httpError(422) else draft()
             }
@@ -115,7 +115,7 @@ class CaptureQueueRepositoryTest {
     @Test
     fun `a timeout is uncertain, not failed, and never retried automatically`() = runTest {
         api.stub {
-            onBlocking { scanItem(any(), anyOrNull()) } doAnswer {
+            onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer {
                 throw SocketTimeoutException("timeout")
             }
         }
@@ -135,7 +135,7 @@ class CaptureQueueRepositoryTest {
     fun `a subsequent drain leaves uncertain and failed rows alone`() = runTest {
         var calls = 0
         api.stub {
-            onBlocking { scanItem(any(), anyOrNull()) } doAnswer {
+            onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer {
                 calls++
                 throw SocketTimeoutException("timeout")
             }
@@ -151,7 +151,7 @@ class CaptureQueueRepositoryTest {
 
     @Test
     fun `a row stranded mid-upload by process death is released`() = runTest {
-        api.stub { onBlocking { scanItem(any(), anyOrNull()) } doAnswer { draft() } }
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
         val repository = repo()
         val id = repository.enqueue(photoFiles())
         // What the process leaves behind if it dies during the ~35 s upload.
@@ -163,7 +163,7 @@ class CaptureQueueRepositoryTest {
 
     @Test
     fun `retry puts a decided row back in line`() = runTest {
-        api.stub { onBlocking { scanItem(any(), anyOrNull()) } doAnswer { draft() } }
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
         val repository = repo()
         val id = repository.enqueue(photoFiles())
         dao.setState(id, CaptureQueueEntity.STATE_FAILED, 1, "HTTP 500")
@@ -187,7 +187,7 @@ class CaptureQueueRepositoryTest {
 
     @Test
     fun `the destination bin rides along with the capture`() = runTest {
-        api.stub { onBlocking { scanItem(any(), anyOrNull()) } doAnswer { draft() } }
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
         val repository = repo()
         repository.enqueue(photoFiles(), toteId = "tote-1", toteCode = "A14")
 
@@ -208,6 +208,58 @@ class CaptureQueueRepositoryTest {
                 .build(),
         )
     )
+
+    // ── Replay safety ────────────────────────────────────────────────
+
+    /** Reads back the `capture_id` part the repository sent. */
+    private fun capturedKey(invocation: org.mockito.invocation.InvocationOnMock): String? {
+        val body = invocation.arguments[2] as okhttp3.RequestBody?
+        return body?.let { okio.Buffer().also { buffer -> it.writeTo(buffer) }.readUtf8() }
+    }
+
+    @Test
+    fun `every attempt carries the row id as the capture key`() = runTest {
+        // The key is what lets the server recognise a re-send as the SAME photograph. It must be
+        // the row id: a freshly generated UUID per attempt would be a key that never matches,
+        // which is exactly as bad as having none — and would look like it was working.
+        val keys = mutableListOf<String?>()
+        api.stub {
+            onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer {
+                keys += capturedKey(it)
+                throw IOException("connection reset after the server committed")
+            }
+        }
+
+        val repository = repo()
+        val id = repository.enqueue(photoFiles())
+
+        repository.drain()
+        repository.drain()
+
+        assertEquals(listOf<String?>(id, id), keys)
+    }
+
+    @Test
+    fun `a stranded row is re-sent under its original key`() = runTest {
+        // The exact production sequence, 2026-08-16: the upload landed, the connection died
+        // before the response arrived, the process was gone by the next drain, and
+        // releaseStranded put the row back as pending. One photograph became four drafts. The
+        // re-send is fine now — but only because it carries the key the first attempt used.
+        val keys = mutableListOf<String?>()
+        api.stub {
+            onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer {
+                keys += capturedKey(it)
+                draft()
+            }
+        }
+
+        val repository = repo()
+        val id = repository.enqueue(photoFiles())
+        dao.setState(id, CaptureQueueEntity.STATE_UPLOADING, 0, null)
+
+        assertTrue(repository.drain())
+        assertEquals(listOf<String?>(id), keys)
+    }
 
     /**
      * A hand-written fake rather than a mock: the drain's correctness is about the *sequence* of

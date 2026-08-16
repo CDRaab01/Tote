@@ -12,6 +12,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import TSVECTOR
@@ -30,6 +31,10 @@ OUT_REASONS = ("unpacked", "outgrown", "loaned", "in_use", "other")
 
 class Item(Base):
     __tablename__ = "items"
+    # Per user, not global: capture ids are generated on the phone, and one household's client
+    # must never be able to collide with another's. Postgres treats NULLs as distinct in a
+    # unique constraint, so every manually-added item (capture_id NULL) is unaffected.
+    __table_args__ = (UniqueConstraint("user_id", "capture_id", name="uq_items_user_capture"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -72,6 +77,16 @@ class Item(Base):
     # misconfigured, and they need different responses from a human.
     scan_error: Mapped[str | None] = mapped_column(String(32), nullable=True)
     scan_confidence: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # The client's queue-row id, carried so a REPLAYED upload resolves to the draft it already
+    # made instead of filing the object a second time (migration 0003).
+    #
+    # `/items/scan` runs for tens of seconds and commits before it answers, so a client that
+    # loses the connection cannot tell a lost request from a lost response — and the capture
+    # queue's stranded-row recovery re-sends. Measured in production 2026-08-16: one photograph
+    # became four drafts, and duplicates in a catalog are indistinguishable from two real
+    # objects. Null for anything not scanned (manual items), which is why the uniqueness lives
+    # in a constraint that tolerates nulls rather than on the column.
+    capture_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     processed_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

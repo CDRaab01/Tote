@@ -236,9 +236,15 @@ async def test_the_vision_request_sets_no_max_tokens():
 # ── Scan end to end ──────────────────────────────────────────────────────────
 
 
-async def _scan(client, photo: bytes, tote_id: str | None = None, **kw):
+async def _scan(
+    client, photo: bytes, tote_id: str | None = None, capture_id: str | None = None, **kw
+):
     files = {"photos": ("shot.jpg", photo, "image/jpeg")}
-    data = {"tote_id": tote_id} if tote_id else {}
+    data = {}
+    if tote_id:
+        data["tote_id"] = tote_id
+    if capture_id:
+        data["capture_id"] = capture_id
     return await client.post("/items/scan", files=files, data=data, **kw)
 
 
@@ -525,3 +531,100 @@ async def test_confirming_with_an_apparel_block_rederives_the_index(auth_client,
     assert confirmed["apparel"]["size_raw"] == "6X"
     assert confirmed["apparel"]["size_system"] == "youth_numeric"
     assert confirmed["apparel"]["size_ordinal"] == 6.5
+
+
+# ── Replay safety ────────────────────────────────────────────────────────────
+#
+# The endpoint commits before it answers and runs for tens of seconds, so a client that loses
+# the connection cannot tell a lost request from a lost response — and the capture queue
+# re-sends stranded rows. In production on 2026-08-16 one photograph became FOUR drafts that
+# way. Duplicates are the worst possible failure for a catalog: two drafts of one cap read
+# exactly like two real caps, and the whole product is answering "what do we already own".
+
+
+async def test_replaying_a_capture_returns_the_same_draft(auth_client, monkeypatch):
+    import app.services.scan_pipeline as pipeline
+    from app.services.ai.identify_prompts import IdentifyDraft
+
+    calls = {"n": 0}
+
+    async def fake_identify(urls, categories=None, client=None):
+        calls["n"] += 1
+        return IdentifyDraft(name="Plaid baseball cap", confidence="high")
+
+    monkeypatch.setattr(pipeline, "identify_item", fake_identify)
+
+    capture = str(uuid.uuid4())
+    first = await _scan(auth_client, photo_bytes(), capture_id=capture)
+    second = await _scan(auth_client, photo_bytes(), capture_id=capture)
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["id"] == second.json()["id"]
+    assert len((await auth_client.get("/drafts")).json()) == 1
+    # The replay must not re-run the model either: that is 35 s of GPU per lost response.
+    assert calls["n"] == 1
+
+
+async def test_a_different_capture_is_a_different_draft(auth_client, monkeypatch):
+    """The negative control. A key that deduplicated too eagerly would silently drop the second
+    of two genuinely different objects photographed back to back — which is the normal way this
+    app is used, standing over an open bin."""
+    import app.services.scan_pipeline as pipeline
+    from app.services.ai.identify_prompts import IdentifyDraft
+
+    async def fake_identify(urls, categories=None, client=None):
+        return IdentifyDraft(name="Thing", confidence="high")
+
+    monkeypatch.setattr(pipeline, "identify_item", fake_identify)
+
+    await _scan(auth_client, photo_bytes(), capture_id=str(uuid.uuid4()))
+    await _scan(auth_client, photo_bytes(), capture_id=str(uuid.uuid4()))
+
+    assert len((await auth_client.get("/drafts")).json()) == 2
+
+
+async def test_a_scan_without_a_capture_id_still_works(auth_client, monkeypatch):
+    """An older APK on someone's phone must keep working — the update train is not instant."""
+    import app.services.scan_pipeline as pipeline
+    from app.services.ai.identify_prompts import IdentifyDraft
+
+    async def fake_identify(urls, categories=None, client=None):
+        return IdentifyDraft(name="Thing", confidence="high")
+
+    monkeypatch.setattr(pipeline, "identify_item", fake_identify)
+
+    assert (await _scan(auth_client, photo_bytes())).status_code == 201
+    assert (await _scan(auth_client, photo_bytes())).status_code == 201
+    # Two, not one: with no key there is nothing to deduplicate ON, and guessing from the
+    # pixels would merge two identical-looking ornament boxes into one.
+    assert len((await auth_client.get("/drafts")).json()) == 2
+
+
+async def test_replaying_after_the_draft_was_confirmed_does_not_file_it_twice(
+    auth_client, monkeypatch
+):
+    """The nastiest ordering: the response was lost, the human reviewed and filed the draft, and
+    only then does the queue retry. Re-creating here would put a second copy of an already
+    catalogued object into the review stack, and the human has no way to tell it is a ghost."""
+    import app.services.scan_pipeline as pipeline
+    from app.services.ai.identify_prompts import IdentifyDraft
+
+    async def fake_identify(urls, categories=None, client=None):
+        return IdentifyDraft(name="Cap", confidence="high")
+
+    monkeypatch.setattr(pipeline, "identify_item", fake_identify)
+
+    tote = (await auth_client.post("/totes", json={"code": "R9"})).json()
+    capture = str(uuid.uuid4())
+    draft = (await _scan(auth_client, photo_bytes(), capture_id=capture)).json()
+    await auth_client.post(
+        f"/drafts/{draft['id']}/confirm", json={"tote_id": tote["id"], "name": "Cap"}
+    )
+
+    replay = await _scan(auth_client, photo_bytes(), capture_id=capture)
+
+    assert replay.status_code == 201
+    assert replay.json()["id"] == draft["id"]
+    assert (await auth_client.get("/drafts")).json() == []
+    assert len((await auth_client.get("/items")).json()) == 1

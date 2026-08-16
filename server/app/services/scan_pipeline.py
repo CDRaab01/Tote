@@ -54,14 +54,19 @@ async def scan_photos(
     user_id: uuid.UUID,
     photos: list[tuple[bytes, str]],
     tote_id: uuid.UUID | None = None,
+    capture_id: uuid.UUID | None = None,
     client=None,
 ) -> Item:
     """One item, one or more photos, one draft.
 
     Returns the draft item. The caller commits.
+
+    `capture_id` is the client's queue-row id, stored so a replayed upload resolves here instead
+    of filing the object twice — see the router, which does the lookup.
     """
     item = Item(
         user_id=user_id,
+        capture_id=capture_id,
         # A placeholder name, replaced by identification if it works. Never left blank: an item
         # row with no name renders as an empty line in every list, which looks like corruption.
         name="Unidentified item",

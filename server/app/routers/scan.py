@@ -12,6 +12,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -63,13 +64,33 @@ async def scan(
     db: Db,
     photos: Annotated[list[UploadFile], File()],
     tote_id: Annotated[uuid.UUID | None, Form()] = None,
+    capture_id: Annotated[uuid.UUID | None, Form()] = None,
 ):
     """One item, 1-8 photos, one draft.
 
     The photos are persisted before anything else runs. That order is the point: the item was in
     someone's hands in a garage and is back in a bin by the time any of this fails, so the
     photograph is the one artefact that cannot be recreated.
+
+    **`capture_id` makes this safe to replay, and the client always sends one.** The endpoint
+    runs for tens of seconds and commits before it answers, so a client that loses the
+    connection genuinely cannot tell a lost request from a lost response — and the capture
+    queue's stranded-row recovery re-sends. Without a key, that re-send filed the object again:
+    one photograph became four drafts in production on 2026-08-16, and two drafts of one cap are
+    indistinguishable from two real caps. A repeat now returns the draft the first attempt made.
     """
+    if capture_id is not None:
+        existing = (
+            await db.execute(
+                select(Item).where(Item.user_id == user.id, Item.capture_id == capture_id)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            # Deliberately returned whatever state it is in — including a confirmed item that is
+            # no longer a draft. The alternative, 409, would push the client back into the retry
+            # loop this key exists to end.
+            return await _to_draft_out(db, existing)
+
     if not photos:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "At least one photo is required")
     if len(photos) > MAX_PHOTOS:
@@ -102,8 +123,25 @@ async def scan(
             )
         payload.append((data, content_type))
 
-    item = await scan_photos(db, user_id=user.id, photos=payload, tote_id=tote_id)
-    await db.commit()
+    item = await scan_photos(
+        db, user_id=user.id, photos=payload, tote_id=tote_id, capture_id=capture_id
+    )
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Two attempts for the same capture raced: the check above ran before the first one
+        # committed. The constraint is the backstop the check cannot be — a scan takes tens of
+        # seconds, so the window is wide, and the loser must hand back the winner's draft rather
+        # than a 409 the client would retry.
+        await db.rollback()
+        existing = (
+            await db.execute(
+                select(Item).where(Item.user_id == user.id, Item.capture_id == capture_id)
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            raise
+        return await _to_draft_out(db, existing)
     await db.refresh(item)
     return await _to_draft_out(db, item)
 
