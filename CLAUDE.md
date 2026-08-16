@@ -364,8 +364,9 @@ configured, as an ntfy nudge.
   Re-set on Actions from `C:\Users\Sonic\.dragonfly-suite\`, after verifying the keystore's
   SHA-256 matches the suite pin `5a596c9e…` and that `suite-keystore.base64.txt` decodes
   byte-identically to `suite-release.jks`.
-- ⏳ Sibling PRs: Dragonfly `AppRegistry` + `<queries>`; dragonfly-id `tote` OIDC client +
-  smoke client/allowlist. Not started.
+- ✅ Sibling PRs: Dragonfly `AppRegistry` + `<queries>` and dragonfly-id's `tote` OIDC client
+  ([Dragonfly #31](https://github.com/CDRaab01/Dragonfly/pull/31), merged 2026-08-15, with a
+  registration test). The `tote-smoke` **secret value** is still human-gated.
 *Exit: empty app builds with the slate theme; CI green; trivial tests pass.*
 
 **Phase 1 — SSO auth + data model.** `POST /auth/suite` (clone Crate's SSO-only shape: JWKS

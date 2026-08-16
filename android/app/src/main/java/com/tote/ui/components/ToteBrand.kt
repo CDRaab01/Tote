@@ -8,9 +8,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.tote.ui.theme.ToteTheme
+import design.pulse.ui.components.PulseButton
 
 /**
  * The yellow band across a charcoal panel — the one mark that makes a surface read as a tote
@@ -18,19 +20,60 @@ import com.tote.ui.theme.ToteTheme
  *
  * Purely decorative, and that is a constraint rather than an apology: it must never be the only
  * thing distinguishing two states, because at 3dp tall it is invisible to anyone who can't
- * resolve it and carries no accessible name. Colour comes from `ToteTheme.colors.hazard`, which
- * steps down to the deep yellow on light surfaces where the bright one washes out.
+ * resolve it and carries no accessible name.
+ *
+ * Defaults to `ToteTheme.colors.hazard` — the bright yellow, correct in both themes because this
+ * band lives on the charcoal hero, whose surface does not change between themes. When placing one
+ * on the app's own background instead, pass `ToteTheme.colors.hazardOnSurface`, which steps down
+ * to the deep yellow so it survives on white.
  */
 @Composable
 fun HazardRule(
     modifier: Modifier = Modifier,
     height: Dp = 3.dp,
+    color: Color = ToteTheme.colors.hazard,
 ) {
     Box(
         modifier
             .fillMaxWidth()
             .height(height)
             .clip(RoundedCornerShape(percent = 50))
-            .background(ToteTheme.colors.hazard)
+            .background(color)
     )
+}
+
+/**
+ * A [PulseButton] that is legible under the Slate accent.
+ *
+ * `PulseButton` fills a non-tonal button with `Pulse.structure.heroGradient` but colours its
+ * label with `Pulse.accent.on`. For every other accent in the family that is consistent, because
+ * the hero gradient is built from the same hue as the channel base. Slate is a **pair**, so it
+ * is not: the hero is charcoal and needs white, while `accent.on` is the dark ink that belongs
+ * on the channel's *yellow* fill. Taking the default produced a "Sign in with Dragonfly" button
+ * with near-black text on a charcoal gradient — found by rendering it, not by reading it.
+ *
+ * White on the hero measures 14.63:1 at its dark end and 7.58:1 at its light end.
+ *
+ * Tonal buttons are left alone: there the fill is `accent.dim` (dark olive) and the label is
+ * `accent.base` (the yellow), which is already a correct pairing.
+ */
+@Composable
+fun ToteButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    tonal: Boolean = false,
+) {
+    if (tonal) {
+        PulseButton(text = text, onClick = onClick, modifier = modifier, enabled = enabled, tonal = true)
+    } else {
+        PulseButton(
+            text = text,
+            onClick = onClick,
+            modifier = modifier,
+            enabled = enabled,
+            onChannel = Color.White,
+        )
+    }
 }

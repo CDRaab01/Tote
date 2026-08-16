@@ -96,17 +96,65 @@ class ToteThemeTest {
     }
 
     @Test
-    fun `the hazard mark stays visible in both themes`() {
-        // Bright yellow effectively disappears on a white card (1.42:1), so the light theme
-        // steps down to the deep variant. Assert each against the surface it actually sits on.
+    fun `the hazard band is legible on the hero in BOTH themes`() {
+        // The band's home is the hero panel, which is the SAME charcoal sweep in light mode as in
+        // dark - so the bright yellow is correct in both, and this must be asserted against the
+        // hero's hues rather than against the app background. An earlier version stepped the band
+        // down to the deep yellow in light mode on the theory that light themes need a darker
+        // yellow; that applied a white-background rule to something that never touches white, and
+        // rendering it showed the light theme had lost the brand entirely.
+        val heroStart = Color(0xFF1E293B) // slate-800
+        val heroEnd = Color(0xFF475569) // slate-600
         assertTrue(
-            contrast(PulseYellow, ink) >= 3.0,
-            "Hazard mark must be visible on the dark surface",
+            contrast(PulseYellow, heroStart) >= 3.0,
+            "Hazard band must be visible at the hero's dark end; measured " +
+                "${contrast(PulseYellow, heroStart)}:1",
         )
         assertTrue(
+            contrast(PulseYellow, heroEnd) >= 3.0,
+            "Hazard band must be visible at the hero's light end; measured " +
+                "${contrast(PulseYellow, heroEnd)}:1",
+        )
+    }
+
+    @Test
+    fun `the on-surface yellow survives on a white background`() {
+        // The separate token for marks placed on the app's own background rather than on a
+        // charcoal fill. Bright yellow is 1.42:1 there, so this one has to be the deep variant.
+        assertTrue(
             contrast(PulseYellowDeep, white) >= 3.0,
-            "Hazard mark must be visible on the light surface; measured " +
+            "hazardOnSurface must be visible on the light surface; measured " +
                 "${contrast(PulseYellowDeep, white)}:1",
+        )
+        assertTrue(
+            contrast(PulseYellow, ink) >= 3.0,
+            "hazardOnSurface must be visible on the dark surface",
+        )
+    }
+
+    @Test
+    fun `button text on the hero gradient must be white, not the channel's on-colour`() {
+        // PulseButton fills a non-tonal button with the hero gradient but colours its label with
+        // `accent.on`. For every other accent that is consistent, because the hero is built from
+        // the same hue as the channel base. Slate is a PAIR and it is not: the hero is charcoal
+        // and needs white, while `accent.on` is the dark ink belonging on the channel's YELLOW
+        // fill. Taking the default rendered "Sign in with Dragonfly" as near-black on charcoal.
+        // ToteButton overrides it; these are the numbers that make white the right override.
+        val heroStart = Color(0xFF1E293B)
+        val heroEnd = Color(0xFF475569)
+        val channelOn = darkSlateChannel().on
+
+        assertTrue(
+            contrast(white, heroStart) >= 4.5 && contrast(white, heroEnd) >= 4.5,
+            "White label on the hero: ${contrast(white, heroStart)}:1 to " +
+                "${contrast(white, heroEnd)}:1",
+        )
+        // And the guard on the wrong answer, so a future "simplification" back to the default
+        // fails here instead of on someone's phone.
+        assertTrue(
+            contrast(channelOn, heroEnd) < 4.5,
+            "accent.on is legible on the hero, so ToteButton's override may no longer be needed " +
+                "— re-check the design rather than deleting the override blindly.",
         )
     }
 }
