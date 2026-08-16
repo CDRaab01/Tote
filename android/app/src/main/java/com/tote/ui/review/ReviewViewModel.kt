@@ -3,12 +3,14 @@ package com.tote.ui.review
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tote.data.local.CachedTote
+import com.tote.data.CatalogRepository
 import com.tote.data.local.CatalogDao
 import com.tote.data.remote.ApiService
 import com.tote.data.remote.ApparelPatch
 import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.DraftConfirm
 import com.tote.data.remote.DraftDto
+import com.tote.util.FeedbackBus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -96,6 +98,8 @@ data class ReviewUiState(
 class ReviewViewModel @Inject constructor(
     private val api: ApiService,
     private val catalogDao: CatalogDao,
+    private val repo: CatalogRepository,
+    private val feedback: FeedbackBus,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ReviewUiState())
@@ -181,8 +185,18 @@ class ReviewViewModel @Inject constructor(
         )
     }
 
-    /** Leave this one for later without deciding about it. */
-    fun skip() = moveTo(_state.value.index + 1)
+    /**
+     * Leave this one for later without deciding about it.
+     *
+     * Wraps: on the last draft, Skip returns to the first. Without the wrap the final draft was
+     * a trap — its only enabled exits were File it (which demands a bin) and Discard (which
+     * deletes the photographs), so "I don't know where this goes yet" had no answer.
+     */
+    fun skip() {
+        val s = _state.value
+        if (s.drafts.size < 2) return
+        moveTo((s.index + 1) % s.drafts.size)
+    }
 
     fun back() = moveTo(_state.value.index - 1)
 
@@ -233,6 +247,20 @@ class ReviewViewModel @Inject constructor(
                 )
                 dropCurrent()
                 onFiled(item.name)
+                // Close the loop out loud. Before this, File-it's only visible effect was the
+                // form being replaced by the next draft — twenty minutes of cataloguing with no
+                // evidence any of it landed. Named by bin CODE because that is what is written
+                // on the physical box the person is about to walk away from.
+                val binCode = s.totes.firstOrNull { it.id == toteId }?.code
+                feedback.say(
+                    if (binCode != null) "Filed ${item.name} into $binCode"
+                    else "Filed ${item.name}"
+                )
+                // And make the rest of the app agree. This ViewModel bypasses CatalogRepository
+                // for reads (drafts are not catalog), but a confirm WRITES to the catalog —
+                // without this refresh the tote list and the Find tiles kept their stale counts
+                // until something else happened to write.
+                runCatching { repo.refresh() }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(saving = false, error = filingError(e))
             }

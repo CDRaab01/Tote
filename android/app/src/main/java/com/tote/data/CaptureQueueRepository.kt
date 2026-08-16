@@ -3,6 +3,7 @@ package com.tote.data
 import com.tote.data.local.CaptureQueueDao
 import com.tote.data.local.CaptureQueueEntity
 import com.tote.data.remote.ApiService
+import com.tote.util.ApiErrors
 import com.tote.util.ImageBytes
 import java.io.File
 import java.io.IOException
@@ -135,11 +136,19 @@ class CaptureQueueRepository @Inject constructor(
                     e.message,
                 )
             } catch (e: HttpException) {
+                // The server's own sentence, not a bare status code. "At most 8 photos per
+                // item" is a fixable mistake; "HTTP 422" is a mystery — and a 401 from an
+                // expired session used to read exactly like a validation failure, though the
+                // recovery could not be more different.
+                val why = when {
+                    e.code() == 401 -> "Your session expired. Sign in with Dragonfly again."
+                    else -> ApiErrors.detail(e) ?: "The server rejected it (HTTP ${e.code()})"
+                }
                 dao.setState(
                     entry.id,
                     CaptureQueueEntity.STATE_FAILED,
                     entry.attempts + 1,
-                    "HTTP ${e.code()}",
+                    why,
                 )
             } catch (e: IOException) {
                 dao.setState(

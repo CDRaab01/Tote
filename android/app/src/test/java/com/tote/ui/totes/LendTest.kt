@@ -3,6 +3,7 @@ package com.tote.ui.totes
 import androidx.lifecycle.SavedStateHandle
 import com.tote.data.CatalogRepository
 import com.tote.data.remote.ApiService
+import com.tote.util.FeedbackBus
 import com.tote.data.remote.MoveRequest
 import com.tote.data.remote.MovementDto
 import com.tote.data.remote.PersonDto
@@ -56,7 +57,7 @@ class LendTest {
             onBlocking { move(any(), any()) } doReturn
                 MovementDto(id = "m1", itemId = "i1", reason = "loaned", movedAt = "2026-08-16T00:00:00Z")
         }
-        return ToteDetailViewModel(repo, api, SavedStateHandle(mapOf("toteId" to "t1")))
+        return ToteDetailViewModel(repo, api, FeedbackBus(), SavedStateHandle(mapOf("toteId" to "t1")))
     }
 
     @Test

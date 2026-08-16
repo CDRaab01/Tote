@@ -12,6 +12,7 @@ import com.tote.nfc.TagIo
 import com.tote.nfc.TagWriteResult
 import com.tote.nfc.WriteState
 import com.tote.util.ApiErrors
+import com.tote.util.FeedbackBus
 import com.tote.util.UiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -24,6 +25,7 @@ import kotlinx.coroutines.launch
 class ToteDetailViewModel @Inject constructor(
     private val repo: CatalogRepository,
     private val api: ApiService,
+    private val feedback: FeedbackBus,
     savedState: SavedStateHandle,
 ) : ViewModel() {
 
@@ -51,9 +53,15 @@ class ToteDetailViewModel @Inject constructor(
 
     fun addItem(name: String, quantity: Int) {
         viewModelScope.launch {
+            // Every write on this screen used to swallow failure whole — offline in the
+            // attic (the documented normal condition) the buttons simply looked broken. The
+            // failures speak through the app-wide snackbar because the outcome may land after
+            // the screen has moved on.
             runCatching {
                 repo.createItem(ItemCreate(name = name.trim(), quantity = quantity, toteId = toteId))
-            }.onSuccess { load() }
+            }
+                .onSuccess { load() }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't add that item.")) }
         }
     }
 
@@ -61,13 +69,17 @@ class ToteDetailViewModel @Inject constructor(
         viewModelScope.launch {
             // null, not emptyList: null means "everything", and the server treats [] as an
             // explicit selection of nothing.
-            runCatching { repo.unpack(toteId, itemIds = null) }.onSuccess { load() }
+            runCatching { repo.unpack(toteId, itemIds = null) }
+                .onSuccess { load() }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't unpack the bin.")) }
         }
     }
 
     fun repackAll() {
         viewModelScope.launch {
-            runCatching { repo.repack(toteId, itemIds = null) }.onSuccess { load() }
+            runCatching { repo.repack(toteId, itemIds = null) }
+                .onSuccess { load() }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't repack the bin.")) }
         }
     }
 
@@ -106,7 +118,9 @@ class ToteDetailViewModel @Inject constructor(
                         expectedBack = expectedBack?.takeIf { it.isNotBlank() },
                     ),
                 )
-            }.onSuccess { load() }
+            }
+                .onSuccess { load() }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't lend that out.")) }
         }
     }
 
@@ -119,7 +133,9 @@ class ToteDetailViewModel @Inject constructor(
      */
     fun deleteItem(itemId: String) {
         viewModelScope.launch {
-            runCatching { repo.deleteItem(itemId) }.onSuccess { load() }
+            runCatching { repo.deleteItem(itemId) }
+                .onSuccess { load() }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't delete that item.")) }
         }
     }
 
@@ -127,7 +143,9 @@ class ToteDetailViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching {
                 repo.move(itemId, com.tote.data.remote.MoveRequest(reason = "unpacked"))
-            }.onSuccess { load() }
+            }
+                .onSuccess { load() }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't take that out.")) }
         }
     }
 
@@ -204,7 +222,9 @@ class ToteDetailViewModel @Inject constructor(
                     itemId,
                     com.tote.data.remote.MoveRequest(reason = "repacked", toToteId = toteId),
                 )
-            }.onSuccess { load() }
+            }
+                .onSuccess { load() }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't put that back.")) }
         }
     }
 }
