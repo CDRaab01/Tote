@@ -15,6 +15,14 @@ import uuid
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.apparel import (
+    DEPARTMENTS,
+    FITS,
+    SEASONS,
+    SIZE_TYPES,
+    SLEEVE_LENGTHS,
+    normalize_enum,
+)
 from app.models.item import ITEM_CONDITIONS
 from app.models.movement import MOVEMENT_REASONS
 
@@ -140,7 +148,91 @@ class ItemIn(BaseModel):
         return v
 
 
+class ApparelOut(BaseModel):
+    """The clothing specifics, when an item has them.
+
+    `size_raw` is what the tag literally said and is the field a human reads. `size_system` and
+    `size_ordinal` are a DERIVED INDEX over it and are null whenever the string could not be
+    placed on the ladder — which is a normal, designed outcome, not an error. A client must show
+    `size_raw` whenever it is present, and must never present a null ordinal as "no size".
+    """
+
+    size_raw: str | None = None
+    size_system: str | None = None
+    size_ordinal: float | None = None
+    size_type: str | None = None
+    department: str | None = None
+    color: str | None = None
+    material: str | None = None
+    style: str | None = None
+    fit: str | None = None
+    sleeve_length: str | None = None
+    measurements_in: dict | None = None
+    season: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class ApparelPatch(BaseModel):
+    """A human editing the clothing specifics.
+
+    **Strict where the vision path is forgiving.** An unrecognised enum from the model degrades to
+    null; the same value typed by a person is a claim and gets a 422. Same asymmetry as
+    `condition` above, and for the same reason.
+
+    `size_system` and `size_ordinal` are deliberately NOT settable. They are derived from
+    `size_raw` by `app.sizing` on write, so a client cannot store an index that disagrees with the
+    reading it indexes — that disagreement is exactly what would send someone to the wrong bin.
+    """
+
+    size_raw: str | None = None
+    department: str | None = None
+    size_type: str | None = None
+    color: str | None = None
+    material: str | None = None
+    style: str | None = None
+    fit: str | None = None
+    sleeve_length: str | None = None
+    measurements_in: dict | None = None
+    season: str | None = None
+
+    @field_validator("department")
+    @classmethod
+    def known_department(cls, v: str | None) -> str | None:
+        return _strict_enum(v, DEPARTMENTS, "department")
+
+    @field_validator("size_type")
+    @classmethod
+    def known_size_type(cls, v: str | None) -> str | None:
+        return _strict_enum(v, SIZE_TYPES, "size_type")
+
+    @field_validator("fit")
+    @classmethod
+    def known_fit(cls, v: str | None) -> str | None:
+        return _strict_enum(v, FITS, "fit")
+
+    @field_validator("sleeve_length")
+    @classmethod
+    def known_sleeve(cls, v: str | None) -> str | None:
+        return _strict_enum(v, SLEEVE_LENGTHS, "sleeve_length")
+
+    @field_validator("season")
+    @classmethod
+    def known_season(cls, v: str | None) -> str | None:
+        return _strict_enum(v, SEASONS, "season")
+
+
+def _strict_enum(value: str | None, allowed: tuple[str, ...], field: str) -> str | None:
+    if value is None:
+        return None
+    normalized = normalize_enum(value, allowed)
+    if normalized is None:
+        raise ValueError(f"{field} must be one of {allowed}")
+    return normalized
+
+
 class ItemPatch(BaseModel):
+    apparel: ApparelPatch | None = None
     name: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = None
     notes: str | None = None
@@ -181,6 +273,8 @@ class ItemOut(BaseModel):
     # Computed server-side (clients display, never compute) so "overdue" means the same thing
     # everywhere, including in a notification composed without a UI.
     is_overdue: bool = False
+    # Present only for clothing. Absent is normal — most items in a house are not garments.
+    apparel: ApparelOut | None = None
 
     model_config = {"from_attributes": True}
 

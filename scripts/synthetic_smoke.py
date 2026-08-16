@@ -327,8 +327,7 @@ def smoke_scan(access: str) -> None:
     status, delete_body = request("DELETE", f"{TOTE_URL}/drafts/{draft_id}", headers=auth)
     if status != 204:
         fail(
-            f"could not discard smoke draft {draft_id} (DELETE returned {status}: "
-            f"{delete_body}).",
+            f"could not discard smoke draft {draft_id} (DELETE returned {status}: {delete_body}).",
             "Delete it by hand from the Review tab — otherwise it sits in the stack looking "
             "like a real capture.",
         )

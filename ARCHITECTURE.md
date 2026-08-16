@@ -7,7 +7,7 @@ suite-wide rule; silently-drifting docs have burned two sibling repos already.
 The build plan and the reasoning behind the locked decisions live in [CLAUDE.md](CLAUDE.md).
 This file describes what exists **now**.
 
-## Current state: Phases 0-4 complete, plus Phase 7's backups
+## Current state: Phases 0-5 complete, plus Phase 7's backups
 
 ```
 Tote/
@@ -44,6 +44,8 @@ Tote/
 │  │  ├─ database.py            async engine, session factory, DeclarativeBase
 │  │  ├─ security.py            session JWTs + CurrentUser dependency
 │  │  ├─ limiter.py             slowapi rate limiting
+│  │  ├─ apparel/               controlled vocabularies + normalizers (from Crate)
+│  │  ├─ sizing/                the size ladder — pure, no I/O
 │  │  ├─ models/                the eleven tables of §4
 │  │  ├─ routers/               suite_auth, users, catalog, totes, items, public, scan
 │  │  ├─ schemas/               request/response models
@@ -54,7 +56,9 @@ Tote/
 │  │     ├─ card.py             the printable index card + the shared tag URI
 │  │     ├─ cleanup.py          rembg + Pillow; levels BEFORE compositing
 │  │     ├─ photo_store.py      binaries on the volume, paths in the DB
-│  │     ├─ scan_pipeline.py    photo → draft
+│  │     ├─ scan_pipeline.py    photo → draft (+ the label pass)
+│  │     ├─ apparel_draft.py    a label reading → an item_apparel row
+│  │     ├─ sizing_hints.py     should this item get a label pass at all
 │  │     └─ ai/                 vision transport, prompt, salvage parser
 │  ├─ alembic/versions/0001_    the whole schema
 │  └─ tests/                    pytest, asyncio_mode=auto
@@ -773,6 +777,90 @@ Its own timeout is 240 s, not the script's 20 s default, for the same reason the
 overrides OkHttp's: `/items/scan` is synchronous and a single photo measured 35.5 s. Verified
 against the live model on 2026-08-16 — the generated circle came back as *"Striped red circle
 decor"*, low confidence, one photo, and the draft was gone afterwards.
+
+## Sizing
+
+The one genuinely new module in this app, and the one whose failure mode is a person driving to
+the attic for the wrong bin. It is pure, has no I/O, and every function is allowed to answer
+"I don't know".
+
+### `size_raw` is sacred
+
+Whatever the tag said is stored verbatim, forever. `size_system` and `size_ordinal` are a
+**derived index** over it, and a derived index that is wrong must never be able to destroy the
+reading. So a row carrying only `size_raw = "M/L"` is a *good* outcome: a human reads it in two
+seconds and nothing was thrown away.
+
+Three places enforce that the index can never disagree with the reading it indexes:
+
+- `ApparelPatch` does not accept `size_system`/`size_ordinal` **at all** — they are recomputed
+  from `size_raw` on every write. A client that could set them could store "4T" indexed as an
+  adult L, and nothing downstream would catch it.
+- Clearing `size_raw` clears the index with it, rather than leaving a stale ordinal pointing at a
+  size nobody can see any more.
+- `size_type` (the age band) is **derived from the parsed system**, not asked of the model. A
+  sewn-in label prints "4T", not "toddler"; asking would invite exactly the inference the app
+  refuses. It is therefore null exactly when the size is unparsed.
+
+### The ordinal axis, and why comparability is narrower than it
+
+For children the ordinal **is approximate age in years** — `3-6M` is 0.375, `2T` is 2.0, youth
+`10` is 10.0 — so a query can cross 4T → youth 5 the way a parent does. Adults continue above 16.
+Shoes sit on their own band, because a shoe size is not a body size and letting "youth 8" and
+"kids' shoe 8" collide would make any mixed sort quietly nonsense.
+
+**Within a system the ordering is exact** (6 < 6X < 7, always). Across systems it is an
+approximation, and some cross-system comparisons are not merely approximate but meaningless — a
+men's 32 waist and a women's 8 are not two points on one scale. So systems carry a **lineage** and
+callers must ask `comparable()` before comparing. That relation is deliberately **not transitive**:
+women's numeric ↔ adult alpha and adult alpha ↔ men's waist are both comparable, women's ↔ men's
+is not. That is a property of clothing, not a bug.
+
+`within_tolerance()` returns **None, not False**, when either side is unparsed or the systems do
+not compare. A caller that conflates them hides every item whose tag could not be read — the
+opposite of what someone standing in front of fourteen bins needs.
+
+### 6X is why this is a table
+
+`6X` sorts between 6 and 7. A naive integer parse reads it as 6 or throws, and a 6X coat filed as
+a 6 is a coat someone pulls out and finds does not fit. Every rung is written out and reviewable
+against a real tag rather than computed.
+
+### A bare number does not parse
+
+`8` is a youth 8 or a women's 8, and they are different garments for different people. With no
+department there is nothing in the string to tell them apart, so `parse_size` returns None and
+`size_raw` keeps the `8`. **This is the module's designed trade, not a gap**: a null sends someone
+to the bin, a wrong ordinal sends them to the wrong bin twice. A department resolves it (`8` under
+`girls` is a youth 8) because that is evidence, not a guess.
+
+## The label pass
+
+A **second, narrow** vision call that does exactly one job: transcribe what is printed on the tag.
+Measured in Crate, the omnibus identify prompt read about 1 in 6 legible sizes; the same model
+asked in isolation read 3 of 4 and correctly returned nothing for the two labels with no size.
+Telling the omnibus prompt to try harder was measured and **rejected** — no recall gain, plus a
+reproducible wrong answer.
+
+| Rule | Why |
+|---|---|
+| Reads the **original**, never the cleaned copy | background removal once decided a woven brand tab was "the subject" and cropped the shirt away |
+| **No retry** against the cleaned copy on a null | measured: recovers the image 2 runs in 3 and answers a *wrong size* the third |
+| **Its own `except`** at the call site | a 503 here reaching the outer handler rewrites a good identification as `identify_unavailable` — "we could not read the tag" becomes "we could not see the photo" |
+| No `max_tokens` | the pinned model is a reasoning model; an answer-sized budget silently returns `""` |
+
+Tote asks the label for **size, department and material** — not Crate's `size_type`, which is a
+merchandising axis a sewn-in tag never prints.
+
+The gate (`sizing_hints.looks_like_clothing`) is **one-sided on purpose**: a false positive costs
+one wasted model call, a false negative loses the size of a garment now sealed in a bin. It
+matches the model's chosen category first (the user's own vocabulary) and falls back to a word
+list over the name.
+
+Verified live against `gemma-4-e4b` on 2026-08-16: a drawn tag reading `4T / GIRLS / 100% COTTON`
+came back parsed to `toddler`, ordinal `4.0`. Both negative controls — a brand-and-care label with
+no size, and a photo that is not a label at all — returned **no size**, which is the half that
+actually matters.
 
 ## Not yet built
 

@@ -20,8 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.category import Category
 from app.models.item import Item, ItemPhoto
 from app.services import photo_store
-from app.services.ai.vision import data_url, identify_item
+from app.services.ai.vision import data_url, identify_item, read_label
+from app.services.apparel_draft import apparel_from_label
 from app.services.cleanup import clean_photo
+from app.services.sizing_hints import looks_like_clothing
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +136,33 @@ async def scan_photos(
         ).scalar_one_or_none()
         if match is not None:
             item.category_id = match.id
+
+    # 4. If this looks like clothing, ask the label what size it is — a SECOND, narrow call.
+    #
+    #    Its own try/except, and that is the entire point of the shape. A 503 from this call
+    #    reaching the outer handler would rewrite a perfectly good identification as
+    #    `identify_unavailable`, turning "we could not read the tag" into "we could not see the
+    #    photo". Crate learned this the hard way; do not flatten these two handlers together.
+    #
+    #    The ORIGINALS go to the model, never the cleaned copies: background removal is
+    #    unpredictable on labels and once decided a woven brand tab was "the subject". And there
+    #    is deliberately NO retry against the cleaned copy on a null — measured, it recovers the
+    #    failing image two runs in three and answers a *wrong size* the third.
+    if looks_like_clothing(item.name, draft.category):
+        try:
+            label = await read_label(urls, client=client)
+        except HTTPException as e:
+            logger.warning("label pass unavailable for item %s: %s", item.id, e.detail)
+            label = None
+        except Exception:
+            logger.exception("label pass failed for item %s", item.id)
+            label = None
+        if label is not None:
+            apparel = apparel_from_label(item.id, label)
+            if apparel is not None:
+                # Through the relationship: `delete-orphan` would remove a standalone row on the
+                # next flush, so the size would vanish between the scan and the review screen.
+                item.apparel = apparel
 
     # The destination is remembered but NOT applied: an item only enters a tote when a human
     # confirms the draft, and applying it here would put an unreviewed guess into a bin's

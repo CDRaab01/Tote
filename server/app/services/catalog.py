@@ -17,7 +17,7 @@ from app.models.item import Item
 from app.models.location import Location
 from app.models.movement import Movement
 from app.models.tote import Tote
-from app.schemas.catalog import ItemOut, ToteOut
+from app.schemas.catalog import ApparelOut, ItemOut, ToteOut
 
 
 def local_today() -> datetime.date:
@@ -57,6 +57,12 @@ def item_query(user_id: uuid.UUID) -> Select:
 
 def to_item_out(item: Item, tote_code: str | None, location_name: str | None) -> ItemOut:
     out = ItemOut.model_validate(item)
+    # Only present for clothing, and only when the relationship was actually loaded. Reading it
+    # off an unloaded lazy attribute inside an async request would raise MissingGreenlet, so
+    # callers that want apparel must eager-load it (see item_query's selectinload).
+    # Populated by the relationship's own `lazy="selectin"` (see models/item.py) rather than an
+    # `.options()` here, so a future read path cannot omit it and reintroduce MissingGreenlet.
+    out.apparel = ApparelOut.model_validate(item.apparel) if item.apparel is not None else None
     out.tote_code = tote_code
     out.location_name = location_name
     # Overdue is computed here, once, so a notification and a screen cannot disagree about it.
