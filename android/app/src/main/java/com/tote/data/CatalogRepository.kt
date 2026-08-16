@@ -141,4 +141,13 @@ class CatalogRepository @Inject constructor(
         api.repack(toteId, BulkMove(itemIds)).also { refresh() }
 
     suspend fun movements(itemId: String) = api.movements(itemId)
+
+    suspend fun nfcBase(): String = api.nfcBase().base
+
+    /** Recorded only AFTER a successful physical write, so the database never claims a tag
+     *  exists that does not. */
+    suspend fun recordTagWrite(toteId: String, uid: String) =
+        api.recordTagWrite(toteId, com.tote.data.remote.NfcWrite(uid)).also { refresh() }
+
+    suspend fun resolveCode(code: String, tagUid: String? = null) = api.resolveCode(code, tagUid)
 }

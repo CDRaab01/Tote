@@ -1,10 +1,12 @@
 """Totes: the bins themselves, plus the bulk unpack/repack that the holidays require."""
 
+import datetime
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from fastapi.responses import Response
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,8 +16,18 @@ from app.models.item import Item
 from app.models.location import Location
 from app.models.movement import Movement
 from app.models.tote import Tote
-from app.schemas.catalog import BulkMoveIn, MovementOut, ToteDetail, ToteIn, ToteOut, TotePatch
+from app.schemas.catalog import (
+    BulkMoveIn,
+    MovementOut,
+    NfcResolveOut,
+    NfcWriteIn,
+    ToteDetail,
+    ToteIn,
+    ToteOut,
+    TotePatch,
+)
 from app.security import CurrentUser
+from app.services.card import render_card
 from app.services.catalog import item_query, items_for, out_counts, to_tote_out, tote_counts
 from app.services.movement import repack_tote, unpack_tote
 
@@ -171,3 +183,92 @@ async def repack(tote_id: uuid.UUID, body: BulkMoveIn, user: CurrentUser, db: Db
     )
     await db.commit()
     return [MovementOut.model_validate(m) for m in moves]
+
+
+@router.get("/{tote_id}/card", include_in_schema=False)
+async def tote_card(tote_id: uuid.UUID, user: CurrentUser, db: Db):
+    """The printable index card, as a PDF.
+
+    Rendered server-side so there is exactly one layout: the card is a physical object, and two
+    renderers would eventually disagree in a way only discoverable in an attic.
+    """
+    tote = await _owned_tote(db, user.id, tote_id)
+
+    location = None
+    if tote.location_id:
+        location = (
+            await db.execute(select(Location.name).where(Location.id == tote.location_id))
+        ).scalar_one_or_none()
+    category = None
+    if tote.category_id:
+        category = (
+            await db.execute(select(Category.name).where(Category.id == tote.category_id))
+        ).scalar_one_or_none()
+
+    counts = await tote_counts(db, user.id)
+    pdf = render_card(
+        tote,
+        location=location,
+        category=category,
+        item_count=counts.get(tote.id, 0),
+    )
+
+    tote.card_printed_at = datetime.datetime.now(datetime.UTC)
+    await db.commit()
+
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="tote-{tote.code}.pdf"'},
+    )
+
+
+@router.post("/{tote_id}/nfc", response_model=ToteOut)
+async def record_tag_write(tote_id: uuid.UUID, body: NfcWriteIn, user: CurrentUser, db: Db):
+    """Record that a physical tag now carries this tote.
+
+    Called AFTER the client has written the tag, never before: if the write failed, the database
+    must not claim a tag exists that does not. The uid is unique per user, so re-using one tag
+    for a second bin is a 409 rather than a silent reassignment that would leave two bins
+    pointing at one tag.
+    """
+    tote = await _owned_tote(db, user.id, tote_id)
+    tote.nfc_tag_uid = body.tag_uid
+    tote.nfc_written_at = datetime.datetime.now(datetime.UTC)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "That tag is already on another tote. Erase it or use a fresh one.",
+        )
+    await db.refresh(tote)
+    return await to_tote_out(db, tote)
+
+
+@router.get("/resolve/{code}", response_model=NfcResolveOut)
+async def resolve_code(
+    code: str, user: CurrentUser, db: Db, tag_uid: str | None = Query(default=None)
+):
+    """Resolve a tapped tag (or scanned QR) to one of this user's totes.
+
+    Authenticated, unlike the public landing page: this returns an id the app will immediately
+    use to fetch contents.
+
+    A `tag_uid` that does not match the stored one is reported but does NOT block. Someone
+    standing in an attic holding a bin needs the answer; a hard refusal because a tag was
+    rewritten would strand them. Saying "this is not the tag we recorded for A14" is the useful
+    behaviour, and the app surfaces it.
+    """
+    tote = (
+        await db.execute(
+            select(Tote).where(
+                Tote.user_id == user.id, func.lower(Tote.code) == code.strip().lower()
+            )
+        )
+    ).scalar_one_or_none()
+    if tote is None:
+        return NfcResolveOut(tote_id=None, code=code)
+    mismatch = bool(tag_uid and tote.nfc_tag_uid and tag_uid != tote.nfc_tag_uid)
+    return NfcResolveOut(tote_id=tote.id, code=tote.code, tag_mismatch=mismatch)

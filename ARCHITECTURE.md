@@ -7,7 +7,7 @@ suite-wide rule; silently-drifting docs have burned two sibling repos already.
 The build plan and the reasoning behind the locked decisions live in [CLAUDE.md](CLAUDE.md).
 This file describes what exists **now**.
 
-## Current state: Phase 2 (catalog, ledger, search)
+## Current state: Phase 3 (NFC + the index card)
 
 ```
 Tote/
@@ -21,6 +21,7 @@ Tote/
 │     │  ├─ local/CatalogCache  Room read cache — offline search
 │     │  └─ remote/             ApiService, DTOs, AuthInterceptor, SuiteAuthManager
 │     ├─ di/                    NetworkModule, DatabaseModule
+│     ├─ nfc/                   TagIo, NfcWriteSession, TapRouter
 │     ├─ util/UiState.kt        Idle/Loading/Success/Error
 │     └─ ui/
 │        ├─ auth/               AuthViewModel + LoginScreen/LoginContent
@@ -37,12 +38,13 @@ Tote/
 │  │  ├─ security.py            session JWTs + CurrentUser dependency
 │  │  ├─ limiter.py             slowapi rate limiting
 │  │  ├─ models/                the eleven tables of §4
-│  │  ├─ routers/               suite_auth, users, catalog, totes, items
+│  │  ├─ routers/               suite_auth, users, catalog, totes, items, public
 │  │  ├─ schemas/               request/response models
 │  │  └─ services/
 │  │     ├─ suite_auth.py       JWKS validation + find-or-create
 │  │     ├─ movement.py         THE single writer of whereabouts
-│  │     └─ catalog.py          read-side joins, counts, local_today()
+│  │     ├─ catalog.py          read-side joins, counts, local_today()
+│  │     └─ card.py             the printable index card + the shared tag URI
 │  ├─ alembic/versions/0001_    the whole schema
 │  └─ tests/                    pytest, asyncio_mode=auto
 ├─ scripts/synthetic_smoke.py   post-deploy smoke (SSO-only apps have no login to script)
@@ -366,9 +368,89 @@ the photo capture queue lands in Phase 4: queued captures are data that exists n
 a schema bump would silently delete them along with their files. Split the queue into its own
 database, or add real migrations, **before** that phase.
 
+## NFC, the QR, and the index card
+
+### The tag is a pointer, never the truth
+
+A written tag encodes one thing: a URI containing the tote's **code**. Contents are always
+fetched live. That is what lets a tag written a year ago still open a bin that has since been
+renamed, relabelled, moved and refilled — a tag is a physical object in an attic that no deploy
+can patch, so anything it asserts beyond identity would eventually be a lie.
+
+The URI is built from a **code**, not an id, for the same reason: the code is the one identifier
+that is also printed on the card, readable by a human, and stable across schema changes. The
+base comes from `GET /nfc/base` rather than being compiled into the app, so the value being
+burned into physical objects has exactly one source.
+
+The second NDEF record is a short human summary, and it is explicitly a **cache**. Any phone's
+stock NFC reader shows it with no app installed. It goes stale as contents change and that is
+fine — the app never reads it, and rewriting every tag whenever an item moved would make tags
+wrong far more often than right.
+
+### `/t/{code}` is the only unauthenticated surface
+
+Its security property matters more than the page does: **it must not leak contents.** Anyone who
+can read the tag already knows the bin exists; what they must not learn from it is what is
+inside. So the page shows the code and nothing else — not the label, not the location, not the
+count. "A14, open it in Tote" is a useful dead end; "A14 — Christmas decor, Attic, 37 items" is
+an inventory printed on the outside of the box. Asserted in tests, including that the code is
+escaped, because it arrives from a tag anyone could have written.
+
+### Why not App Links
+
+The tap-to-open filter is `NDEF_DISCOVERED` on the scheme/host/port/path, deliberately **not**
+an App Links filter with `autoVerify`. App Links would require a reachable
+`.well-known/assetlinks.json` on the host, and the host is tailnet-only. NFC dispatch matches the
+filter directly with no verification step. The **port is part of the match**, because the suite
+shares one hostname across apps on different ports.
+
+`MainActivity` is `singleTask`, so a second tap while the app is open arrives through
+`onNewIntent`, not `onCreate`. The launch intent is therefore Compose state, not a field read
+once — reading it only in `onCreate` would make the first tap work and every later one silently
+do nothing, which looks exactly like flaky hardware.
+
+### Writing, and its three real failure modes
+
+Writing uses a foreground **reader-mode** session that is live only while the write sheet is
+open, so the radio is never left armed and a tap outside that sheet still does the normal thing.
+Reader mode rather than foreground dispatch because it suppresses the platform's own handling —
+otherwise holding a tag to the phone would bounce the user to the very landing page they are
+trying to write.
+
+| Failure | Response |
+|---|---|
+| Tag locked | say so; nothing else to do |
+| Too small | retry with the summary dropped — the URI is the half that matters. Only fail if even that will not fit |
+| Moved away mid-write | report it; the tag may be half-written |
+
+**The uid is recorded on the server only after the physical write succeeds.** Recording first
+would leave the database claiming a tag that was never written, discovered in an attic. If the
+write succeeds but the record fails, the app says *that* specifically, so nobody rewrites a tag
+that is already correct.
+
+A tag's **hardware uid** is stored and is unique per user, so reusing one tag for a second bin is
+a 409 rather than a silent reassignment. `GET /totes/resolve/{code}` reports a **mismatch** when
+the tapped tag is not the recorded one — but still resolves. Someone standing in an attic holding
+a bin needs the answer; refusing would strand them.
+
+### The card
+
+Rendered server-side as a 5×3in PDF so there is exactly one layout for a physical object. The
+code is set enormous and everything else small: the reader is at arm's length in front of a stack
+of identical bins. The printed count says "when printed", because a printed count is a snapshot
+and saying when it was true is the difference between a stale number and a lie.
+
+The QR **encodes the same URI as the tag**, via the same `tote_uri` builder — that is what makes
+the redundancy real, and a test captures what actually reaches the QR encoder during a render to
+keep the two from ever forking. (The rendered pixels were decoded by hand once, 2026-08-16, and
+matched; the seam test is what keeps it true without a 60 MB OpenCV install on every CI run.)
+
+The card is mono on purpose. Most people print on a mono printer, and the yellow that makes the
+app read as a tote would come out grey.
+
 ## Not yet built
 
-NFC and the index card
+Photo capture and the AI draft pipeline (Phase 4)
 (Phase 3); photo capture and the AI draft pipeline (Phase 4); the sizing ladder (Phase 5);
 people and lending (Phase 6); backups (Phase 7, once there are photos to lose).
 

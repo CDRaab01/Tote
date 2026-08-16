@@ -20,6 +20,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import android.content.Intent
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,6 +35,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.data.remote.ItemDto
 import com.tote.data.remote.ToteDetailDto
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.net.toUri
+import com.tote.nfc.NfcWriteSession
+import com.tote.nfc.WriteState
+import com.tote.nfc.hasNfc
 import com.tote.ui.components.HazardRule
 import com.tote.ui.components.ToteButton
 import com.tote.ui.theme.ToteTheme
@@ -47,7 +54,26 @@ import design.pulse.ui.components.SectionHeader
 @Composable
 fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val writeState by viewModel.write.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
+    var cardUrl by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+
+    // The PDF is handed to the system rather than rendered in-app: printing is the whole point,
+    // and every phone already has a print/share path for a PDF URL.
+    LaunchedEffect(cardUrl) {
+        cardUrl?.let { url ->
+            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }
+            cardUrl = null
+        }
+    }
+
+    // Reader mode is live only while the write sheet is open, so holding the phone to a tag at
+    // any other time still does the normal thing (open the tote).
+    NfcWriteSession(
+        enabled = writeState is WriteState.Waiting,
+        onTag = viewModel::onTagPresented,
+    )
 
     when (val s = state) {
         is UiState.Success -> {
@@ -58,7 +84,12 @@ fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
                 onRepackAll = viewModel::repackAll,
                 onTakeOut = viewModel::moveOut,
                 onPutBack = viewModel::putBack,
+                onWriteTag = { if (hasNfc(context)) viewModel.beginWrite() },
+                onPrintCard = { cardUrl = viewModel.cardUrl() },
             )
+            if (writeState !is WriteState.Idle) {
+                WriteTagDialog(state = writeState, onDismiss = viewModel::cancelWrite)
+            }
             if (showAdd) {
                 AddItemDialog(
                     onDismiss = { showAdd = false },
@@ -96,6 +127,8 @@ fun ToteDetailContent(
     onTakeOut: (String) -> Unit,
     onPutBack: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onWriteTag: () -> Unit = {},
+    onPrintCard: () -> Unit = {},
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -145,6 +178,15 @@ fun ToteDetailContent(
                 }
             }
 
+            item {
+                TagAndCardRow(
+                    hasTag = tote.nfcTagUid != null,
+                    cardPrinted = tote.cardPrintedAt != null,
+                    onWriteTag = onWriteTag,
+                    onPrintCard = onPrintCard,
+                )
+            }
+
             item { SectionHeader(label = "In this tote", channel = colors.stored.base) }
 
             if (tote.items.isEmpty()) {
@@ -180,6 +222,54 @@ fun ToteDetailContent(
     }
 }
 
+/**
+ * Whether this bin has been physically labelled yet.
+ *
+ * Surfaced rather than buried in a menu because an unlabelled bin is the failure the whole app
+ * is built to prevent: a catalogued tote with no tag and no card is a bin you can only find by
+ * opening it. Both are shown, and both are offered, because they are redundant on purpose — a
+ * tag can die under packing tape, and the card's QR still works.
+ */
+@Composable
+private fun TagAndCardRow(
+    hasTag: Boolean,
+    cardPrinted: Boolean,
+    onWriteTag: () -> Unit,
+    onPrintCard: () -> Unit,
+) {
+    val colors = ToteTheme.colors
+    val spacing = ToteTheme.spacing
+
+    PanelCard(channel = if (!hasTag && !cardPrinted) colors.attention.base else null) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    when {
+                        hasTag && cardPrinted -> "Tagged and labelled"
+                        hasTag -> "Tagged, no card printed"
+                        cardPrinted -> "Card printed, no tag"
+                        else -> "Not labelled yet"
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Spacer(Modifier.height(spacing.xs))
+                Caption(
+                    text = if (hasTag || cardPrinted) {
+                        "Tap the tag or scan the card to open this bin"
+                    } else {
+                        "Write a tag or print a card so this bin can be found"
+                    },
+                )
+            }
+            Column {
+                ToteButton(text = if (hasTag) "Rewrite" else "Write tag", onClick = onWriteTag, tonal = true)
+                Spacer(Modifier.height(spacing.xs))
+                ToteButton(text = "Print card", onClick = onPrintCard, tonal = true)
+            }
+        }
+    }
+}
+
 @Composable
 private fun ItemRow(item: ItemDto, actionLabel: String, onAction: () -> Unit) {
     val colors = ToteTheme.colors
@@ -208,6 +298,57 @@ private fun ItemRow(item: ItemDto, actionLabel: String, onAction: () -> Unit) {
             ToteButton(text = actionLabel, onClick = onAction, tonal = true)
         }
     }
+}
+
+/**
+ * The write sheet.
+ *
+ * It stays open after success rather than dismissing itself, because the useful next action is
+ * "stick it on the bin and check the tap works" — and auto-dismissing would hide the one line
+ * that says whether the summary had to be dropped to fit a small tag.
+ */
+@Composable
+private fun WriteTagDialog(state: WriteState, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                when (state) {
+                    is WriteState.Waiting -> "Hold the tag to the phone"
+                    is WriteState.Done -> "Tag written"
+                    is WriteState.Problem -> "Couldn't write the tag"
+                    WriteState.Idle -> ""
+                }
+            )
+        },
+        text = {
+            Column {
+                when (state) {
+                    is WriteState.Waiting ->
+                        Caption(text = "Keep it still until this says it is done.")
+                    is WriteState.Done -> {
+                        Caption(text = "Stick it on the bin and tap it to check.")
+                        if (state.truncatedSummary) {
+                            Spacer(Modifier.height(ToteTheme.spacing.sm))
+                            // The tag still works; what is lost is the human summary a stock
+                            // reader would show on a phone without Tote. Worth saying out loud.
+                            Caption(
+                                text = "The tag was too small for the summary, so only the " +
+                                    "link was written. It still opens the tote.",
+                            )
+                        }
+                    }
+                    is WriteState.Problem -> Text(
+                        state.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    WriteState.Idle -> Unit
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
 }
 
 @Composable
@@ -270,6 +411,7 @@ private fun ToteDetailPreview() {
                         id = "c", name = "Outdoor lights", quantity = 6, status = "out",
                     ),
                 ),
+                nfcTagUid = "04A2B3C4D5E6",
             ),
             onAddItem = {}, onUnpackAll = {}, onRepackAll = {}, onTakeOut = {}, onPutBack = {},
         )

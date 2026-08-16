@@ -379,13 +379,14 @@ including the GIN index.
 *Exit: "Sign in with Dragonfly" works against the live identity server; schema migrates
 **and downgrades** cleanly on a fresh DB.*
 
-**Phase 2 — Totes, locations, categories, manual items.** Full CRUD, the movement service
+**Phase 2 — Totes, locations, categories, manual items.** ✅ **DONE 2026-08-16** (#2 server, #3
+client, #4 flaky-test fix). Full CRUD, the movement service
 and ledger, unpack/repack bulk ops, search endpoint. Android: tote list, tote detail, manual
 add/edit, search screen, Room cache + offline search.
 *Exit: a tote can be created, filled by hand, searched, unpacked and repacked, with a
 correct ledger — the app is genuinely useful before any AI or NFC exists.*
 
-**Phase 3 — NFC + index card.** Tag read (reader mode + `NDEF_DISCOVERED` launch) and write,
+**Phase 3 — NFC + index card.** ✅ **DONE 2026-08-16.** Tag read (reader mode + `NDEF_DISCOVERED` launch) and write,
 UID storage and mismatch warning, `/t/<code>` server page, `GET /totes/{id}/card` PDF with QR.
 *Exit: tap a written tag on a locked phone → Tote opens that tote; a printed card's QR
 resolves to the same place; a dead tag is recoverable via the card.*

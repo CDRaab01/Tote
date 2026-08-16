@@ -137,6 +137,12 @@ class ScreenshotTest {
         ToteDetailContent(detail, {}, {}, {}, {}, {})
     }
 
+    // An unlabelled bin is the failure the whole app exists to prevent — a catalogued tote you
+    // can only find by opening it — so it gets its own baseline.
+    @Test fun tote_detail_unlabelled_dark() = capture("tote_detail_unlabelled_dark", dark = true) {
+        ToteDetailContent(detail.copy(nfcTagUid = null, cardPrintedAt = null), {}, {}, {}, {}, {})
+    }
+
     // LoginContent is the stateless body precisely so it can be captured here: the stateful
     // LoginScreen needs Hilt and a real AppAuth service, neither of which exists in a JVM test.
     @Test fun login_light() =

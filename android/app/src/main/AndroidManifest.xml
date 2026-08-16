@@ -5,6 +5,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Reading and writing tote tags. Not required: the app is fully usable by search and
+         browse on a device with no NFC hardware, so a hard requirement would exclude phones
+         for a convenience feature. -->
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+
     <!-- Read suite connection config from the Dragonfly hub. Granted only because all suite
          apps share one signing key; harmless if Dragonfly isn't installed. -->
     <uses-permission android:name="com.dragonfly.permission.READ_SUITE_CONFIG" />
@@ -31,6 +37,23 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Tap a tote's tag and land in that tote.
+                 NDEF_DISCOVERED, deliberately NOT an App Links filter with autoVerify: App
+                 Links would require a reachable .well-known/assetlinks.json on the host, and
+                 the host is tailnet-only. NFC dispatch matches this filter directly with no
+                 verification step, which is exactly what is wanted.
+                 The port is part of the match: Tote is served on :8448 and the other suite apps
+                 share this hostname on different ports. -->
+            <intent-filter>
+                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data
+                    android:scheme="https"
+                    android:host="dragonfly.tail2ce561.ts.net"
+                    android:port="8448"
+                    android:pathPrefix="/t/" />
             </intent-filter>
         </activity>
 
