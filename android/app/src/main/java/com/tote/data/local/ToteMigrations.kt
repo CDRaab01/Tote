@@ -33,29 +33,44 @@ import androidx.room.migration.Migration
 object ToteMigrations {
 
     /**
+     * v2 — the photo capture queue (Phase 4).
+     *
+     * Purely additive: one new table, nothing touched on `cached_items` or `cached_totes`. That
+     * is the whole migration, and it is the one the no-destructive-fallback rule was put in place
+     * a version early for — this table holds photos that exist nowhere else, so the version bump
+     * that introduces it must not also be the one that could have wiped it.
+     *
+     * The SQL is copied verbatim out of `schemas/com.tote.data.local.ToteDatabase/2.json` with
+     * Room's TABLE_NAME placeholder substituted, rather than typed out from the entity. The
+     * on-device migration test compares the migrated database against that file column for
+     * column, and a hand-written difference in a nullability flag or a default is exactly the
+     * kind of thing that reads as correct and fails there.
+     *
+     * Declared **before** [ALL], which is not cosmetic: properties in a Kotlin object initialise
+     * in declaration order, so an `ALL` above this would capture a null.
+     */
+    private val MIGRATION_1_2 = Migration(1, 2) { db ->
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `capture_queue` (" +
+                "`id` TEXT NOT NULL, " +
+                "`photoPaths` TEXT NOT NULL, " +
+                "`toteId` TEXT, " +
+                "`toteCode` TEXT, " +
+                "`state` TEXT NOT NULL, " +
+                "`attempts` INTEGER NOT NULL, " +
+                "`lastError` TEXT, " +
+                "`createdAtMs` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`id`))"
+        )
+    }
+
+    /**
      * Passed to `Room.databaseBuilder(...).addMigrations(*ALL)`.
      *
      * Order does not matter to Room — it finds a path through the graph — but keeping them in
      * ascending order keeps the file readable.
      */
     val ALL: Array<Migration> = arrayOf(
-        // No migrations yet: the database has only ever been at version 1.
-        //
-        // Example of the shape the first one will take, when Phase 4 adds the capture queue:
-        //
-        // Migration(1, 2) { db ->
-        //     db.execSQL(
-        //         """
-        //         CREATE TABLE IF NOT EXISTS capture_queue (
-        //             id TEXT NOT NULL PRIMARY KEY,
-        //             …
-        //         )
-        //         """.trimIndent()
-        //     )
-        // }
-        //
-        // Copy the CREATE TABLE straight out of the generated schema JSON rather than writing it
-        // by hand — the migration test compares the migrated database against that file column
-        // for column, and a hand-typed difference in a default or a nullability flag will fail.
+        MIGRATION_1_2,
     )
 }

@@ -1,0 +1,251 @@
+package com.tote.data
+
+import com.tote.data.local.CaptureQueueDao
+import com.tote.data.local.CaptureQueueEntity
+import com.tote.data.remote.ApiService
+import com.tote.data.remote.DraftDto
+import java.io.File
+import java.io.IOException
+import java.net.SocketTimeoutException
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.test.runTest
+import okhttp3.Protocol
+import okhttp3.Request
+import okhttp3.ResponseBody.Companion.toResponseBody
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.doAnswer
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.stub
+import retrofit2.HttpException
+import retrofit2.Response
+
+/**
+ * Drain semantics.
+ *
+ * Three outcomes, not two, and the third is the one that matters most here: `/items/scan` is
+ * synchronous and slow, so a client-side timeout is not evidence the upload failed. Retrying it
+ * automatically would catalogue the same object twice, and a duplicate in a storage catalog is
+ * indistinguishable from two real ornament boxes.
+ */
+class CaptureQueueRepositoryTest {
+
+    @get:Rule val tmp = TemporaryFolder()
+
+    private lateinit var dao: FakeDao
+    private lateinit var api: ApiService
+
+    @Before
+    fun setUp() {
+        dao = FakeDao()
+        api = mock()
+    }
+
+    private fun repo() = CaptureQueueRepository(dao, api)
+
+    private var counter = 0
+
+    private fun photoFiles(n: Int = 2): List<File> {
+        val dir = tmp.newFolder("capture_${counter++}")
+        return (0 until n).map { i ->
+            File(dir, "photo_$i.jpg").apply { writeBytes(ByteArray(64) { it.toByte() }) }
+        }
+    }
+
+    private fun draft() = DraftDto(id = "draft-1", name = "Red storage box", photoCount = 2)
+
+    @Test
+    fun `a successful drain deletes the row and the local photos`() = runTest {
+        api.stub { onBlocking { scanItem(any(), anyOrNull()) } doAnswer { draft() } }
+        val files = photoFiles()
+
+        val repository = repo()
+        repository.enqueue(files)
+
+        assertTrue(repository.drain())
+        assertEquals(0, dao.rows.value.size)
+        // The server owns the photos now; a second copy on the phone is an invisible photo
+        // library nobody manages.
+        assertTrue(files.none { it.exists() })
+    }
+
+    @Test
+    fun `offline keeps the row pending and asks WorkManager to come back`() = runTest {
+        api.stub { onBlocking { scanItem(any(), anyOrNull()) } doAnswer { throw IOException("offline") } }
+        val repository = repo()
+        repository.enqueue(photoFiles())
+
+        assertFalse(repository.drain())
+        val row = dao.rows.value.single()
+        assertEquals(CaptureQueueEntity.STATE_PENDING, row.state)
+        assertEquals(1, row.attempts)
+    }
+
+    @Test
+    fun `a rejection marks the row failed, and the drain keeps going`() = runTest {
+        var calls = 0
+        api.stub {
+            onBlocking { scanItem(any(), anyOrNull()) } doAnswer {
+                calls++
+                if (calls == 1) throw httpError(422) else draft()
+            }
+        }
+        val repository = repo()
+        repository.enqueue(photoFiles())
+        repository.enqueue(photoFiles())
+
+        // A poison row must not abort the rest of the queue — one bad capture cannot hold a
+        // bin's worth of good ones hostage.
+        assertTrue(repository.drain())
+        assertEquals(1, dao.rows.value.size)
+        assertEquals(CaptureQueueEntity.STATE_FAILED, dao.rows.value.single().state)
+        assertEquals("HTTP 422", dao.rows.value.single().lastError)
+    }
+
+    @Test
+    fun `a timeout is uncertain, not failed, and never retried automatically`() = runTest {
+        api.stub {
+            onBlocking { scanItem(any(), anyOrNull()) } doAnswer {
+                throw SocketTimeoutException("timeout")
+            }
+        }
+        val repository = repo()
+        val files = photoFiles()
+        repository.enqueue(files)
+
+        // Reported CLEAR: WorkManager must not retry, because the server may well have processed
+        // it and a second upload would file the same object twice.
+        assertTrue(repository.drain())
+        assertEquals(CaptureQueueEntity.STATE_UNCERTAIN, dao.rows.value.single().state)
+        // And the photos survive, because the user may still need to retry by hand.
+        assertTrue(files.all { it.exists() })
+    }
+
+    @Test
+    fun `a subsequent drain leaves uncertain and failed rows alone`() = runTest {
+        var calls = 0
+        api.stub {
+            onBlocking { scanItem(any(), anyOrNull()) } doAnswer {
+                calls++
+                throw SocketTimeoutException("timeout")
+            }
+        }
+        val repository = repo()
+        repository.enqueue(photoFiles())
+        repository.drain()
+        assertEquals(1, calls)
+
+        repository.drain()
+        assertEquals(1, calls, "an uncertain row must not be picked up again on its own")
+    }
+
+    @Test
+    fun `a row stranded mid-upload by process death is released`() = runTest {
+        api.stub { onBlocking { scanItem(any(), anyOrNull()) } doAnswer { draft() } }
+        val repository = repo()
+        val id = repository.enqueue(photoFiles())
+        // What the process leaves behind if it dies during the ~35 s upload.
+        dao.setState(id, CaptureQueueEntity.STATE_UPLOADING, 0, null)
+
+        assertTrue(repository.drain())
+        assertEquals(0, dao.rows.value.size)
+    }
+
+    @Test
+    fun `retry puts a decided row back in line`() = runTest {
+        api.stub { onBlocking { scanItem(any(), anyOrNull()) } doAnswer { draft() } }
+        val repository = repo()
+        val id = repository.enqueue(photoFiles())
+        dao.setState(id, CaptureQueueEntity.STATE_FAILED, 1, "HTTP 500")
+
+        repository.retry(id)
+        val row = dao.rows.value.single()
+        assertEquals(CaptureQueueEntity.STATE_PENDING, row.state)
+        assertNull(row.lastError)
+    }
+
+    @Test
+    fun `discard removes the row and the photos`() = runTest {
+        val repository = repo()
+        val files = photoFiles()
+        val id = repository.enqueue(files)
+
+        repository.discard(id)
+        assertEquals(0, dao.rows.value.size)
+        assertTrue(files.none { it.exists() })
+    }
+
+    @Test
+    fun `the destination bin rides along with the capture`() = runTest {
+        api.stub { onBlocking { scanItem(any(), anyOrNull()) } doAnswer { draft() } }
+        val repository = repo()
+        repository.enqueue(photoFiles(), toteId = "tote-1", toteCode = "A14")
+
+        val row = dao.rows.value.single()
+        assertEquals("tote-1", row.toteId)
+        // Denormalised so the queue can name the bin while offline.
+        assertEquals("A14", row.toteCode)
+    }
+
+    private fun httpError(code: Int) = HttpException(
+        Response.error<Any>(
+            "rejected".toResponseBody(),
+            okhttp3.Response.Builder()
+                .request(Request.Builder().url("http://test/items/scan").build())
+                .protocol(Protocol.HTTP_1_1)
+                .code(code)
+                .message("Rejected")
+                .build(),
+        )
+    )
+
+    /**
+     * A hand-written fake rather than a mock: the drain's correctness is about the *sequence* of
+     * state transitions, and a fake that actually holds the rows is the only thing that shows a
+     * released-then-re-listed row behaving the way a real DAO would.
+     */
+    private class FakeDao : CaptureQueueDao {
+        val rows = MutableStateFlow<List<CaptureQueueEntity>>(emptyList())
+
+        override suspend fun upsert(entity: CaptureQueueEntity) {
+            rows.value = rows.value.filterNot { it.id == entity.id } + entity
+        }
+
+        override fun observeAll(): Flow<List<CaptureQueueEntity>> = rows
+
+        override suspend fun listUploadable(state: String): List<CaptureQueueEntity> =
+            rows.value.filter { it.state == state }.sortedBy { it.createdAtMs }
+
+        override suspend fun byId(id: String): CaptureQueueEntity? =
+            rows.value.firstOrNull { it.id == id }
+
+        override suspend fun setState(id: String, state: String, attempts: Int, lastError: String?) {
+            rows.value = rows.value.map {
+                if (it.id == id) it.copy(state = state, attempts = attempts, lastError = lastError)
+                else it
+            }
+        }
+
+        override suspend fun delete(id: String) {
+            rows.value = rows.value.filterNot { it.id == id }
+        }
+
+        override fun observeCount(): Flow<Int> = rows.map { it.size }
+
+        override suspend fun releaseStranded(pending: String, uploading: String) {
+            rows.value = rows.value.map {
+                if (it.state == uploading) it.copy(state = pending) else it
+            }
+        }
+    }
+}

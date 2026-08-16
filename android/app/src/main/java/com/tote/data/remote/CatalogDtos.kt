@@ -75,6 +75,45 @@ data class ItemDto(
 @Serializable
 data class SearchHitDto(val item: ItemDto, val rank: Float)
 
+/**
+ * A scanned item awaiting a human decision.
+ *
+ * `scanError` and `scanConfidence` are both carried because they mean completely different
+ * things and look identical without them: `identify_unavailable` says the model could not be
+ * reached and the draft is empty for a reason nobody can fix by squinting at the photo, while a
+ * low confidence says the photograph was hard. The review screen has to be able to say which.
+ */
+@Serializable
+data class DraftDto(
+    val id: String,
+    val name: String,
+    val description: String? = null,
+    val notes: String? = null,
+    @SerialName("category_id") val categoryId: String? = null,
+    val quantity: Int = 1,
+    val condition: String? = null,
+    @SerialName("scan_error") val scanError: String? = null,
+    @SerialName("scan_confidence") val scanConfidence: String? = null,
+    @SerialName("draft_tote_id") val draftToteId: String? = null,
+    @SerialName("photo_count") val photoCount: Int = 0,
+    @SerialName("created_at") val createdAt: String? = null,
+)
+
+/**
+ * The human's decision. `toteId` is required — confirming is what files the item, and that is
+ * the moment the `initial` movement row is written.
+ */
+@Serializable
+data class DraftConfirm(
+    @SerialName("tote_id") val toteId: String,
+    val name: String,
+    val description: String? = null,
+    val notes: String? = null,
+    @SerialName("category_id") val categoryId: String? = null,
+    val quantity: Int = 1,
+    val condition: String? = null,
+)
+
 @Serializable
 data class ToteCreate(
     val code: String,

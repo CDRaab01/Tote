@@ -120,8 +120,17 @@ interface CatalogDao {
  *
  * **Bumping `version` requires a migration.** There is no destructive fallback: see
  * `DatabaseModule`, and `ToteDatabaseMigrationTest` for the procedure.
+ *
+ * Two kinds of table live here and they are not equivalent. `cached_*` is a disposable snapshot
+ * of server state; `capture_queue` (v2) is the only copy of photos taken where there was no
+ * signal. A migration may rebuild the former and must never drop the latter.
  */
-@Database(entities = [CachedItem::class, CachedTote::class], version = 1, exportSchema = true)
+@Database(
+    entities = [CachedItem::class, CachedTote::class, CaptureQueueEntity::class],
+    version = 2,
+    exportSchema = true,
+)
 abstract class ToteDatabase : RoomDatabase() {
     abstract fun catalogDao(): CatalogDao
+    abstract fun captureQueueDao(): CaptureQueueDao
 }

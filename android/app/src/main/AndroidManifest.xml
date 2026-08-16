@@ -11,6 +11,12 @@
     <uses-permission android:name="android.permission.NFC" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
 
+    <!-- Batch capture. Not required hardware: a phone with no camera can still catalogue from
+         the gallery, and a hard requirement would exclude devices over a convenience. The
+         capture screen requests the runtime grant and falls back to the picker on denial. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
     <!-- Read suite connection config from the Dragonfly hub. Granted only because all suite
          apps share one signing key; harmless if Dragonfly isn't installed. -->
     <uses-permission android:name="com.dragonfly.permission.READ_SUITE_CONFIG" />
@@ -68,6 +74,33 @@
             android:name="net.openid.appauth.RedirectUriReceiverActivity"
             android:theme="@style/Theme.AppCompat.Translucent.NoTitleBar"
             tools:node="merge" />
+
+        <!-- Hands the camera app a writable target inside our own storage. Without it,
+             TakePicture() cannot be given a file:// Uri at all on API 24+. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.tote.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- Remove WorkManager's default initialiser so the Hilt worker factory is the one that
+             builds UploadWorker. Left in place, WorkManager initialises itself first with the
+             default factory and every @HiltWorker fails to construct — at drain time, in the
+             background, silently. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
     </application>
 
 </manifest>

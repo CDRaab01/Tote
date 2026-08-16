@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Camera output lands in cache/captures/ (transient, pre-queue); once a capture is queued its
+     photos move to files/capture_queue/ and stay there until the upload succeeds. The move is
+     the point: a cache directory is one the OS may empty at any moment, and the queue's photos
+     exist nowhere else until the server has them. -->
+<paths>
+    <cache-path name="captures" path="captures/" />
+    <files-path name="capture_queue" path="capture_queue/" />
+</paths>
