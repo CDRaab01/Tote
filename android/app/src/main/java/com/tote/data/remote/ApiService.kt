@@ -63,6 +63,20 @@ interface ApiService {
     @GET("items/{id}/movements")
     suspend fun movements(@Path("id") id: String): List<MovementDto>
 
+    @POST("totes/{id}/nfc")
+    suspend fun recordTagWrite(@Path("id") id: String, @Body body: NfcWrite): ToteDto
+
+    @GET("totes/resolve/{code}")
+    suspend fun resolveCode(
+        @Path("code") code: String,
+        @Query("tag_uid") tagUid: String? = null,
+    ): NfcResolveDto
+
+    /** Where to point tags. Fetched rather than compiled in: a written tag is a physical object
+     *  no deploy can patch, so the value being written must come from one place. */
+    @GET("nfc/base")
+    suspend fun nfcBase(): NfcBaseDto
+
     @GET("search")
     suspend fun search(@Query("q") q: String): List<SearchHitDto>
 }

@@ -23,6 +23,10 @@ dependencies = [
     # zoneinfo has no tz database on slim/Windows images; without this, ZoneInfo("America/...")
     # raises and every date-only comparison silently falls back to UTC.
     "tzdata==2026.1",
+    # The printable index card. Rendered server-side so there is exactly one layout for a
+    # physical object; the QR encodes the same URI as the NFC tag so the two can never fork.
+    "reportlab==4.4.4",
+    "qrcode[pil]==8.2",
 ]
 
 [project.optional-dependencies]

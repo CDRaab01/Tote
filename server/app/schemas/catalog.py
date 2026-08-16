@@ -105,6 +105,9 @@ class ToteOut(BaseModel):
     archived: bool
     nfc_tag_uid: str | None
     nfc_written_at: datetime.datetime | None
+    # So the app can surface the bins that have never been labelled — the ones that will be a
+    # mystery in six months.
+    card_printed_at: datetime.datetime | None
     created_at: datetime.datetime
     # Computed, never stored: a denormalised count is the first thing to drift, and here the
     # drift would be printed on an index card and written into an NFC tag.
@@ -231,3 +234,24 @@ class ToteDetail(ToteOut):
     # Items that left this tote and have not returned. Shown rather than hidden: the "it should
     # be in here" gap is the single most common reason to distrust a catalog.
     items_out: list[ItemOut] = []
+
+
+class NfcWriteIn(BaseModel):
+    """Recorded after the client has successfully written a physical tag.
+
+    `tag_uid` is the tag's HARDWARE uid, not anything we chose. Storing it is what lets Tote say
+    "this tag belongs to A14, but you are holding B03's card" instead of silently trusting
+    whatever a tag claims — a tag is a physical object anyone could have rewritten.
+    """
+
+    tag_uid: str = Field(min_length=4, max_length=32)
+
+
+class NfcResolveOut(BaseModel):
+    """What the app gets when it resolves a tapped tag."""
+
+    tote_id: uuid.UUID | None
+    code: str
+    # True when a tote with this code exists but its stored uid is a DIFFERENT tag. The tap is
+    # still resolved — refusing would be useless in an attic — but the app says so.
+    tag_mismatch: bool = False

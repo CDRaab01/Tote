@@ -10,15 +10,21 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import android.content.Intent
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.NavType
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.tote.nfc.TapRouter
+import com.tote.nfc.TapTarget
 import com.tote.ui.search.SearchScreen
 import com.tote.ui.totes.ToteDetailScreen
 import com.tote.ui.totes.ToteListScreen
@@ -38,8 +44,39 @@ object Routes {
 }
 
 @Composable
-fun ToteNavHost() {
+fun ToteNavHost(
+    launchIntent: Intent? = null,
+    onIntentConsumed: () -> Unit = {},
+    tapRouter: TapRouter = hiltViewModel(),
+) {
     val nav = rememberNavController()
+    val tapTarget by tapRouter.target.collectAsStateWithLifecycle()
+
+    LaunchedEffect(launchIntent) {
+        if (launchIntent != null) {
+            tapRouter.onIntent(launchIntent)
+            onIntentConsumed()
+        }
+    }
+
+    LaunchedEffect(tapTarget) {
+        when (val t = tapTarget) {
+            // A tap goes straight to the bin's LIVE contents. The tag is a pointer, never the
+            // source of truth, so a tag written a year ago still opens a bin that has since been
+            // renamed, moved and refilled.
+            is TapTarget.Tote -> {
+                nav.navigate(Routes.toteDetail(t.id)) { launchSingleTop = true }
+                tapRouter.consumed()
+            }
+            // A tag whose code resolves to nothing (deleted bin, or offline). Not a dead end:
+            // drop the person on search rather than an error screen.
+            is TapTarget.Unknown -> {
+                nav.navigate(Routes.SEARCH) { launchSingleTop = true }
+                tapRouter.consumed()
+            }
+            null -> Unit
+        }
+    }
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
 

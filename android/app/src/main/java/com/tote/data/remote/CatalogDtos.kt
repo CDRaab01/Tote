@@ -45,6 +45,8 @@ data class ToteDetailDto(
     val notes: String? = null,
     @SerialName("item_count") val itemCount: Int = 0,
     @SerialName("out_count") val outCount: Int = 0,
+    @SerialName("nfc_tag_uid") val nfcTagUid: String? = null,
+    @SerialName("card_printed_at") val cardPrintedAt: String? = null,
     val items: List<ItemDto> = emptyList(),
     @SerialName("items_out") val itemsOut: List<ItemDto> = emptyList(),
 )
@@ -132,3 +134,18 @@ data class MovementDto(
     val note: String? = null,
     @SerialName("moved_at") val movedAt: String,
 )
+
+@Serializable
+data class NfcWrite(@SerialName("tag_uid") val tagUid: String)
+
+@Serializable
+data class NfcResolveDto(
+    @SerialName("tote_id") val toteId: String? = null,
+    val code: String,
+    // True when a tote with this code exists but its recorded tag is a DIFFERENT one. The tap
+    // still resolves — someone in an attic needs the answer — but the app says so.
+    @SerialName("tag_mismatch") val tagMismatch: Boolean = false,
+)
+
+@Serializable
+data class NfcBaseDto(val base: String)
