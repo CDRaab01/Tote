@@ -61,13 +61,27 @@ data class ToteColors(
     /**
      * The safety-yellow marking, for the band/rule that makes a panel read as a tote.
      *
-     * Deliberately NOT taken from [slate]`.base`, which is the yellow only in dark mode (on white
-     * the pair inverts and `base` becomes the charcoal). This is the half that must stay yellow in
-     * both themes, so it steps down to [PulseYellowDeep] on light surfaces where bright yellow is
-     * effectively invisible (1.42:1 on white). Decoration and emphasis only — it must never be the
-     * sole carrier of meaning, and it must never have white text on it.
+     * **Bright yellow in BOTH themes, and that is the point.** Its home is the hero panel, which
+     * is a charcoal sweep in light mode as well as dark, so the surface underneath it never
+     * changes — the band measures 13.66:1 there either way. An earlier version stepped this down
+     * to [PulseYellowDeep] in light mode on the theory that light surfaces need a darker yellow;
+     * that was applying a white-background rule to something that never sits on a white
+     * background, and it drained the brand out of the entire light theme (the band went olive and
+     * nothing else on screen was yellow at all). Caught by rendering it.
+     *
+     * Use on charcoal/dark fills only. On a light surface bright yellow is 1.42:1 and effectively
+     * invisible — reach for [hazardOnSurface] there. Decoration and emphasis only: it must never
+     * be the sole carrier of meaning, and it must never have white text on it.
      */
     val hazard: Color,
+    /**
+     * The yellow marking for use on the app's own background rather than on a charcoal fill.
+     *
+     * Steps down to [PulseYellowDeep] in light mode (4.92:1 on white) because the bright yellow
+     * cannot be seen there. Reads as an olive-gold, which is what "yellow that survives on white"
+     * actually looks like — prefer putting the mark on a dark fill and using [hazard] instead.
+     */
+    val hazardOnSurface: Color,
 )
 
 private fun toteColors(dark: Boolean): ToteColors {
@@ -85,7 +99,8 @@ private fun toteColors(dark: Boolean): ToteColors {
         panelHigh = structure.panelHigh,
         glow = structure.glow,
         heroGradient = structure.heroGradient,
-        hazard = if (dark) PulseYellow else PulseYellowDeep,
+        hazard = PulseYellow,
+        hazardOnSurface = if (dark) PulseYellow else PulseYellowDeep,
     )
 }
 
