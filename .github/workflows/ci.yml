@@ -1,0 +1,215 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+  schedule:
+    # Weekly bit-rot check (Mondays 08:00 UTC) so "green" stays meaningful between pushes.
+    - cron: "0 8 * * 1"
+
+# This workflow is server checks + Android tests + debug build for push/PR only. Signed release
+# publishing (release.yml) and the self-hosted redeploy (deploy.yml) land in later phases, once
+# the KEYSTORE_* secrets and the TOTE_DIR variable exist.
+#
+# The Android jobs check the repo out into Tote/ and the sibling Pulse repo into Pulse/, so the
+# composite build's includeBuild("../../Pulse") (relative to Tote/android) resolves inside the
+# workspace. Pulse is public, so the default token suffices.
+#
+# EVERY job here runs on a GitHub-hosted runner. Suite invariant 7: never put a `pull_request`
+# trigger on a job that runs on a self-hosted runner — the repos are public and the runners are
+# on the prod host, so a fork PR could execute code on this machine.
+
+jobs:
+  # ── Server ────────────────────────────────────────────────────────────────
+
+  server-lint:
+    name: "Server — Lint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # Pinned to the SAME version as pyproject's dev extra on purpose. Crate's CI pins 0.4.4
+      # while its pyproject asks for 0.16.2, so a rule added in between passes locally and fails
+      # in CI (or the reverse). Bump both together.
+      - run: pip install ruff==0.16.2
+      - run: ruff check app tests
+        working-directory: server
+      - run: ruff format --check app tests
+        working-directory: server
+
+  server-test:
+    name: "Server — Test"
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tote
+          POSTGRES_PASSWORD: tote
+          POSTGRES_DB: tote_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # 127.0.0.1, never localhost: the ::1-first fallback stalls against a service that
+      # publishes on IPv4 only (a suite-wide lesson — it turned a 5 s suite into 6+ minutes).
+      DATABASE_URL: postgresql+asyncpg://tote:tote@127.0.0.1:5432/tote_test
+      SECRET_KEY: ci-test-secret-key-not-for-production
+      DB_NULLPOOL: "true"
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: server/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: alembic upgrade head
+      - run: pytest tests/ -v --tb=short
+
+  # ── Android ───────────────────────────────────────────────────────────────
+
+  android-test:
+    name: "Android — Unit Tests"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: Tote/android
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: Tote
+      - uses: actions/checkout@v7
+        with:
+          repository: CDRaab01/Pulse
+          path: Pulse
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v6
+      - run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "server.url=${{ vars.TOTE_SERVER_URL || 'https://dragonfly.tail2ce561.ts.net:8448/' }}" >> local.properties
+      # Exclude Robolectric NATIVE-graphics screenshot tests from the gating job (they download a
+      # large android-all runtime and can stall CI); they run on demand in the screenshots job.
+      - run: ./gradlew :app:testDebugUnitTest --no-daemon -PexcludeScreenshots
+
+  android-build:
+    name: "Android — Assemble Debug APK"
+    runs-on: ubuntu-latest
+    needs: android-test
+    defaults:
+      run:
+        working-directory: Tote/android
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: Tote
+      - uses: actions/checkout@v7
+        with:
+          repository: CDRaab01/Pulse
+          path: Pulse
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v6
+      - run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "server.url=${{ vars.TOTE_SERVER_URL || 'https://dragonfly.tail2ce561.ts.net:8448/' }}" >> local.properties
+      - run: ./gradlew :app:assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tote-debug-${{ github.sha }}
+          path: Tote/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+  android-screenshots:
+    name: "Android — UI Screenshots"
+    runs-on: ubuntu-latest
+    # Manual-only: the Robolectric native-graphics path is flaky on CI, so it doesn't gate
+    # push/PR. Run from the Actions tab to record/compare screenshots.
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: Tote/android
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: Tote
+      - uses: actions/checkout@v7
+        with:
+          repository: CDRaab01/Pulse
+          path: Pulse
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v6
+      - run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "server.url=${{ vars.TOTE_SERVER_URL || 'https://dragonfly.tail2ce561.ts.net:8448/' }}" >> local.properties
+      - run: >-
+          ./gradlew :app:testDebugUnitTest
+          --tests "com.tote.screenshot.ScreenshotTest"
+          --no-daemon -Proborazzi.test.compare=true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ui-screenshots-${{ github.sha }}
+          path: |
+            Tote/android/app/screenshots/**
+            Tote/android/app/build/outputs/roborazzi/**
+          retention-days: 30
+
+  # ── Security / supply chain ───────────────────────────────────────────────
+
+  secret-scan:
+    name: "Secret scan (gitleaks)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # full history so a secret in any past commit is caught
+      # Exit 1 on any finding fails the job. --redact keeps the value out of the public log.
+      - run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect --source /repo --redact --no-banner
+
+  dep-audit:
+    name: "Dependency audit (pip-audit)"
+    runs-on: ubuntu-latest
+    # Weekly-only + advisory: never blocks a push/PR. A red weekly run is the signal to look at
+    # advisories — and it only stays a signal if it is not permanently red, so a finding gets
+    # either fixed or explicitly ignored WITH the reasoning, never left to rot.
+    if: github.event_name == 'schedule'
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit
+      - run: pip install -e .
+      # PYSEC-2026-1325 (ecdsa, Minerva timing attack on P-256) is ignored deliberately, matching
+      # Crate. It has NO fix version — upstream considers side channels out of scope — and ecdsa
+      # is present only because python-jose declares it unconditionally. Tote never exercises it:
+      # local tokens are HS256 and suite tokens are decoded with algorithms=["RS256"] pinned, so
+      # no EC signing, key generation or ECDH ever runs. Re-check whenever python-jose is bumped;
+      # the real remediation is dropping python-jose for PyJWT.
+      - run: pip-audit --desc --ignore-vuln PYSEC-2026-1325

@@ -1,0 +1,15 @@
+# This host checks out with core.autocrlf=true, which rewrites LF to CRLF. Anything a Linux
+# container executes must stay LF: a CR on the shebang line makes the kernel look for
+# "/usr/bin/env bash\r" and the container dies with exit 127. server/Dockerfile also strips CRs
+# defensively, but keeping them out of the checkout is the actual fix.
+*.sh text eol=lf
+docker-entrypoint.sh text eol=lf
+gradlew text eol=lf
+
+# Binary — never touch line endings or try to diff these.
+*.jar binary
+*.keystore binary
+*.jks binary
+*.apk binary
+*.aab binary
+*.png binary

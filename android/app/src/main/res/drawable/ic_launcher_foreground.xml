@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Tote glyph: a lidded storage bin with a carry handle, drawn as an outline so it reads at
+  launcher size. Single flat fill on purpose — this same drawable is the <monochrome> layer, and
+  a themed icon is tinted wholesale, so any second colour here would silently vanish there.
+
+  108x108 adaptive viewport; everything sits inside the centred 72dp safe zone (18..90).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Carry handle -->
+    <path
+        android:fillColor="#F6D80B"
+        android:pathData="M47,27 L61,27 A4,4 0 0 1 65,31 L65,37 L59,37 L59,33 L49,33 L49,37 L43,37 L43,31 A4,4 0 0 1 47,27 Z" />
+
+    <!-- Lid, slightly overhanging the body the way a real bin lid does -->
+    <path
+        android:fillColor="#F6D80B"
+        android:pathData="M26,39 L82,39 L80,50 L28,50 Z" />
+
+    <!-- Body: tapered tub, hollowed with evenOdd so it reads as a container, not a slab -->
+    <path
+        android:fillColor="#F6D80B"
+        android:fillType="evenOdd"
+        android:pathData="M30,53 L78,53 L73,85 L35,85 Z M37,60 L71,60 L67,78 L41,78 Z" />
+</vector>

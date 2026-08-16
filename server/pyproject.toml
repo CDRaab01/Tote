@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tote-server"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.1",
+    "sqlalchemy[asyncio]==2.0.52",
+    "alembic==1.19.1",
+    "asyncpg==0.31.0",
+    "pydantic[email]==2.13.4",
+    "pydantic-settings==2.15.0",
+    "python-jose[cryptography]==3.5.0",
+    "httpx==0.28.1",
+    "python-multipart==0.0.32",
+    "greenlet==3.5.5",
+    "slowapi==0.1.10",
+    "email-validator==2.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    # pytest stays on 8.x deliberately, matching the rest of the suite: PYSEC-2026-1845 is
+    # fixed in 9.0.3, but 9.x conflicts with pytest-asyncio 0.26.0, and moving pytest-asyncio
+    # changes the fixture/loop semantics this suite leans on (asyncio_mode = "auto"). Dev-only,
+    # and CI's pip-audit job installs runtime deps only, so it gates nothing. Bump both together
+    # as a deliberate change — not as a drive-by.
+    "pytest==8.4.2",
+    "pytest-asyncio==0.26.0",
+    "httpx==0.28.1",
+    "ruff==0.16.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint.per-file-ignores]
+# DB_NULLPOOL must be set before any `app.*` import (the engine is built at import time).
+"tests/conftest.py" = ["E402"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

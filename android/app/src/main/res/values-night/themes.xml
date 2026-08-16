@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- PulseInk, so the launch frame matches the dark surface the app actually draws. -->
+    <style name="Theme.Tote" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF0B0D10</item>
+    </style>
+</resources>

@@ -1,0 +1,71 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Credentials default to tote/tote for local use; override via the root .env to rotate.
+    # Must stay in sync with DATABASE_URL below (same variables).
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tote}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tote}
+      POSTGRES_DB: ${POSTGRES_DB:-tote}
+    # Host port 5439: 5432-5438 belong to Spotter/Plate/Cookbook/dragonfly-id/Magpie/Remnant/
+    # Crate on this host. Verified free 2026-08-15 against `docker ps` AND `netstat` — Docker
+    # Desktop's proxy makes netstat alone unreliable, so check both before claiming a port.
+    ports:
+      - "127.0.0.1:5439:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tote} -d ${POSTGRES_DB:-tote}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  server:
+    build: ./server
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    env_file:
+      - ./server/.env
+    environment:
+      # Reach Postgres over the compose network; overrides DATABASE_URL from .env.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-tote}:${POSTGRES_PASSWORD:-tote}@db:5432/${POSTGRES_DB:-tote}
+      # Deploy stamp surfaced by GET /version. deploy/redeploy.* exports these before
+      # `compose up`; default to "unknown" for a plain manual `docker compose up`.
+      GIT_SHA: ${GIT_SHA:-unknown}
+      BUILT_AT: ${BUILT_AT:-unknown}
+      # Suite SSO — public, non-secret values pinned here rather than only in .env: Compose
+      # doesn't reload env_file content on `up`, so an env_file-only flag gets dropped when a
+      # redeploy recreates the container without re-reading .env, silently 404ing /auth/suite.
+      # Tote is SSO-only, so losing these would mean NO login path at all. (Phase 1 wires the
+      # endpoint; pinning them now means the deploy that first needs them already has them.)
+      SUITE_JWKS_URL: https://id.dragonflymedia.org/.well-known/jwks.json
+      SUITE_ISSUER: https://id.dragonflymedia.org
+      # The base written into NFC tags' URI record. A LITERAL, not an interpolation: Crate
+      # shipped `${NTFY_TOPIC:-}` reading from a root .env this repo doesn't have, so the value
+      # could never be anything but empty and every notification was silently off. The stakes
+      # are higher here — this string gets baked into physical tags in an attic, where a wrong
+      # value cannot be fixed by redeploying.
+      NFC_URI_BASE: https://dragonfly.tail2ce561.ts.net:8448
+    depends_on:
+      db:
+        condition: service_healthy
+    # Published on localhost only. Host port 8008: 8000-8007 belong to Spotter/Plate/
+    # posterizarr/Cookbook/dragonfly-id/Magpie/Remnant/Crate. Tote is tailnet-only — NO
+    # cloudflared service, no `tunnel` profile: it is reached via Tailscale Serve :8448 on the
+    # host. A complete household inventory is a burglar's shopping list; keep it off the
+    # public internet.
+    ports:
+      - "127.0.0.1:8008:8000"
+
+volumes:
+  pgdata:
