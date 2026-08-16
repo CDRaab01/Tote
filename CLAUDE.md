@@ -10,6 +10,95 @@
 
 ---
 
+## START HERE — state as of 2026-08-16
+
+**Phases 0-3 are complete. Phase 4 is half done: the server pipeline is live, the Android
+capture UI is not built.** Everything below is merged to `main`, deployed, and verified against
+production — not just green in CI.
+
+| | Status |
+|---|---|
+| Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
+| Serving | `a78d2bc` = `origin/main` |
+| Tests | **83 server** (pytest, real Postgres) + **33 Android** (19 unit + 14 Roborazzi) |
+| CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
+
+### The next task
+
+**The Android half of Phase 4**: the capture queue and the review stack. The server side is
+done and proven — `POST /items/scan` → draft → `POST /drafts/{id}/confirm`. What is missing:
+
+1. Camera + gallery capture, downscaled to ≤1600px JPEG client-side (`util/ImageBytes.kt`
+   pattern from Crate — raw camera captures blow the 8 MB upload cap).
+2. A Room-backed capture queue that survives process death, drained by WorkManager.
+   **This is the queue the migration work was done for** — see the warning below.
+3. The review stack: photos, identified name/category/condition, everything editable, then
+   confirm into a tote or discard.
+
+### Six things that will cost you time if you do not know them
+
+1. **`C:\Code\Tote` IS production.** `TOTE_DIR` points at it and every green deploy runs
+   `git reset --hard` there. Work in a worktree (`git worktree add ../Tote-x -b branch main`),
+   copy `android/local.properties` into it, and build a fresh `server/.venv` there — an editable
+   install from another checkout silently shadows the code you are testing.
+2. **Alembic autogenerate will try to DROP two indexes, every single time.**
+   `ix_items_search_vector` (GIN full-text) and `uq_totes_user_code_lower` (unique on
+   `lower(code)`) are invisible to model metadata, so it proposes removing them. Accepting that
+   makes search sequential and lets two bins both be "A14". Delete those lines by hand. It also
+   emits **unnamed foreign keys** that `downgrade` cannot then drop — name them.
+3. **Room has no destructive fallback.** Bumping `@Database(version=)` requires a migration in
+   `ToteMigrations.ALL` **and** a committed schema export under `android/app/schemas/`.
+   `ToteDatabaseMigrationTest` fails the build otherwise. This exists precisely because the
+   capture queue you are about to add is data that exists nowhere else.
+4. **Render the screens.** Three real contrast bugs got past code review, tests and CI and were
+   only visible in a Roborazzi PNG. Add scenes to `ScreenshotTest`, run with
+   `-Proborazzi.test.record=true`, and *look at the images*.
+5. **Scans need LM Studio running** on the host with `google/gemma-4-e4b` loaded. A live scan
+   measured **35.5 s** against a 60 s timeout — headroom, but cleanup is sequential per photo,
+   so an 8-photo item will be slower. If `/items/scan` 503s, check `GET :1234/v1/models` first.
+6. **Install `rembg` in your test venv.** Without it `clean_photo` silently takes the degraded
+   Pillow-only path, so the compositing branch — where the original blackening defect lived —
+   never runs locally while CI runs it.
+
+### Local test recipe
+
+```bash
+# Server (from a worktree's server/ directory)
+python -m venv .venv && ./.venv/Scripts/python.exe -m pip install -e ".[dev]"
+./.venv/Scripts/python.exe -m pip install "rembg[cpu]==2.0.78"   # see #6 above
+docker exec tote-db-1 psql -U tote -d tote -c "CREATE DATABASE tote_dev;"
+DATABASE_URL="postgresql+asyncpg://tote:tote@127.0.0.1:5439/tote_dev" \
+  SECRET_KEY=dev DB_NULLPOOL=true ./.venv/Scripts/python.exe -m pytest tests/ -q
+```
+
+`127.0.0.1` never `localhost` (Docker publishes IPv4 only; the `::1` fallback stalls), and
+`DB_NULLPOOL=true` or pooled asyncpg connections bind a dead event loop. CI runs **both**
+`ruff check` and `ruff format --check`.
+
+```bash
+cd android && ./gradlew :app:assembleDebug :app:testDebugUnitTest
+```
+
+### Open items that need a human
+
+| Item | State |
+|---|---|
+| **`tote-smoke` credential** | **Not done, and needed on BOTH sides.** dragonfly-id currently has `SMOKE_CLIENTS=magpie-smoke` only, and `SMOKE_SUBJECT_EMAILS` lacks `tote-smoke@dragonflymedia.org`. Add both there, and the same secret value in Tote's `server/.env`. Until then `scripts/synthetic_smoke.py` cannot run its auth stage. |
+| **On-device pass** | Never run. Camera flow, the AppAuth redirect, and **NFC read/write against real NTAG215s** — none of which CI or an emulator can test. `ToteDatabaseMigrationAndroidTest` also only runs here (`./gradlew :app:connectedDebugAndroidTest`). |
+| **ntfy topic** `tote-alerts` | Referenced by `notify.yml`; confirm it exists on the self-hosted ntfy (`:8095`). |
+| **Backups** | Phase 7. **Nothing backs up `/data/photos` yet.** Once real photos exist they are the artifact — the rows are just paths pointing at them. |
+| **Dragonfly `ServiceRegistry` row** | Deferred until the URL was real. It is real now. |
+| **The physical bootstrap** | Printing the first index cards and writing the first tags — the moment the design either works in an attic or does not. |
+
+### Deliberately not done
+
+Five **dependabot** PRs are open in Pulse (#19, #16) and Dragonfly (#30, #29, #27). They were
+left alone on purpose: Gradle/Kotlin/AGP versions must stay aligned with Pulse across all six
+Compose consumers, so a bump is a suite-wide, all-repos-in-one-sitting change and merging one in
+isolation can break the composite build everywhere.
+
+---
+
 ## 0. Read this first
 
 This file is the source of truth for the build. Work **phase by phase** (§8); do not start
@@ -351,7 +440,7 @@ configured, as an ntfy nudge.
 
 ## 8. Build phases (each ends with green tests + green CI)
 
-**Phase 0 — Scaffold + suite registrations.** ✅ **Largely done 2026-08-15.**
+**Phase 0 — Scaffold + suite registrations.** ✅ **DONE 2026-08-15.**
 - ✅ Pulse: `PulseAccent.Slate` + accent-claim row ([#20](https://github.com/CDRaab01/Pulse/pull/20),
   merged). Verified: pulse-ui assemble + tests green, index regenerated, no consumer matches
   `PulseAccent` exhaustively, Cookbook `:app:assembleDebug` built against the branch.
@@ -369,7 +458,7 @@ configured, as an ntfy nudge.
   registration test). The `tote-smoke` **secret value** is still human-gated.
 *Exit: empty app builds with the slate theme; CI green; trivial tests pass.*
 
-**Phase 1 — SSO auth + data model.** `POST /auth/suite` (clone Crate's SSO-only shape: JWKS
+**Phase 1 — SSO auth + data model.** ✅ **DONE 2026-08-15** (#1). `POST /auth/suite` (clone Crate's SSO-only shape: JWKS
 validation, find-or-create by email, feature-flagged on `SUITE_JWKS_URL`/`SUITE_ISSUER`
 pinned in compose `environment:`), AppAuth client (`SuiteAuthManager`, client id `tote`,
 redirect `com.tote:/oauth2redirect`, **keep the AppCompat theme override on
@@ -391,7 +480,12 @@ UID storage and mismatch warning, `/t/<code>` server page, `GET /totes/{id}/card
 *Exit: tap a written tag on a locked phone → Tote opens that tote; a printed card's QR
 resolves to the same place; a dead tag is recoverable via the card.*
 
-**Phase 4 — Photo capture → AI draft.** ⚠️ **Prerequisite done 2026-08-16**: the Room database
+**Phase 4 — Photo capture → AI draft.** 🔶 **SERVER DONE 2026-08-16 (#7); ANDROID NOT STARTED.**
+The pipeline is live and was verified end-to-end against the real model on prod: a photo
+through `/items/scan` returned `name='Red storage box'`, `confidence='low'`,
+`is_draft=true`, in 35.5 s. What remains is the client: capture queue (Room + WorkManager),
+≤1600px downscale, and the review stack.
+⚠️ **Prerequisite done 2026-08-16**: the Room database
 now uses real migrations with **no destructive fallback**, guarded by a JVM test that walks the
 committed schema exports (and an on-device test for column-level validation). Adding the capture
 queue to that database is now safe — a version bump without a migration fails CI instead of
