@@ -14,11 +14,16 @@ import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.tote.data.local.CachedTote
 import com.tote.data.local.CaptureQueueEntity
+import com.tote.data.remote.CategoryDto
+import com.tote.data.remote.DraftDto
 import com.tote.data.remote.ItemDto
 import com.tote.data.remote.ToteDetailDto
 import com.tote.ui.auth.LoginContent
 import com.tote.ui.capture.CaptureContent
 import com.tote.ui.capture.CaptureUiState
+import com.tote.ui.review.DraftEdits
+import com.tote.ui.review.ReviewContent
+import com.tote.ui.review.ReviewUiState
 import com.tote.ui.search.SearchContent
 import com.tote.ui.search.SearchUiState
 import com.tote.ui.totes.ToteDetailContent
@@ -205,6 +210,105 @@ class ScreenshotTest {
 
     @Test fun capture_queue_dark() = capture("capture_queue_dark", dark = true) {
         CaptureContent(busyQueue, {}, {}, {}, {}, {}, {}, {})
+    }
+
+    // ── Phase 4: the review stack ────────────────────────────────────────────
+
+    private val reviewCategories = listOf(
+        CategoryDto("c1", "Seasonal decor"),
+        CategoryDto("c2", "Toys"),
+        CategoryDto("c3", "Tools"),
+    )
+
+    private fun reviewState(
+        draft: DraftDto,
+        edits: DraftEdits,
+    ) = ReviewUiState(
+        drafts = listOf(draft, draft.copy(id = "d2", name = "Ornament box")),
+        index = 0,
+        edits = edits,
+        totes = captureTotes,
+        categories = reviewCategories,
+        loading = false,
+    )
+
+    /** No network in a JVM test, so the photo frames render as their placeholder. */
+    private val noPhotos: (String, Int) -> String = { _, _ -> "" }
+
+    private val identified = DraftDto(
+        id = "d1",
+        name = "Red storage box",
+        description = "A red plastic storage container with a hinged lid.",
+        scanConfidence = "high",
+        draftToteId = "1",
+        photoCount = 2,
+    )
+
+    @Test fun review_light() = capture("review_light", dark = false) {
+        ReviewContent(
+            reviewState(identified, DraftEdits.from(identified)),
+            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+        )
+    }
+
+    @Test fun review_dark() = capture("review_dark", dark = true) {
+        ReviewContent(
+            reviewState(identified, DraftEdits.from(identified)),
+            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+        )
+    }
+
+    // The two scan notices are the whole reason the server keeps `scan_error` and
+    // `scan_confidence` apart, so both get a baseline: one means nobody looked at this
+    // photograph, the other means it was looked at and found hard.
+    @Test fun review_unavailable_dark() = capture("review_unavailable_dark", dark = true) {
+        val draft = identified.copy(
+            name = "Unidentified item",
+            description = null,
+            scanConfidence = null,
+            scanError = "identify_unavailable",
+            draftToteId = null,
+        )
+        ReviewContent(
+            reviewState(draft, DraftEdits.from(draft)),
+            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+        )
+    }
+
+    @Test fun review_low_confidence_light() = capture("review_low_confidence_light", dark = false) {
+        val draft = identified.copy(scanConfidence = "low")
+        ReviewContent(
+            reviewState(draft, DraftEdits.from(draft)),
+            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+        )
+    }
+
+    // A taller viewport for one scene, because the decision row — the whole point of the
+    // screen — sits below the fold of a Pixel 5 on a form this long, and a baseline that cannot
+    // see the buttons cannot catch a contrast bug in them.
+    @Test
+    @Config(qualifiers = "+h1500dp")
+    fun review_full_dark() = capture("review_full_dark", dark = true) {
+        ReviewContent(
+            reviewState(identified, DraftEdits.from(identified)),
+            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+        )
+    }
+
+    @Test
+    @Config(qualifiers = "+h1500dp")
+    fun review_full_light() = capture("review_full_light", dark = false) {
+        ReviewContent(
+            reviewState(identified, DraftEdits.from(identified)),
+            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+        )
+    }
+
+    @Test fun review_empty_dark() = capture("review_empty_dark", dark = true) {
+        ReviewContent(
+            ReviewUiState(totes = captureTotes, loading = false),
+            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+        )
     }
 
     // LoginContent is the stateless body precisely so it can be captured here: the stateful

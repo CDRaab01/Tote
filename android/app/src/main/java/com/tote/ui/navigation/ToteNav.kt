@@ -3,10 +3,15 @@ package com.tote.ui.navigation
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -27,36 +32,42 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.tote.nfc.TapRouter
 import com.tote.nfc.TapTarget
 import com.tote.ui.capture.CaptureScreen
+import com.tote.ui.review.ReviewScreen
+import com.tote.ui.review.DraftBadgeViewModel
 import com.tote.ui.search.SearchScreen
 import com.tote.ui.totes.ToteDetailScreen
+import com.tote.ui.theme.ToteTheme
 import com.tote.ui.totes.ToteListScreen
 
 /**
- * Three tabs: Find, Totes, Catalogue.
+ * Four tabs: Find, Totes, Catalogue, Review.
  *
  * Search leads because it is the primary query path — the app's whole job is answering "where
  * is the X", and putting a browse list first would make the common case the second thing.
- * Catalogue is last because it is the occasional bulk session, not the daily lookup.
+ * Catalogue and Review are the two halves of the occasional bulk session and sit after it.
  */
 object Routes {
     const val SEARCH = "search"
     const val TOTES = "totes"
     const val CAPTURE = "capture"
+    const val REVIEW = "review"
     const val TOTE_DETAIL = "totes/{toteId}"
 
     fun toteDetail(id: String) = "totes/$id"
 }
 
 /** The tab routes, which is also the set on which the bottom bar is shown. */
-private val TAB_ROUTES = setOf(Routes.SEARCH, Routes.TOTES, Routes.CAPTURE)
+private val TAB_ROUTES = setOf(Routes.SEARCH, Routes.TOTES, Routes.CAPTURE, Routes.REVIEW)
 
 @Composable
 fun ToteNavHost(
     launchIntent: Intent? = null,
     onIntentConsumed: () -> Unit = {},
     tapRouter: TapRouter = hiltViewModel(),
+    draftBadge: DraftBadgeViewModel = hiltViewModel(),
 ) {
     val nav = rememberNavController()
+    val pendingDrafts by draftBadge.pending.collectAsStateWithLifecycle()
     val tapTarget by tapRouter.target.collectAsStateWithLifecycle()
 
     LaunchedEffect(launchIntent) {
@@ -110,6 +121,27 @@ fun ToteNavHost(
                         icon = { Icon(Icons.Filled.PhotoCamera, contentDescription = null) },
                         label = { Text("Catalogue") },
                     )
+                    NavigationBarItem(
+                        selected = route == Routes.REVIEW,
+                        onClick = { nav.tabTo(Routes.REVIEW) },
+                        icon = {
+                            // Uncatalogued drafts are the rose attention channel (CLAUDE.md §3):
+                            // a photograph that has been taken but not filed is work the person
+                            // believes is done and is not. The badge is what makes that visible
+                            // from any screen, rather than only on the tab nobody has opened.
+                            BadgedBox(
+                                badge = {
+                                    if (pendingDrafts > 0) {
+                                        Badge(
+                                            containerColor = ToteTheme.colors.attention.base,
+                                            contentColor = ToteTheme.colors.attention.on,
+                                        ) { Text(pendingDrafts.toString()) }
+                                    }
+                                }
+                            ) { Icon(Icons.Filled.FactCheck, contentDescription = null) }
+                        },
+                        label = { Text("Review") },
+                    )
                 }
             }
         },
@@ -126,6 +158,7 @@ fun ToteNavHost(
                 ToteListScreen(onOpenTote = { nav.navigate(Routes.toteDetail(it)) })
             }
             composable(Routes.CAPTURE) { CaptureScreen() }
+            composable(Routes.REVIEW) { ReviewScreen() }
             composable(
                 Routes.TOTE_DETAIL,
                 arguments = listOf(navArgument("toteId") { type = NavType.StringType }),

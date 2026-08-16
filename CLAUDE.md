@@ -12,28 +12,24 @@
 
 ## START HERE — state as of 2026-08-16
 
-**Phases 0-3 are complete. Phase 4 is half done: the server pipeline is live, the Android
-capture UI is not built.** Everything below is merged to `main`, deployed, and verified against
-production — not just green in CI.
+**Phases 0-4 are complete.** Everything below is merged to `main`, deployed, and verified
+against production — not just green in CI.
 
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Serving | `a78d2bc` = `origin/main` |
-| Tests | **83 server** (pytest, real Postgres) + **33 Android** (19 unit + 14 Roborazzi) |
+| Tests | **83 server** (pytest, real Postgres) + **71 Android** (46 unit + 25 Roborazzi) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
 
-**The Android half of Phase 4**: the capture queue and the review stack. The server side is
-done and proven — `POST /items/scan` → draft → `POST /drafts/{id}/confirm`. What is missing:
+**Phase 5 — sizing + apparel** (§8). Copy Crate's `app/apparel/`, build the `app/sizing/` ladder
+(§5 — the hardest logic in this app), wire the label pass into the scan pipeline, and surface the
+apparel fields in the review and detail UI.
 
-1. Camera + gallery capture, downscaled to ≤1600px JPEG client-side (`util/ImageBytes.kt`
-   pattern from Crate — raw camera captures blow the 8 MB upload cap).
-2. A Room-backed capture queue that survives process death, drained by WorkManager.
-   **This is the queue the migration work was done for** — see the warning below.
-3. The review stack: photos, identified name/category/condition, everything editable, then
-   confirm into a tote or discard.
+**Before that, though: the on-device pass has never been run**, and Phase 4 just added the two
+things that most need it — the camera flow and a WorkManager queue holding photos that exist
+nowhere else. See the open items table.
 
 ### Six things that will cost you time if you do not know them
 
@@ -480,11 +476,16 @@ UID storage and mismatch warning, `/t/<code>` server page, `GET /totes/{id}/card
 *Exit: tap a written tag on a locked phone → Tote opens that tote; a printed card's QR
 resolves to the same place; a dead tag is recoverable via the card.*
 
-**Phase 4 — Photo capture → AI draft.** 🔶 **SERVER DONE 2026-08-16 (#7); ANDROID NOT STARTED.**
-The pipeline is live and was verified end-to-end against the real model on prod: a photo
-through `/items/scan` returned `name='Red storage box'`, `confidence='low'`,
-`is_draft=true`, in 35.5 s. What remains is the client: capture queue (Room + WorkManager),
-≤1600px downscale, and the review stack.
+**Phase 4 — Photo capture → AI draft.** ✅ **DONE 2026-08-16** (server #7, capture queue #8,
+review stack #9). The pipeline was verified end-to-end against the real model on prod: a photo
+through `/items/scan` returned `name='Red storage box'`, `confidence='low'`, `is_draft=true`, in
+35.5 s. The client adds the Room capture queue drained by WorkManager, ≤1600px downscale, and the
+one-draft-at-a-time review stack. Three things worth knowing before touching it, all in
+ARCHITECTURE.md: a scan **timeout** is its own queue state (`uncertain`) because the endpoint is
+synchronous and a retry would file the item twice; `ScanTimeoutInterceptor` raises the read
+timeout for that path alone (at OkHttp's 10 s default *every* scan fails); and review keeps its
+**position** across a decision rather than re-fetching.
+**Still not done on device** — see the open items table.
 ⚠️ **Prerequisite done 2026-08-16**: the Room database
 now uses real migrations with **no destructive fallback**, guarded by a JVM test that walks the
 committed schema exports (and an on-device test for column-level validation). Adding the capture
