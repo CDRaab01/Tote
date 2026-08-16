@@ -1,0 +1,382 @@
+<#
+.SYNOPSIS
+  Back up Tote's database and item photos to a destination outside Docker (Windows /
+  Docker Desktop).
+
+.DESCRIPTION
+  Tote's data lives in two Docker named volumes (pgdata, photos). Those survive redeploys --
+  that is all docker-compose.yml claims -- but they do NOT survive `docker compose down -v`,
+  a disk failure, or a host rebuild. This script is the actual backup: it writes a
+  self-contained, timestamped set to a path you choose, which should be on different physical
+  media (a NAS share, an external drive). A "backup" sitting on the same disk as the volume
+  it copies is a copy, not a backup.
+
+  The asymmetry between the two volumes is the whole point. The catalog rows are a list of
+  paths; the PHOTOGRAPHS are the artifact. An item was in someone's hands in a garage and is
+  now sealed in a taped bin in an attic -- losing the photos volume means the only way to
+  restore what a bin contains is to carry fourteen of them down and open every one. Losing
+  the database is bad; losing the photos is the thing the app existed to prevent.
+
+  Each run produces:
+    <BackupDir>\tote-YYYYMMDD-HHmmss\
+      db.dump        - pg_dump custom format (-Fc), restore with pg_restore
+      photos.tar.gz  - the /data/photos volume, gzipped tar
+      MANIFEST.json  - sizes, counts, deployed commit, and the verification result
+
+  The script VERIFIES what it wrote before reporting success: a backup that silently produces
+  empty archives is worse than no backup, because it is trusted. This host has already proved
+  that the hard way -- the nightly DB job produced nothing for two weeks while
+  Get-ScheduledTask still reported State=Ready.
+
+  Restore instructions live in deploy/README.md ("Restoring from a backup").
+
+  Ported from Crate's deploy/backup.ps1, which solved the same problem for the same reasons.
+  The differences worth knowing are the app name, the compose project, and the fact that
+  Tote's photo set is expected to be LARGER: a household inventory photographs everything,
+  where an eBay archive photographs only what is being sold.
+
+.PARAMETER BackupDir
+  Where to write the timestamped backup folder. Point this at other physical media.
+  Defaults to the TOTE_BACKUP_DIR environment variable, else <repo>\..\tote-backups.
+
+.PARAMETER Keep
+  How many timestamped backup folders to retain; older ones are deleted after a successful
+  run. Defaults to 14. Pass 0 to disable pruning.
+
+.PARAMETER SkipPhotos
+  Back up the database only. Useful for a quick pre-migration snapshot; the photo archive is
+  the slow part. Recorded in the manifest so verification does not later mistake the missing
+  archive for a failure.
+
+.PARAMETER Verify
+  Verify the most recent existing backup in -BackupDir and exit without writing a new one.
+  Use this to confirm a scheduled job is really producing restorable sets.
+
+.EXAMPLE
+  powershell deploy/backup.ps1 -BackupDir \\Diskstation\Media2\Backups\Tote
+
+.EXAMPLE
+  powershell deploy/backup.ps1 -Verify
+
+.NOTES
+  On the Dragonfly host this is not called directly on a schedule. C:\Scripts\Backup-ToteArchive.ps1
+  wraps it and owns scheduling, gpg encryption, NAS delivery, retention and logging -- the same
+  division of labour as Crate. This script's job is to produce a VERIFIED set; the wrapper's job
+  is to get it off the machine safely.
+#>
+[CmdletBinding()]
+param(
+  [string]$BackupDir = $(if ($env:TOTE_BACKUP_DIR) { $env:TOTE_BACKUP_DIR } else { "" }),
+  [int]$Keep = 14,
+  [switch]$SkipPhotos,
+  [switch]$Verify
+)
+
+$ErrorActionPreference = "Stop"
+
+# Repo root = parent of this script's directory (deploy/), same resolution as redeploy.ps1 so
+# the script operates on the real deployment clone that owns the volumes.
+$RepoDir = Split-Path -Parent $PSScriptRoot
+if (-not $BackupDir) {
+  $BackupDir = Join-Path (Split-Path -Parent $RepoDir) "tote-backups"
+}
+
+# Smallest plausible artifact sizes. A pg_dump of an empty-but-migrated schema is a few KB;
+# anything under this means the dump failed and left a stub. The gzip of an empty tar is about
+# 45 bytes, so 100 catches "wrote nothing" without tripping on a genuinely empty photo set.
+$MinDumpBytes = 1024
+$MinPhotosBytes = 100
+
+function Invoke-Checked {
+  param([string]$Exe, [string[]]$ArgList)
+  Write-Host "> $Exe $($ArgList -join ' ')"
+  & $Exe @ArgList
+  if ($LASTEXITCODE -ne 0) {
+    throw "Command failed ($LASTEXITCODE): $Exe $($ArgList -join ' ')"
+  }
+}
+
+function Get-ComposeEnvValue {
+  # Reads a variable from the deployment clone's root .env (the same file Compose reads for
+  # POSTGRES_USER/POSTGRES_DB), falling back to the compose default.
+  param([string]$Name, [string]$Default)
+  $envPath = Join-Path $RepoDir ".env"
+  if (Test-Path $envPath) {
+    $line = Select-String -Path $envPath -Pattern "^\s*$Name\s*=" -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+    if ($line) {
+      $value = ($line.Line -split "=", 2)[1].Trim().Trim('"').Trim("'")
+      if ($value) { return $value }
+    }
+  }
+  return $Default
+}
+
+function Get-BackupSets {
+  if (-not (Test-Path $BackupDir)) { return @() }
+  return @(Get-ChildItem -Path $BackupDir -Directory -Filter "tote-*" |
+    Sort-Object Name -Descending)
+}
+
+function Get-ManifestPhotoRows {
+  # The photo-row count recorded when the set was written, or -1 when it cannot be read.
+  #
+  # This is what lets -Verify be as strong as the write-time check instead of weaker. Without
+  # it the two disagree in both directions on a real set: an empty archive (~45-90 bytes) is
+  # legitimate when the database genuinely had no photos, but -Verify has no way to know that,
+  # so it condemns a set that passed when it was written. Tote hit this on its very first
+  # backup -- 87-byte archive, 0 rows, PASS at write time and FAIL on verify a minute later.
+  # And in the other direction, -Verify never ran the files-vs-rows cross-check at all, which
+  # is the check that actually catches missing originals.
+  #
+  # MANIFEST.json is promoted to the NAS unencrypted precisely so this stays readable without
+  # the gpg passphrase. It holds only counts, sizes and a timestamp.
+  param([string]$SetPath)
+  $manifestPath = Join-Path $SetPath "MANIFEST.json"
+  if (-not (Test-Path $manifestPath)) { return -1 }
+  try {
+    $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+    if ($null -ne $manifest.photo_rows) { return [int]$manifest.photo_rows }
+  } catch {
+    # An unreadable manifest is reported by Test-BackupSet; here it just means "unknown".
+  }
+  return -1
+}
+
+function Test-BackupSet {
+  # Returns a result object rather than throwing, so both the write path and -Verify report the
+  # same detail.
+  param([string]$SetPath, [int]$ExpectedPhotoRows = -1)
+
+  # Local to this function, and load-bearing.
+  #
+  # This function's whole job is to CLASSIFY failures, so it must be able to run a command that
+  # fails without dying. Under the script-level "Stop", Windows PowerShell 5.1 turns a native
+  # command's stderr into a terminating NativeCommandError -- and `2>$null` does not prevent it.
+  # So `docker run` against a corrupt archive killed the script mid-check with a PowerShell
+  # stack trace, and the careful corrupt-vs-Docker-unavailable distinction below never ran at
+  # all. It still failed closed, which is the important half, but it reported a traceback
+  # instead of "the archive is corrupt" -- and the wrapper's log is the only thing anyone will
+  # read at 04:30. Every failure path here is checked explicitly, so "Continue" is the correct
+  # semantic: gather problems, return them, let the caller decide.
+  $ErrorActionPreference = "Continue"
+
+  $dumpPath = Join-Path $SetPath "db.dump"
+  $photosPath = Join-Path $SetPath "photos.tar.gz"
+  $problems = @()
+  $warnings = @()
+
+  if (-not (Test-Path $dumpPath)) {
+    $problems += "db.dump is missing"
+  } else {
+    $dumpBytes = (Get-Item $dumpPath).Length
+    if ($dumpBytes -lt $MinDumpBytes) {
+      $problems += "db.dump is only $dumpBytes bytes - the dump did not complete"
+    }
+  }
+
+  $photoFiles = -1
+  if (-not (Test-Path $photosPath)) {
+    # A missing archive is only legitimate when the set was deliberately taken with
+    # -SkipPhotos, which the manifest records. Without that, photos.tar.gz being absent is
+    # exactly the silent-empty-backup failure this function exists to catch.
+    $manifestPath = Join-Path $SetPath "MANIFEST.json"
+    $photosExpected = $true
+    if (Test-Path $manifestPath) {
+      try {
+        $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+        $photosExpected = [bool]$manifest.photos_included
+      } catch {
+        $problems += "MANIFEST.json is unreadable"
+      }
+    }
+    if ($photosExpected) {
+      $problems += "photos.tar.gz is missing and the set was not taken with -SkipPhotos"
+    }
+  } else {
+    $photoBytes = (Get-Item $photosPath).Length
+    # The byte floor catches a truncated or failed archive. It must NOT fire on an archive
+    # that is legitimately tiny because there are no photos yet: an empty gzipped tar is ~45
+    # bytes, under the floor, so a Tote with nothing catalogued would fail its backup every
+    # night until the first scan. A nightly false alarm is the fastest way to train someone to
+    # ignore a real one. Zero is only trusted when the row count is KNOWN to be zero; -1 means
+    # the count query failed, so the floor still applies.
+    if ($ExpectedPhotoRows -ne 0 -and $photoBytes -lt $MinPhotosBytes) {
+      $problems += "photos.tar.gz is only $photoBytes bytes - the archive did not complete"
+    } else {
+      # Count entries from inside a container: Windows has no tar that reads gzip reliably
+      # across PowerShell versions, and this keeps the tooling requirement to Docker alone.
+      # postgres:16 (not alpine) because the host already has it pulled for the db service, so
+      # verification never needs a registry round trip and works on an offline host.
+      #
+      # A dead Docker daemon and a corrupt archive both surface as exit 1 from `docker run`, so
+      # the daemon is probed separately: only once it is known good can a failed listing be
+      # blamed on the archive. Getting this backwards would either condemn good backups or
+      # bless corrupt ones. Inside the container, tar failure is reported as exit 3 (a pipeline
+      # would otherwise mask it behind wc's exit 0).
+      $mount = "${SetPath}:/backup:ro"
+      $listCmd = 'tar tzf /backup/photos.tar.gz > /tmp/l || exit 3; grep -v "/$" /tmp/l | wc -l'
+      $counted = & docker run --rm -v $mount postgres:16 sh -c $listCmd 2>$null
+      $listExit = $LASTEXITCODE
+
+      if ($listExit -eq 0 -and $counted) {
+        $photoFiles = [int]($counted.Trim())
+        if ($ExpectedPhotoRows -ge 0 -and $photoFiles -lt $ExpectedPhotoRows) {
+          # Every item_photos row has its original written to disk BEFORE the row is committed
+          # (scan_pipeline persists originals first, deliberately), so files >= rows always
+          # holds on a consistent set. Fewer files than rows means the archive is missing real
+          # data -- and for this app that data is the only record of what is in a sealed bin.
+          $problems += "photos.tar.gz holds $photoFiles files but the database has $ExpectedPhotoRows photo rows - originals are missing"
+        }
+      } elseif ($listExit -eq 3) {
+        $problems += "photos.tar.gz could not be read by tar - the archive is corrupt"
+      } else {
+        & docker version --format '{{.Server.Version}}' 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+          # Docker itself is unusable here; that says nothing about the archive, so it must not
+          # condemn a set that may be perfectly good.
+          $warnings += "could not run the archive check (Docker unavailable); photos.tar.gz was written but not listed"
+        } else {
+          $problems += "photos.tar.gz could not be listed (docker exit $listExit) - treat this set as suspect"
+        }
+      }
+    }
+  }
+
+  return [pscustomobject]@{
+    Ok         = ($problems.Count -eq 0)
+    Problems   = $problems
+    Warnings   = $warnings
+    PhotoFiles = $photoFiles
+  }
+}
+
+# --- Verify mode: check the newest existing set and exit ---------------------------------
+if ($Verify) {
+  Write-Host "=== Tote backup verify ==="
+  Write-Host "Backups: $BackupDir"
+  $sets = Get-BackupSets
+  if ($sets.Count -eq 0) {
+    throw "No backups found in $BackupDir. Run deploy/backup.ps1 first."
+  }
+  $newest = $sets[0]
+  Write-Host "Newest:  $($newest.Name)"
+  # Take the row count from the set's own manifest, so verification asks the same question the
+  # write path asked. Without this, -Verify is simultaneously too strict (it condemns a
+  # legitimately empty archive) and too lax (it never cross-checks files against rows).
+  $manifestRows = Get-ManifestPhotoRows -SetPath $newest.FullName
+  $result = Test-BackupSet -SetPath $newest.FullName -ExpectedPhotoRows $manifestRows
+  foreach ($w in $result.Warnings) { Write-Host "WARN: $w" }
+  if (-not $result.Ok) {
+    foreach ($p in $result.Problems) { Write-Host "FAIL: $p" }
+    throw "Backup $($newest.Name) is not restorable."
+  }
+  Write-Host "Verified: db.dump and photos.tar.gz are present and readable ($($result.PhotoFiles) photo files)."
+  Write-Host "=== Verify complete ==="
+  return
+}
+
+# --- Write a new backup ------------------------------------------------------------------
+Write-Host "=== Tote backup ==="
+Write-Host "Repo:    $RepoDir"
+Write-Host "Backups: $BackupDir"
+
+$pgUser = Get-ComposeEnvValue -Name "POSTGRES_USER" -Default "tote"
+$pgDb = Get-ComposeEnvValue -Name "POSTGRES_DB" -Default "tote"
+
+# The db container must be up: pg_dump runs inside it, and a dump taken from a stopped stack
+# would silently be nothing at all.
+$dbContainer = (& docker compose --project-directory $RepoDir ps -q db 2>$null)
+if ($LASTEXITCODE -ne 0 -or -not $dbContainer) {
+  throw "The tote db container is not running. Start the stack first: docker compose --project-directory $RepoDir up -d"
+}
+
+$stamp = (Get-Date).ToString("yyyyMMdd-HHmmss")
+$setPath = Join-Path $BackupDir "tote-$stamp"
+New-Item -ItemType Directory -Path $setPath -Force | Out-Null
+
+# 1. Database. Custom format (-Fc) so pg_restore can do selective/parallel restores, and so the
+#    dump is compressed without a second tool.
+$dumpPath = Join-Path $setPath "db.dump"
+Write-Host "Dumping database '$pgDb'..."
+# The dump is binary, so it never enters the PowerShell pipeline. `Set-Content -AsByteStream` is
+# PowerShell 7+ only and this host has no pwsh -- powershell.exe here is Windows PowerShell 5.1,
+# which is also what a scheduled task gets. Under 5.1 that spelling throws outright, killing the
+# backup on its first step and leaving an EMPTY timestamped directory that looks like a backup
+# until you open it. The 5.1 spelling (-Encoding Byte) is no good either: it is gone in 7, and
+# piping bytes through 5.1 decodes them to text and corrupts the dump. Redirecting via cmd writes
+# the bytes straight to disk and behaves identically on both.
+& cmd.exe /c "docker compose --project-directory `"$RepoDir`" exec -T db pg_dump -U $pgUser -d $pgDb -Fc > `"$dumpPath`""
+if ($LASTEXITCODE -ne 0) {
+  throw "pg_dump failed - no backup written."
+}
+
+# 2. Photos. --volumes-from borrows the server container's mounts, so the volume's
+#    Compose-project-prefixed name never has to be guessed here.
+$photoRows = -1
+if ($SkipPhotos) {
+  Write-Host "Skipping photos (-SkipPhotos)."
+} else {
+  $serverContainer = (& docker compose --project-directory $RepoDir ps -q server 2>$null)
+  if (-not $serverContainer) {
+    throw "The tote server container is not running, so its photos volume cannot be read. Start the stack first."
+  }
+  Write-Host "Archiving item photos..."
+  $mount = "${setPath}:/backup"
+  Invoke-Checked docker @(
+    "run", "--rm", "--volumes-from", $serverContainer, "-v", $mount,
+    "alpine", "tar", "czf", "/backup/photos.tar.gz", "-C", "/data/photos", "."
+  )
+
+  # Expected file floor, for the verification below.
+  $countText = (& docker compose --project-directory $RepoDir exec -T db `
+      psql -U $pgUser -d $pgDb -t -A -c "select count(*) from item_photos" 2>$null)
+  if ($LASTEXITCODE -eq 0 -and $countText) { $photoRows = [int]($countText.Trim()) }
+}
+
+# 3. Verify before claiming success.
+Write-Host "Verifying..."
+$result = Test-BackupSet -SetPath $setPath -ExpectedPhotoRows $photoRows
+foreach ($w in $result.Warnings) { Write-Host "WARN: $w" }
+if (-not $result.Ok) {
+  foreach ($p in $result.Problems) { Write-Host "FAIL: $p" }
+  throw "Backup verification failed. The set at $setPath is NOT restorable; the previous backup is untouched."
+}
+
+# 4. Manifest. Records what this set contains and what was running when it was taken, so a
+#    restore months from now does not have to guess at the schema version.
+$deployedSha = "unknown"
+try { $deployedSha = (& git -C $RepoDir rev-parse --short HEAD).Trim() } catch { }
+$dumpBytes = (Get-Item $dumpPath).Length
+$photoBytes = if (Test-Path (Join-Path $setPath "photos.tar.gz")) {
+  (Get-Item (Join-Path $setPath "photos.tar.gz")).Length
+} else { 0 }
+
+[pscustomobject]@{
+  taken_at        = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+  deployed_commit = $deployedSha
+  database        = $pgDb
+  db_dump_bytes   = $dumpBytes
+  photos_bytes    = $photoBytes
+  photo_files     = $result.PhotoFiles
+  photo_rows      = $photoRows
+  photos_included = (-not $SkipPhotos)
+} | ConvertTo-Json | Set-Content -Path (Join-Path $setPath "MANIFEST.json") -Encoding utf8
+
+$dumpMb = [math]::Round($dumpBytes / 1MB, 2)
+$photoMb = [math]::Round($photoBytes / 1MB, 2)
+Write-Host "Wrote $setPath (db ${dumpMb} MB, photos ${photoMb} MB, $($result.PhotoFiles) photo files)."
+
+# 5. Prune old sets - only after a verified-good new one exists, so a failing run can never
+#    delete the last good backup.
+if ($Keep -gt 0) {
+  $sets = Get-BackupSets
+  if ($sets.Count -gt $Keep) {
+    foreach ($old in $sets[$Keep..($sets.Count - 1)]) {
+      Write-Host "Pruning old backup $($old.Name)"
+      Remove-Item -Path $old.FullName -Recurse -Force
+    }
+  }
+}
+
+Write-Host "=== Backup complete ==="
