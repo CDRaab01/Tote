@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **255 server** (pytest, real Postgres) + **117 Android** (measured 2026-08-16) |
+| Tests | **255 server** (pytest, real Postgres) + **124 Android** (measured 2026-08-16) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -594,6 +594,15 @@ an **item sheet** behind a tap, which is also where **delete** lives.
 delete, distinct from a `disposed` movement, behind its own confirmation and in the error voice —
 and it now removes the photo FILES too, which it never did: the rows cascaded, the files did not,
 so every deleted item leaked its photographs onto the volume forever.
+
+**Pickers replaced the chip strips (#21).** Every choose-a-bin / category / person control was a
+horizontally-scrolling chip row — fine for five fixed options, unusable the moment the catalog
+grows, which is the entire product. `PickerField` + `PickerDialog` (a searchable vertical list)
+now cover the capture destination, review's category and destination, the outgrown/returned bin
+picker, and lending. **Chips stayed for condition, department and garment type** (short, fixed,
+compared side by side) but wrap with `FlowRow` instead of scrolling, so nothing is clipped at the
+screen edge. `PickerList` is split out from `PickerDialog` because an `AlertDialog` never reaches
+idle under Robolectric — a screenshot of one times out after 60 s. ARCHITECTURE.md has the rest.
 
 ---
 

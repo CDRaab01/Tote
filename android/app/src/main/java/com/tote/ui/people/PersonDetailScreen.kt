@@ -2,6 +2,7 @@ package com.tote.ui.people
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -42,6 +43,8 @@ import com.tote.data.remote.PersonDto
 import com.tote.data.remote.PersonSizeDto
 import com.tote.ui.components.HazardRule
 import com.tote.ui.components.ItemThumbnail
+import com.tote.ui.components.PickerDialog
+import com.tote.ui.components.PickerOption
 import com.tote.ui.components.ToteButton
 import com.tote.ui.theme.ToteTheme
 import design.pulse.ui.components.Caption
@@ -163,15 +166,13 @@ fun PersonDetailContent(
             // ── What fits ────────────────────────────────────────────────────
             item { SectionHeader(label = "What fits right now", channel = colors.search.base) }
             item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
-                    item {
-                        FilterChip(
-                            selected = state.garmentType == null,
-                            onClick = { onGarmentType(null) },
-                            label = { Text("Everything") },
-                        )
-                    }
-                    items(GARMENT_TYPES) { type ->
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(spacing.sm), verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
+                    FilterChip(
+                        selected = state.garmentType == null,
+                        onClick = { onGarmentType(null) },
+                        label = { Text("Everything") },
+                    )
+                    GARMENT_TYPES.forEach { type ->
                         FilterChip(
                             selected = state.garmentType == type,
                             onClick = { onGarmentType(type) },
@@ -356,8 +357,8 @@ private fun RecordSizeDialog(onDismiss: () -> Unit, onAdd: (String, String) -> U
         title = { Text("Record a size") },
         text = {
             Column {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(ToteTheme.spacing.sm)) {
-                    items(GARMENT_TYPES) { type ->
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(ToteTheme.spacing.sm), verticalArrangement = Arrangement.spacedBy(ToteTheme.spacing.sm)) {
+                    GARMENT_TYPES.forEach { type ->
                         FilterChip(
                             selected = garmentType == type,
                             onClick = { garmentType = type },
@@ -396,37 +397,24 @@ private fun PickToteDialog(
     onDismiss: () -> Unit,
     onPick: (String) -> Unit,
 ) {
-    var picked by remember { mutableStateOf<String?>(null) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column {
-                Caption(text = subtitle)
-                Spacer(Modifier.height(ToteTheme.spacing.md))
-                if (totes.isEmpty()) {
-                    Text(
-                        "No bins yet — make one on the Totes tab first.",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                } else {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(ToteTheme.spacing.sm)) {
-                        items(totes, key = { it.id }) { tote ->
-                            FilterChip(
-                                selected = picked == tote.id,
-                                onClick = { picked = tote.id },
-                                label = { Text("${tote.code} ${tote.label.orEmpty()}".trim()) },
-                            )
-                        }
-                    }
-                }
-            }
+    PickerDialog(
+        title = title,
+        options = totes.map { tote ->
+            PickerOption(
+                id = tote.id,
+                label = tote.label?.let { "${tote.code} · $it" } ?: tote.code,
+                detail = tote.locationName,
+            )
         },
-        confirmButton = {
-            TextButton(onClick = { picked?.let(onPick) }, enabled = picked != null) { Text("File it") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        selectedId = null,
+        // Non-null by construction: this dialog has no "none" row, because both flows that
+        // open it (outgrown, returned) REQUIRE a destination — a pile on the floor that the
+        // catalog claims is nowhere is the state it exists to prevent.
+        onPick = { id -> id?.let(onPick) },
+        onDismiss = onDismiss,
+        subtitle = subtitle,
+        searchHint = "Search bins",
+        emptyMessage = "No bins yet — make one on the Totes tab first.",
     )
 }
 

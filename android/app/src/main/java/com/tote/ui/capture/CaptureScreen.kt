@@ -33,6 +33,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,6 +52,9 @@ import coil.compose.AsyncImage
 import com.tote.data.local.CachedTote
 import com.tote.data.local.CaptureQueueEntity
 import com.tote.ui.components.HazardRule
+import com.tote.ui.components.PickerDialog
+import com.tote.ui.components.PickerField
+import com.tote.ui.components.PickerOption
 import com.tote.ui.components.ToteButton
 import com.tote.ui.components.toteButtonContentColor
 import com.tote.ui.theme.ToteTheme
@@ -137,6 +143,7 @@ fun CaptureContent(
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
+    var showDestinationPicker by remember { mutableStateOf(false) }
     val full = state.shots.size >= MAX_PHOTOS_PER_ITEM
 
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -171,25 +178,15 @@ fun CaptureContent(
                     Caption(text = "No bins cached yet — captures will still queue, and you can " +
                         "choose a bin when you review them.")
                 } else {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
-                        item {
-                            DestinationChip(
-                                selected = state.destination == null,
-                                label = "Decide later",
-                                onClick = { onChooseDestination(null) },
-                            )
-                        }
-                        items(state.totes, key = { it.id }) { tote ->
-                            DestinationChip(
-                                selected = state.destination?.id == tote.id,
-                                label = tote.label?.let { "${tote.code} · $it" } ?: tote.code,
-                                onClick = { onChooseDestination(tote) },
-                            )
-                        }
-                    }
+                    PickerField(
+                        selected = state.destination?.let { tote ->
+                            tote.label?.let { "${tote.code} · $it" } ?: tote.code
+                        },
+                        placeholder = "Decide later",
+                        onClick = { showDestinationPicker = true },
+                    )
                 }
             }
-
             // ── The item in hand ─────────────────────────────────────────────
             item {
                 SectionHeader(
@@ -294,30 +291,31 @@ fun CaptureContent(
             }
         }
     }
+
+    if (showDestinationPicker) {
+        PickerDialog(
+            title = "Filing into",
+            options = state.totes.map { tote ->
+                PickerOption(
+                    id = tote.id,
+                    label = tote.label?.let { "${tote.code} · $it" } ?: tote.code,
+                    detail = tote.locationName,
+                )
+            },
+            selectedId = state.destination?.id,
+            onPick = { id ->
+                onChooseDestination(state.totes.firstOrNull { it.id == id })
+                showDestinationPicker = false
+            },
+            onDismiss = { showDestinationPicker = false },
+            // A capture with no bin is normal and useful — shoot the whole shelf now and decide
+            // where it goes at review, which is what the queue is for.
+            noneLabel = "Decide later",
+            searchHint = "Search bins",
+        )
+    }
 }
 
-/**
- * A bin chip in Tote's own channel rather than Material's default secondary container.
- *
- * The default renders selection in a green that means "stored" in this app's channel map, on a
- * screen where nothing is stored yet. Slate's `dim`/`base` pair is the right one, and it is
- * legible in both themes by construction: dark olive carrying the yellow label in dark mode, and
- * the pale yellow lettered in charcoal in light — the yellow-label-on-charcoal object the accent
- * is named after. Never `base` as a *fill* with text on it: white on that yellow is 1.42:1.
- */
-@Composable
-private fun DestinationChip(selected: Boolean, label: String, onClick: () -> Unit) {
-    val slate = ToteTheme.colors.slate
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = slate.dim,
-            selectedLabelColor = slate.base,
-        ),
-    )
-}
 
 @Composable
 private fun ShotThumbnail(file: File, onRemove: () -> Unit) {
