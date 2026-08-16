@@ -20,6 +20,9 @@ dependencies = [
     "greenlet==3.5.5",
     "slowapi==0.1.10",
     "email-validator==2.3.0",
+    # zoneinfo has no tz database on slim/Windows images; without this, ZoneInfo("America/...")
+    # raises and every date-only comparison silently falls back to UTC.
+    "tzdata==2026.1",
 ]
 
 [project.optional-dependencies]

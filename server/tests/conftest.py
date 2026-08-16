@@ -77,3 +77,33 @@ async def raw_sql():
             return result
 
     return _run
+
+
+@pytest_asyncio.fixture
+async def auth_client(client):
+    """A client already carrying a session for a fresh, isolated user.
+
+    Every test gets its own user rather than sharing one. That is not tidiness: the schema's
+    uniqueness constraints are per-user (tote codes especially), so a shared user would make
+    tests order-dependent in a way that only shows up when someone adds the fifteenth one.
+    """
+    import uuid as _uuid
+
+    from app.models.category import Category
+    from app.models.user import User, UserSettings
+    from app.security import create_access_token
+
+    email = f"t-{_uuid.uuid4().hex[:10]}@example.com"
+    async with AsyncSessionLocal() as db:
+        user = User(name="Test", email=email)
+        db.add(user)
+        await db.flush()
+        db.add(UserSettings(user_id=user.id))
+        db.add(Category(user_id=user.id, name="Tools", sort_order=0))
+        await db.commit()
+        await db.refresh(user)
+        user_id = user.id
+
+    client.headers["Authorization"] = f"Bearer {create_access_token(str(user_id))}"
+    client.user_id = user_id
+    return client
