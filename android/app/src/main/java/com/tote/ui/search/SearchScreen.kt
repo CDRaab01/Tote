@@ -37,6 +37,10 @@ import design.pulse.ui.components.PanelCard
 import design.pulse.ui.components.SectionHeader
 import design.pulse.ui.components.StatTile
 
+/** How many overdue rows the card names before it summarises — enough to act on, short
+ *  enough that the card never pushes the search box off the screen. */
+private const val OVERDUE_SHOWN = 3
+
 @Composable
 fun SearchScreen(
     onOpenTote: (String) -> Unit,
@@ -94,6 +98,42 @@ fun SearchContent(
                     label = { Text("Search everything") },
                     placeholder = { Text("ratchet set, 4T, Zelda…") },
                 )
+            }
+
+            // The attention card, above the stats and below the search box — idle only, for the
+            // same reason as the stats: mid-search it would sit between someone and the answer
+            // they came for. A lent thing is remembered by exactly one person and they are not
+            // thinking about it, so this is the one thing the app volunteers unprompted.
+            if (!state.searched && state.overdue.isNotEmpty()) {
+                item {
+                    PanelCard(channel = colors.attention.base) {
+                        Text(
+                            "${state.overdue.size} thing${if (state.overdue.size == 1) "" else "s"} " +
+                                "out past the date",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.attention.base,
+                        )
+                        Spacer(Modifier.height(spacing.xs))
+                        // Body text, not Caption: Pulse's caption is upper-cased and
+                        // letter-spaced, which is right for a label and wrong for a sentence
+                        // naming a person — it shouts, and it wraps badly at these lengths.
+                        state.overdue.take(OVERDUE_SHOWN).forEach { item ->
+                            Text(
+                                "${item.name} · ${item.loanedTo ?: "someone"} · " +
+                                    "due ${item.expectedBack}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (state.overdue.size > OVERDUE_SHOWN) {
+                            Text(
+                                "and ${state.overdue.size - OVERDUE_SHOWN} more",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
             }
 
             // Stats only while idle: once someone is searching, a row of counts is noise between

@@ -3,6 +3,7 @@ package com.tote.ui.search
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tote.data.CatalogRepository
+import com.tote.data.remote.ApiService
 import com.tote.data.remote.ItemDto
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -25,11 +26,21 @@ data class SearchUiState(
     val totes: Int = 0,
     val items: Int = 0,
     val out: Int = 0,
+    /**
+     * Things out past the date they were due back.
+     *
+     * On the home screen rather than behind the People tab, because a lent thing is only
+     * remembered by the person who lent it and they are not thinking about it — that is the whole
+     * failure mode. Computed server-side against the household's local today, so this card and
+     * the ntfy nudge can never disagree about what "overdue" means.
+     */
+    val overdue: List<ItemDto> = emptyList(),
 )
 
 @HiltViewModel
 class SearchViewModel @Inject constructor(
     private val repo: CatalogRepository,
+    private val api: ApiService,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SearchUiState())
@@ -49,6 +60,12 @@ class SearchViewModel @Inject constructor(
             runCatching { repo.refresh() }
             val (t, i, o) = repo.stats()
             _state.value = _state.value.copy(totes = t, items = i, out = o)
+            // Silent on failure, like the refresh above: this screen answers questions, and an
+            // empty overdue list reads the same as a healthy one — which is honest, because an
+            // unreachable server genuinely cannot tell you that anything is late.
+            runCatching { api.overdue() }.onSuccess {
+                _state.value = _state.value.copy(overdue = it)
+            }
         }
     }
 

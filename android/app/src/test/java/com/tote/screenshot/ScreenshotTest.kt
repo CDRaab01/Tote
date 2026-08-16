@@ -17,11 +17,17 @@ import com.tote.data.local.CaptureQueueEntity
 import com.tote.data.remote.ApparelDto
 import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.DraftDto
+import com.tote.data.remote.FitsDto
 import com.tote.data.remote.ItemDto
+import com.tote.data.remote.PersonDto
+import com.tote.data.remote.PersonSizeDto
 import com.tote.data.remote.ToteDetailDto
 import com.tote.ui.auth.LoginContent
 import com.tote.ui.capture.CaptureContent
 import com.tote.ui.capture.CaptureUiState
+import com.tote.ui.people.PeopleContent
+import com.tote.ui.people.PersonDetailContent
+import com.tote.ui.people.PersonDetailState
 import com.tote.ui.review.DraftEdits
 import com.tote.ui.review.ReviewContent
 import com.tote.ui.review.ReviewUiState
@@ -372,6 +378,128 @@ class ScreenshotTest {
             ReviewUiState(totes = captureTotes, loading = false),
             onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
             onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
+        )
+    }
+
+
+    // ── Phase 6: people, fits, and lending ─────────────────────────────
+
+    private val emma = PersonDto(
+        id = "p1",
+        name = "Emma",
+        createdAt = "2026-01-01T00:00:00Z",
+        currentSizes = listOf(
+            PersonSizeDto("s1", "p1", "tops", "5T", "toddler", 5.0, "2026-08-01"),
+            PersonSizeDto("s2", "p1", "shoes", "11", "shoe_us_child", 11.0, "2026-07-02"),
+        ),
+    )
+
+    private val household = listOf(
+        emma,
+        PersonDto(id = "p2", name = "Dave next door", createdAt = "2026-01-01T00:00:00Z", onLoanCount = 2),
+    )
+
+    @Test fun people_light() = capture("people_light", dark = false) {
+        PeopleContent(UiState.Success(household), {}, {}, {})
+    }
+
+    @Test fun people_dark() = capture("people_dark", dark = true) {
+        PeopleContent(UiState.Success(household), {}, {}, {})
+    }
+
+    @Test fun people_empty_dark() = capture("people_empty_dark", dark = true) {
+        PeopleContent(UiState.Success(emptyList()), {}, {}, {})
+    }
+
+    private fun personState(
+        fits: FitsDto?,
+        onLoan: List<ItemDto> = emptyList(),
+    ) = PersonDetailState(person = emma, fits = fits, onLoan = onLoan, loading = false)
+
+    private val fittingItems = listOf(
+        ItemDto(
+            id = "i1", name = "Red winter coat", status = "stored",
+            toteCode = "A15", locationName = "Attic",
+            apparel = ApparelDto(sizeRaw = "5T", sizeSystem = "toddler"),
+        ),
+        ItemDto(
+            id = "i2", name = "Snow boots", status = "stored",
+            toteCode = "A15", locationName = "Attic",
+            apparel = ApparelDto(sizeRaw = "11"),
+        ),
+    )
+
+    @Test fun person_fits_light() = capture("person_fits_light", dark = false) {
+        PersonDetailContent(
+            personState(FitsDto(answered = true, items = fittingItems)),
+            {}, {}, { _, _ -> }, { _, _ -> }, { _, _ -> }, {},
+        )
+    }
+
+    @Test fun person_fits_dark() = capture("person_fits_dark", dark = true) {
+        PersonDetailContent(
+            personState(FitsDto(answered = true, items = fittingItems)),
+            {}, {}, { _, _ -> }, { _, _ -> }, { _, _ -> }, {},
+        )
+    }
+
+    /**
+     * The distinction the whole fits endpoint is built around, captured as two DIFFERENT images.
+     *
+     * "We can't say yet" and "nothing in that size" must not look alike: one means go and read a
+     * tag, the other means stop looking. A regression that collapsed them would pass every unit
+     * test in the suite and only be visible here.
+     */
+    @Test fun person_fits_unanswered_dark() = capture("person_fits_unanswered_dark", dark = true) {
+        // A person with NO recorded sizes, deliberately: a fixture that showed "5T tops" in the
+        // hero over "no size is recorded" in the body would be a baseline that contradicts
+        // itself, and the next person to look at it would spend their time on the fixture.
+        PersonDetailContent(
+            PersonDetailState(
+                person = emma.copy(currentSizes = emptyList()),
+                fits = FitsDto(answered = false, reason = "no_sizes_recorded"),
+                loading = false,
+            ),
+            {}, {}, { _, _ -> }, { _, _ -> }, { _, _ -> }, {},
+        )
+    }
+
+    @Test fun person_fits_nothing_dark() = capture("person_fits_nothing_dark", dark = true) {
+        PersonDetailContent(
+            personState(FitsDto(answered = true, items = emptyList())),
+            {}, {}, { _, _ -> }, { _, _ -> }, { _, _ -> }, {},
+        )
+    }
+
+    @Test fun person_on_loan_dark() = capture("person_on_loan_dark", dark = true) {
+        PersonDetailContent(
+            personState(
+                FitsDto(answered = true, items = emptyList()),
+                onLoan = listOf(
+                    ItemDto(
+                        id = "i9", name = "Cordless drill", status = "loaned",
+                        expectedBack = "2026-08-01", isOverdue = true, loanedTo = "Dave next door",
+                    ),
+                    ItemDto(id = "i8", name = "Extension ladder", status = "loaned"),
+                ),
+            ),
+            {}, {}, { _, _ -> }, { _, _ -> }, { _, _ -> }, {},
+        )
+    }
+
+    /** The home attention card — the one thing the app volunteers without being asked. */
+    @Test fun search_overdue_dark() = capture("search_overdue_dark", dark = true) {
+        SearchContent(
+            SearchUiState(
+                totes = 14, items = 213, out = 6,
+                overdue = listOf(
+                    ItemDto(
+                        id = "i9", name = "Cordless drill", status = "loaned",
+                        expectedBack = "2026-08-01", isOverdue = true, loanedTo = "Dave next door",
+                    ),
+                ),
+            ),
+            {}, {},
         )
     }
 

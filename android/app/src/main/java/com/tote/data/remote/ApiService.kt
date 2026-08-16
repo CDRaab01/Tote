@@ -129,4 +129,59 @@ interface ApiService {
     /** Throw a draft away, photos and all. */
     @DELETE("drafts/{id}")
     suspend fun discardDraft(@Path("id") id: String)
+
+    // ── People, fits, and lending ─────────────────────────────────────
+
+    @GET("people")
+    suspend fun people(): List<PersonDto>
+
+    @POST("people")
+    suspend fun createPerson(@Body body: PersonIn): PersonDto
+
+    @GET("people/{id}")
+    suspend fun person(@Path("id") id: String): PersonDto
+
+    @DELETE("people/{id}")
+    suspend fun deletePerson(@Path("id") id: String)
+
+    @GET("people/{id}/sizes")
+    suspend fun personSizes(@Path("id") id: String): List<PersonSizeDto>
+
+    /** Records a reading. The system/ordinal index is derived server-side and is not settable. */
+    @POST("people/{id}/sizes")
+    suspend fun addPersonSize(@Path("id") id: String, @Body body: PersonSizeIn): PersonSizeDto
+
+    @DELETE("people/{id}/sizes/{sizeId}")
+    suspend fun deletePersonSize(@Path("id") id: String, @Path("sizeId") sizeId: String)
+
+    /**
+     * What we already own that fits this person right now.
+     *
+     * Resolved entirely server-side against the size ladder — clients display, never compute.
+     * Check [FitsDto.answered] before rendering [FitsDto.items]: an unanswered query is not an
+     * empty one.
+     */
+    @GET("people/{id}/fits")
+    suspend fun fits(
+        @Path("id") id: String,
+        @Query("garment_type") garmentType: String? = null,
+        @Query("tolerance") tolerance: Double? = null,
+    ): FitsDto
+
+    /** What this person currently has of yours, soonest due first. */
+    @GET("people/{id}/on-loan")
+    suspend fun onLoan(@Path("id") id: String): List<ItemDto>
+
+    /** Mark a size run outgrown and file it into a tote — one transaction for the whole run. */
+    @POST("people/{id}/outgrown")
+    suspend fun outgrown(@Path("id") id: String, @Body body: OutgrownIn): List<MovementDto>
+
+    /**
+     * Everything out past its expected return.
+     *
+     * Computed against the household's local today, not the phone's clock and not UTC, so a
+     * screen and a notification can never disagree about what "overdue" means.
+     */
+    @GET("overdue")
+    suspend fun overdue(): List<ItemDto>
 }
