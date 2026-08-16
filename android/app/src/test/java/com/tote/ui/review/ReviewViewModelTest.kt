@@ -313,4 +313,73 @@ class ReviewViewModelTest {
         assertEquals(2, vm.state.value.totes.size)
         assertEquals("offline", vm.state.value.error)
     }
+
+    // ── Resuming the screen ──────────────────────────────────────────────────
+    //
+    // `refresh()` used to run only in `init`, and this ViewModel outlives a tab switch. A draft
+    // that finished uploading while the app was open therefore never appeared: the tab badge
+    // polls and said "4" over a screen that said "Nothing waiting", and the drafts only showed
+    // up after the app was killed and reopened. Observed in production 2026-08-16.
+
+    @Test
+    fun `resuming picks up a draft that landed while the screen was open`() = runTest {
+        val vm = vmWith()
+        dispatcher.scheduler.advanceUntilIdle()
+        assertEquals(0, vm.state.value.drafts.size)
+
+        api.stub { onBlocking { drafts() } doReturn listOf(draft("d1", "Plaid baseball cap")) }
+        vm.syncPreservingPosition()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(1, vm.state.value.drafts.size)
+        assertEquals("Plaid baseball cap", vm.state.value.edits.name)
+    }
+
+    @Test
+    fun `resuming keeps the person on the draft they were looking at`() = runTest {
+        val vm = vmWith(draft("d1", "One"), draft("d2", "Two"), draft("d3", "Three"))
+        dispatcher.scheduler.advanceUntilIdle()
+        vm.skip()
+        assertEquals("d2", vm.state.value.current?.id)
+
+        // A new draft arrives at the END of the stack (oldest first), so a naive re-fetch that
+        // reset the index would drop them back to d1 every time they glanced at another app.
+        api.stub {
+            onBlocking { drafts() } doReturn
+                listOf(draft("d1", "One"), draft("d2", "Two"), draft("d3", "Three"), draft("d4", "Four"))
+        }
+        vm.syncPreservingPosition()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("d2", vm.state.value.current?.id)
+        assertEquals(4, vm.state.value.drafts.size)
+    }
+
+    @Test
+    fun `resuming does not discard a half-typed correction`() = runTest {
+        val vm = vmWith(draft("d1", "Plad basebal cap"))
+        dispatcher.scheduler.advanceUntilIdle()
+        vm.edit { it.copy(name = "Plaid baseball cap", quantity = 2) }
+
+        vm.syncPreservingPosition()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("Plaid baseball cap", vm.state.value.edits.name)
+        assertEquals(2, vm.state.value.edits.quantity)
+    }
+
+    @Test
+    fun `a resume that cannot reach the server changes nothing`() = runTest {
+        val vm = vmWith(draft("d1", "One"))
+        dispatcher.scheduler.advanceUntilIdle()
+
+        api.stub { onBlocking { drafts() } doAnswer { throw java.io.IOException("no route") } }
+        vm.syncPreservingPosition()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        // The stack on screen is still usable offline — blanking it on a failed poll would take
+        // the review away from someone standing in a garage with the bin still open.
+        assertEquals(1, vm.state.value.drafts.size)
+        assertNull(vm.state.value.error)
+    }
 }

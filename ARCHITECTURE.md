@@ -637,10 +637,11 @@ upload would leave only the lossy copy of a photo that cannot be retaken.
 The third is specific to this app. `POST /items/scan` is **synchronous** — it persists, cleans
 and identifies every photo before it responds, measured at 35.5 s for one photo against the live
 model — so a client timeout is not evidence of failure. It is more likely evidence the server is
-still working and the draft will exist. Retrying automatically would file the same object twice,
-and a duplicate in a storage catalog is indistinguishable from two real ornament boxes. There is
-no idempotency key on the endpoint, so the honest answer is to stop and ask: the row says "it may
-already be in Review, check there before retrying", and offers both.
+still working and the draft will exist. The row says "it may already be in Review, check there
+before retrying", and offers both, because only a person can say whether a capture whose fate is
+unknown is worth waiting on.
+
+What a retry *costs* changed on 2026-08-16 — see below.
 
 `drain()` reports **clear** for `uncertain` and `failed` rows. Those wait on a person, and telling
 WorkManager to retry would spin the backoff chain against a queue that cannot move.
@@ -648,6 +649,28 @@ WorkManager to retry would spin the backoff chain against a queue that cannot mo
 A drain also begins by releasing anything left in `uploading` by process death. Uploads run for
 tens of seconds — ample time for Android to kill a backgrounded app — and an `uploading` row
 whose uploader no longer exists would otherwise sit out every future drain forever.
+
+### Every attempt carries `capture_id`, and that is what makes a re-send safe
+
+The queue row's own id, sent as a form part on every attempt for that capture. The server stores
+it on the item (`items.capture_id`, unique per user, migration 0003) and a repeat resolves to the
+draft the first attempt already made — including one that has since been confirmed into the
+catalog. A scan with no key still works, so an older APK keeps functioning; with no key there is
+simply nothing to deduplicate on, and guessing from the pixels would merge two identical-looking
+ornament boxes into one.
+
+This closes a real production failure. **One photograph became four drafts on 2026-08-16.** The
+endpoint commits *before* it answers, so three uploads that had their connection cut after the
+commit were indistinguishable, from the client, from uploads that never arrived — the server had
+no access-log line for any of them, because uvicorn logs when a response starts and none did.
+`releaseStranded` then did exactly what it was written to do and re-sent each one. Nothing in the
+three-outcome table above catches this: `uncertain` only covers a socket timeout, and a connection
+cut mid-flight arrives as an `IOException`, which is correctly treated as "retry me".
+
+The rule the key encodes: **the id must be stable across attempts.** A freshly generated UUID per
+attempt is a key that never matches, which is exactly as useless as no key at all and looks like
+it is working. `CaptureQueueRepositoryTest` asserts the same key on a second drain and on a
+released stranded row.
 
 ### The scan call needs its own timeout, and only it
 
@@ -691,9 +714,24 @@ still requires *some* bin — a confirmed item that is in no bin and never was i
 from a bug — and the bin list comes from the Room cache, because reviewing happens on the way
 back from the garage before the Wi-Fi is good again.
 
-**No polling.** The sibling app this pattern came from polls because its scan is asynchronous.
-Tote's is synchronous — it identifies before it answers — so a draft that exists is already
-processed, and polling would be asking a question whose answer cannot change.
+**No polling, but it re-reads on resume.** The sibling app this pattern came from polls because
+its scan is asynchronous. Tote's is synchronous — it identifies before it answers — so a draft
+that exists is already processed, and polling would be asking a question whose answer cannot
+change.
+
+It must still re-ask when the screen comes back, and originally it did not: `refresh()` ran only
+in `init`, and this ViewModel outlives a tab switch. A draft that finished uploading while the app
+was open therefore stayed invisible until the app was killed and reopened — while the tab badge,
+which *does* poll on a 60 s ticker, counted it. Observed in production on 2026-08-16 as a review
+tab reading **4** over a screen reading **"Nothing waiting"**, which is worse than either being
+wrong alone: a count that disagrees with the list makes the person doubt the catalog.
+
+`syncPreservingPosition()` runs on every `ON_RESUME` and re-reads the stack **by id**: the person
+stays on the draft they were looking at and a half-typed correction survives. A plain `refresh()`
+on resume would reset to the top of the stack and discard the edit every time they glanced at
+another app — the precise behaviour the one-at-a-time review exists to avoid. A resume that
+cannot reach the server changes nothing at all, because the stack on screen is still usable in a
+garage with the bin open.
 
 ### The two scan notices are kept apart
 

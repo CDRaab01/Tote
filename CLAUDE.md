@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **247 server** (pytest, real Postgres) + **83 Android** (measured 2026-08-16) |
+| Tests | **251 server** (pytest, real Postgres) + **89 Android** (measured 2026-08-16) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -489,6 +489,17 @@ ARCHITECTURE.md: a scan **timeout** is its own queue state (`uncertain`) because
 synchronous and a retry would file the item twice; `ScanTimeoutInterceptor` raises the read
 timeout for that path alone (at OkHttp's 10 s default *every* scan fails); and review keeps its
 **position** across a decision rather than re-fetching.
+**Amended 2026-08-16 after the first real on-device run** — two bugs, both found by using it:
+**(a) one photograph became four drafts.** `/items/scan` commits before it answers, so an upload
+whose connection is cut after the commit is indistinguishable from one that never arrived, and
+`releaseStranded` re-sent it. Every attempt now carries the queue row id as **`capture_id`** and
+the server returns the draft it already made (`items.capture_id`, unique per user, migration
+0003). **(b) the review screen never re-fetched** — `refresh()` ran only in `init` and the
+ViewModel outlives a tab switch, so a draft that landed while the app was open was invisible until
+a restart, while the polling badge counted it: the tab said 4 over a screen saying "Nothing
+waiting". `syncPreservingPosition()` now runs on every resume and re-reads **by id**, so position
+and half-typed edits survive. Both in ARCHITECTURE.md.
+
 **Still not done on device** — see the open items table.
 ⚠️ **Prerequisite done 2026-08-16**: the Room database
 now uses real migrations with **no destructive fallback**, guarded by a JVM test that walks the

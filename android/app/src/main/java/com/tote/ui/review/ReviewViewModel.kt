@@ -105,6 +105,44 @@ class ReviewViewModel @Inject constructor(
         refresh()
     }
 
+    /**
+     * Re-read the stack without moving the person off the draft they are looking at.
+     *
+     * Called every time the screen is resumed, and the reason is a real bug: `refresh()` used to
+     * run **only** in `init`, and this ViewModel outlives a tab switch — so a draft that finished
+     * uploading while the app was open never appeared. The badge polls, so it said "4" over a
+     * screen that said "Nothing waiting", and the drafts only showed up after the app was killed
+     * and reopened. A count that disagrees with the list is worse than either being wrong alone:
+     * it makes the person doubt the catalog.
+     *
+     * Position and in-progress edits are preserved by id. A plain [refresh] here would reset to
+     * the top of the stack and discard a half-typed correction every time the person glanced at
+     * another app — the exact behaviour the one-at-a-time review was designed to avoid.
+     */
+    fun syncPreservingPosition() {
+        val before = _state.value
+        if (before.saving) return
+        viewModelScope.launch {
+            val drafts = runCatching { api.drafts() }.getOrNull() ?: return@launch
+            val currentId = before.current?.id
+            val index = drafts.indexOfFirst { it.id == currentId }
+                .takeIf { it >= 0 }
+                ?: before.index.coerceIn(0, (drafts.size - 1).coerceAtLeast(0))
+            _state.value = before.copy(
+                drafts = drafts,
+                index = index,
+                loading = false,
+                // Keep the edits only if the same draft is still under the cursor; otherwise the
+                // person's typing would land on someone else's photograph.
+                edits = if (drafts.getOrNull(index)?.id == currentId) {
+                    before.edits
+                } else {
+                    drafts.getOrNull(index)?.let(DraftEdits::from) ?: DraftEdits()
+                },
+            )
+        }
+    }
+
     fun refresh() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)

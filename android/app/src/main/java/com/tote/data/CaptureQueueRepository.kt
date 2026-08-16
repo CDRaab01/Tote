@@ -43,9 +43,20 @@ import retrofit2.HttpException
  * `POST /items/scan` is **synchronous**: it persists, cleans and identifies every photo before it
  * answers, measured at 35.5 s for one photo against the live model. So a client-side timeout is
  * not evidence the upload failed — it is most likely evidence the server is still working on it,
- * and the draft will exist. Retrying that automatically files the same object twice, and a
- * duplicate in the catalog is indistinguishable from two real ornament boxes. `uncertain` stops
- * the queue and asks, which is the only honest answer available without an idempotency key.
+ * and the draft will exist.
+ *
+ * ## Every attempt carries the row id as `capture_id`
+ *
+ * That is the idempotency key, and it is why a re-send is now safe: the server returns the draft
+ * the first attempt created instead of filing the object again. It was added after production
+ * turned **one photograph into four drafts** on 2026-08-16 — three uploads had their connection
+ * cut after the server had already committed, and [releaseStranded] duly re-sent each one. A
+ * duplicate is the worst outcome this app has, because two drafts of one cap read exactly like
+ * two real caps.
+ *
+ * `uncertain` survives that change, and is still worth having: the key makes a retry *harmless*,
+ * but only a person can say whether a capture whose fate is unknown is worth waiting on. What
+ * changed is that saying "retry" can no longer cost them a duplicate.
  */
 @Singleton
 class CaptureQueueRepository @Inject constructor(
@@ -107,7 +118,11 @@ class CaptureQueueRepository @Inject constructor(
                     )
                 }
                 val toteId = entry.toteId?.toRequestBody(TEXT.toMediaType())
-                api.scanItem(parts, toteId)
+                // The row id, not a new UUID: it must be STABLE across retries, because it is
+                // the only thing that lets the server recognise a re-send as the same photograph
+                // rather than a second object. See the `uncertain` note above — this is what
+                // makes a re-send safe at all.
+                api.scanItem(parts, toteId, entry.id.toRequestBody(TEXT.toMediaType()))
                 // The server owns it now: drop the row and the local copies. Keeping them would
                 // accumulate a second, invisible photo library on the phone.
                 deleteFiles(entry)

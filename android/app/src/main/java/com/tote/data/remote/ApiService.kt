@@ -96,12 +96,19 @@ interface ApiService {
      *
      * `toteId` is the bin being filled. The server records it as the draft's suggested
      * destination and does not apply it: an item enters a tote only when a human confirms.
+     *
+     * `captureId` is the queue row's id and makes the call **safe to replay**. This endpoint
+     * commits before it answers, so a lost response is indistinguishable from a lost request and
+     * the queue's stranded-row recovery re-sends — which, before the key existed, filed the same
+     * photograph again. Always send it; it must be the same value on every attempt for one
+     * capture, which is why it is the row id and never a freshly generated UUID.
      */
     @Multipart
     @POST("items/scan")
     suspend fun scanItem(
         @Part photos: List<MultipartBody.Part>,
         @Part("tote_id") toteId: RequestBody? = null,
+        @Part("capture_id") captureId: RequestBody? = null,
     ): DraftDto
 
     /** The review stack, oldest first — the order they were shot in, which is the order the
