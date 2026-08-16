@@ -1,3 +1,6 @@
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _installed_version
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -9,8 +12,28 @@ from app.config import settings
 from app.limiter import limiter
 from app.routers import catalog, items, people, public, scan, suite_auth, totes, users
 
-# Single source for the human-facing version, reused by GET /version below.
-APP_VERSION = "0.1.0"
+
+def _app_version() -> str:
+    """The human-facing version, read from the installed package rather than restated here.
+
+    It used to be a literal, and it drifted the first time it mattered: `pyproject` went to
+    1.0.0 for the v1 release and this stayed at 0.1.0, so `/version` — which the hub and the
+    deploy smoke both read, and which is the whole update story since the GitHub API cannot
+    report a versionCode — confidently reported the wrong number on a freshly built image.
+
+    Two strings for one fact will always eventually disagree; the only question is whether
+    anyone notices. `pyproject` wins because that is what the build stamps into the artefact.
+    """
+    try:
+        return _installed_version("tote-server")
+    except PackageNotFoundError:
+        # Running from a source tree with nothing installed. Say so rather than guessing a
+        # number: an honest "unknown" in a deploy smoke is a failed check, and a guess is a
+        # passed one that means nothing.
+        return "unknown"
+
+
+APP_VERSION = _app_version()
 
 # Interactive docs are handy locally but an unnecessary surface on a deployment.
 app = FastAPI(
