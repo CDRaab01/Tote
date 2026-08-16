@@ -131,4 +131,30 @@ class ToteThemeTest {
             "hazardOnSurface must be visible on the dark surface",
         )
     }
+
+    @Test
+    fun `button text on the hero gradient must be white, not the channel's on-colour`() {
+        // PulseButton fills a non-tonal button with the hero gradient but colours its label with
+        // `accent.on`. For every other accent that is consistent, because the hero is built from
+        // the same hue as the channel base. Slate is a PAIR and it is not: the hero is charcoal
+        // and needs white, while `accent.on` is the dark ink belonging on the channel's YELLOW
+        // fill. Taking the default rendered "Sign in with Dragonfly" as near-black on charcoal.
+        // ToteButton overrides it; these are the numbers that make white the right override.
+        val heroStart = Color(0xFF1E293B)
+        val heroEnd = Color(0xFF475569)
+        val channelOn = darkSlateChannel().on
+
+        assertTrue(
+            contrast(white, heroStart) >= 4.5 && contrast(white, heroEnd) >= 4.5,
+            "White label on the hero: ${contrast(white, heroStart)}:1 to " +
+                "${contrast(white, heroEnd)}:1",
+        )
+        // And the guard on the wrong answer, so a future "simplification" back to the default
+        // fails here instead of on someone's phone.
+        assertTrue(
+            contrast(channelOn, heroEnd) < 4.5,
+            "accent.on is legible on the hero, so ToteButton's override may no longer be needed " +
+                "— re-check the design rather than deleting the override blindly.",
+        )
+    }
 }

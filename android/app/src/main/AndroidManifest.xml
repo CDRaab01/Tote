@@ -34,21 +34,17 @@
             </intent-filter>
         </activity>
 
-        <!-- PHASE 1, DO NOT SKIP — when the AppAuth dependency lands for "Sign in with
-             Dragonfly", this block must land with it:
-
-               <activity
-                   android:name="net.openid.appauth.RedirectUriReceiverActivity"
-                   android:theme="@style/Theme.AppCompat.Translucent.NoTitleBar"
-                   tools:node="merge" />
-
-             AppAuth themes its AuthorizationManagementActivity as AppCompat but leaves
-             RedirectUriReceiverActivity to inherit the app theme, which isn't AppCompat (suite
-             apps use android:Theme.Material) → it crashes on the OAuth redirect with "You need
-             to use a Theme.AppCompat theme". Every other suite manifest carries this override.
-             It is written here as a comment rather than as markup because both the activity and
-             the AppCompat style come from dependencies this phase does not have yet, so the real
-             block would fail to resolve today. -->
+        <!-- AppAuth themes its AuthorizationManagementActivity as AppCompat but leaves
+             RedirectUriReceiverActivity to inherit the app theme, which is NOT AppCompat (suite
+             apps use android:Theme.Material) - it then crashes on the OAuth redirect with
+             "You need to use a Theme.AppCompat theme". Every suite manifest carries this
+             override. DO NOT REMOVE IT: the crash happens on the way back from the browser, so
+             it is invisible in CI and in every screenshot test, and only shows up on a real
+             device at the exact moment a user signs in. -->
+        <activity
+            android:name="net.openid.appauth.RedirectUriReceiverActivity"
+            android:theme="@style/Theme.AppCompat.Translucent.NoTitleBar"
+            tools:node="merge" />
     </application>
 
 </manifest>

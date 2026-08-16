@@ -126,6 +126,15 @@ dependencies {
     // composite build declared in settings.gradle.kts. Tote leads PulseAccent.Slate.
     implementation(libs.pulse.ui)
 
+    // Suite SSO: OpenID Connect authorization-code + PKCE via AppAuth.
+    implementation(libs.appauth)
+
+    implementation(libs.retrofit)
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.logging)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.retrofit.kotlinx.serialization)
+
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)

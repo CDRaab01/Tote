@@ -13,7 +13,9 @@ import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.tote.ui.HomeScreen
+import com.tote.ui.auth.LoginContent
 import com.tote.ui.theme.ToteTheme
+import com.tote.util.UiState
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -61,4 +63,18 @@ class ScreenshotTest {
 
     @Test fun home_light() = capture("home_light", dark = false) { HomeScreen() }
     @Test fun home_dark() = capture("home_dark", dark = true) { HomeScreen() }
+
+    // LoginContent is the stateless body precisely so it can be captured here: the stateful
+    // LoginScreen needs Hilt and a real AppAuth service, neither of which exists in a JVM test.
+    @Test fun login_light() =
+        capture("login_light", dark = false) { LoginContent(UiState.Idle, {}) }
+
+    @Test fun login_dark() =
+        capture("login_dark", dark = true) { LoginContent(UiState.Idle, {}) }
+
+    // The error path gets its own baseline because it is the one a user actually hits — off the
+    // tailnet, the sign-in fails and this is the whole of what they see.
+    @Test fun login_error_dark() = capture("login_error_dark", dark = true) {
+        LoginContent(UiState.Error("Sign-in failed. Check you are on the tailnet and retry."), {})
+    }
 }
