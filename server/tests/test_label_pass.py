@@ -162,8 +162,6 @@ async def test_a_label_failure_does_not_rewrite_a_good_identification(monkeypatc
             label = await scan_pipeline.read_label([], client=None)
         except HTTPException:
             label = None
-        except Exception:
-            label = None
         if label is not None:
             db.add(scan_pipeline.apparel_from_label(item.id, label))
 
@@ -179,7 +177,6 @@ async def test_the_pipeline_asks_the_label_only_for_clothing(monkeypatch):
 
     async def spy(*args, **kwargs):
         calls.append("asked")
-        return None
 
     monkeypatch.setattr(scan_pipeline, "read_label", spy)
 
