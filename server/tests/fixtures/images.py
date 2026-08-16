@@ -68,24 +68,29 @@ def mean_of_center(data: bytes) -> tuple[int, int, int]:
     )
 
 
+def _visible_pixels(data: bytes) -> list[tuple[int, int, int]]:
+    """The RGB of every pixel a human would see, ignoring anything fully transparent.
+
+    Load-bearing since cleanup started keeping its alpha instead of compositing onto white.
+    `Image.convert("RGB")` maps a transparent pixel to **black**, so a naive measurement of a
+    cutout reports a huge black fraction and a near-zero brightness — which is precisely the
+    signature of the blackening defect these helpers exist to catch. Measuring the cut-out
+    ground as if it were subject would have turned both guards below into permanent false
+    alarms, and the obvious "fix" for that (loosening the thresholds) would have quietly
+    disabled the only test that ever caught the real bug.
+    """
+    img = open_image(data)
+    if img.mode in ("RGBA", "LA", "PA"):
+        rgba = img.convert("RGBA")
+        return [(r, g, b) for r, g, b, a in rgba.getdata() if a > 0]
+    return list(img.convert("RGB").getdata())
+
+
 def pure_black_fraction(data: bytes) -> float:
-    """Share of pixels that are exactly (0, 0, 0).
+    """Share of VISIBLE pixels that are exactly (0, 0, 0).
 
     The direct measure of the blackening defect. A levels pass applied in the wrong order
     produced images that were almost entirely this.
     """
-    img = open_image(data).convert("RGB")
-    pixels = list(img.getdata())
+    pixels = _visible_pixels(data)
     return sum(1 for p in pixels if p == (0, 0, 0)) / len(pixels)
-
-
-def overall_mean(data: bytes) -> int:
-    """Mean brightness of the whole image, 0-255.
-
-    Used instead of a centre sample when the cleanup path may CROP: crop-to-subject changes what
-    "the centre" contains, so a before/after centre comparison measures the reframing rather than
-    the exposure. Whole-image brightness is comparable across both paths.
-    """
-    img = open_image(data).convert("RGB")
-    pixels = list(img.getdata())
-    return sum(sum(p) for p in pixels) // (3 * len(pixels))

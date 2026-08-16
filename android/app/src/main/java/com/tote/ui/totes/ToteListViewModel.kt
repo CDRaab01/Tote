@@ -31,6 +31,18 @@ class ToteListViewModel @Inject constructor(
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
 
+    /**
+     * Whether the last sync failed, so an empty cache can tell the truth about WHY it is empty.
+     *
+     * Only meaningful alongside an empty list. With bins in the cache a failed refresh is not
+     * worth saying — the screen still answers the question it was opened for. With none, the
+     * difference matters: "no totes yet" over a household with fourteen bins is a lie that
+     * invites someone to create A14 for the second time. The same shape as the review tab that
+     * read "Nothing waiting" over a badge of 4.
+     */
+    private val _unreachable = MutableStateFlow(false)
+    val unreachable: StateFlow<Boolean> = _unreachable.asStateFlow()
+
     init {
         refresh()
     }
@@ -38,7 +50,7 @@ class ToteListViewModel @Inject constructor(
     fun refresh() {
         viewModelScope.launch {
             _refreshing.value = true
-            runCatching { repo.refresh() }
+            _unreachable.value = runCatching { repo.refresh() }.isFailure
             _refreshing.value = false
         }
     }

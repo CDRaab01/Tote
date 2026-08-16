@@ -12,20 +12,21 @@
 
 ## START HERE — state as of 2026-08-16
 
-**Phases 0-7 are complete.** Everything below is merged to `main`, deployed, and verified
+**All eight phases are complete — Tote is at v1.0.0.** Everything below is merged to `main`, deployed, and verified
 against production — not just green in CI.
 
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **251 server** (pytest, real Postgres) + **104 Android** (measured 2026-08-16) |
+| Tests | **252 server** (pytest, real Postgres) + **114 Android** (measured 2026-08-16) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
 
-**Phase 8 — polish + release** (§8). Phase 6 landed 2026-08-16.
+**The on-device pass** (open items table) and the physical bootstrap — printing the first index
+cards and writing the first tags. Everything buildable is built.
 
-**Before either: the on-device pass has never been run.** Phases 4 and 5 added the camera flow, a
+**The on-device pass has never been run in full.** Phases 4 and 5 added the camera flow, a
 WorkManager queue holding photos that exist nowhere else, and a Room schema now at **v3** — all
 of which only a real phone can exercise. See the open items table.
 
@@ -81,7 +82,6 @@ cd android && ./gradlew :app:assembleDebug :app:testDebugUnitTest
 | **On-device pass** | Never run. Camera flow, the AppAuth redirect, and **NFC read/write against real NTAG215s** — none of which CI or an emulator can test. `ToteDatabaseMigrationAndroidTest` also only runs here (`./gradlew :app:connectedDebugAndroidTest`). |
 | **ntfy topic** `tote-alerts` | Referenced by `notify.yml`; confirm it exists on the self-hosted ntfy (`:8095`). |
 | **Backups** | Phase 7. **Nothing backs up `/data/photos` yet.** Once real photos exist they are the artifact — the rows are just paths pointing at them. |
-| **Dragonfly `ServiceRegistry` row** | Deferred until the URL was real. It is real now. |
 | **The physical bootstrap** | Printing the first index cards and writing the first tags — the moment the design either works in an attic or does not. |
 
 ### Deliberately not done
@@ -560,10 +560,27 @@ Host-side wiring (`Backup-ToteArchive.ps1`, the scheduled task, the `tote` row i
 *Exit: a backup set exists, has been **verified by decrypting and restoring from what
 actually landed**, and a stale or 0-byte set fails the weekly check.*
 
-**Phase 8 — Polish + release.** Empty states, error states, Roborazzi baselines (light +
-dark), deploy live (runner + redeploy + Tailscale Serve `:8448`), tagged APK via
-`release.yml`, README, ARCHITECTURE.md complete, Dragonfly `ServiceRegistry` row now that
-the URL is real.
+**Phase 8 — Polish + release.** ✅ **DONE 2026-08-16** (#18; Dragonfly #32).
+**1.0.0** on both halves. README rewritten from "Phase 0, nothing deployed" to what the app
+actually is. Dragonfly's `ServiceRegistry` gained Tote's row — and Crate's, which had been live
+and unmonitored since 2026-08-14; the new `ServiceRegistryTest` derives the expected set from
+`AppRegistry` so the next omission fails at the moment it is made.
+
+Two things landed here that are worth knowing:
+
+- **Cleaned photos keep their alpha** rather than being composited onto white. White is Crate's
+  eBay convention and it was inherited wholesale; in a dark-mode catalog every photo was a glaring
+  white card. Safe because the model is sent the ORIGINALS, never the cleaned copy — most vision
+  stacks flatten alpha to **black**, which would be worse than the white it replaced. The knock-on
+  is in the tests: `convert("RGB")` maps transparent to black, so the blackening guards now measure
+  **visible pixels only**, and the brightness assertion is relative to the subject rather than an
+  absolute floor that was mostly measuring the white background.
+- **An empty screen must say why it is empty.** Three times now a screen has confidently reported
+  nothing when it simply could not find out (review's "Nothing waiting" over four drafts; totes'
+  "No totes yet" over an unreachable server; fits' "nothing fits" over no recorded size). Every
+  list that can be empty for two reasons now distinguishes them, and each distinguishing state has
+  its own Roborazzi baseline. ARCHITECTURE.md has the rule.
+
 *Exit: v1 feature-complete, deployed tailnet-only, CI/CD green end to end.*
 
 ---

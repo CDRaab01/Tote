@@ -17,13 +17,35 @@ Not "make a list." It's: six months from now, in the attic, **which of these fou
 grey bins has the 4T winter coats in it** — and the inverse, **we have a four-year-old now, what
 do we already own that fits.**
 
+## What it does
+
+- **Search** — type "ratchet set" or "4T" and get the item, the bin it is in, and where that bin
+  physically is. Works offline against a local cache, because the attic has the worst Wi-Fi in
+  the house and that is exactly where the bins are.
+- **Tap** — hold the phone to a bin's NFC tag and its live contents open. The tag is a pointer,
+  never the source of truth, so a tag written a year ago still opens a bin that has since been
+  renamed, moved and refilled.
+- **Catalog by photograph** — shoot a bin's worth of items back to back; a local vision model
+  drafts a name, a category and a condition, and reads the size off a clothing tag. Nothing it
+  produces enters the catalog until a human confirms it.
+- **Move things** — unpack the Christmas bin in November and repack it in January, lend the drill
+  to a neighbour, file a size run away when it is outgrown. Every move is a ledger row, so
+  "where was this last year" is answerable.
+- **People** — what fits her right now, and who has the drill. The second one nags on time.
+- **Physical artefacts** — a printable index card per bin, carrying a QR that resolves to the same
+  place as the tag. Deliberate redundancy: tags die under packing tape, and a QR reads from
+  across a room.
+
 ## Status
 
-**Phase 0 (scaffold) complete.** The app builds with the Slate theme, the server answers
-`/health` and `/version`, CI is green. Nothing is deployed yet.
+**v1 — feature complete, deployed, and in use.** All eight build phases are done; the server runs
+on the Dragonfly host and the Android app ships from CI on every push to `main`. Tailnet only, by
+design: a complete household inventory of electronics, tools and vintage games is a burglar's
+shopping list.
 
 The full build plan, data model, and the reasoning behind every locked decision live in
-[CLAUDE.md](CLAUDE.md). Architecture notes are in [ARCHITECTURE.md](ARCHITECTURE.md).
+[CLAUDE.md](CLAUDE.md). The as-built architecture — including the failures that shaped it — is in
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Stack
 

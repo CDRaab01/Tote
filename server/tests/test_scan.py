@@ -21,7 +21,6 @@ from PIL import Image
 from tests.fixtures.images import (
     dark_photo_bytes,
     mean_of_center,
-    overall_mean,
     photo_bytes,
     pure_black_fraction,
 )
@@ -64,6 +63,33 @@ def clean_photo_bytes(data: bytes) -> bytes:
     return clean_photo(data)
 
 
+def test_cleanup_keeps_the_background_transparent_not_white():
+    """The photo is a catalog thumbnail read on a phone that is usually in dark mode.
+
+    White was inherited from Crate, where an eBay listing wants exactly that. Here every
+    photograph became a glaring white card in a charcoal list. Asserted on the alpha channel
+    rather than on a corner pixel's colour, because a white corner and a transparent one look
+    identical the moment anything flattens the image — which is how this would silently come
+    back.
+
+    Skipped without rembg: the Pillow-only degradation has no cutout to be transparent, and
+    asserting otherwise would fail for the wrong reason. CI installs rembg.
+    """
+    from PIL import Image
+
+    from app.services.cleanup import clean_photo
+
+    out = clean_photo(photo_bytes())
+    img = Image.open(io.BytesIO(out))
+    if img.mode != "RGBA":
+        pytest.skip("rembg unavailable — the degraded path keeps the original, background and all")
+
+    alpha = img.getchannel("A")
+    assert alpha.getextrema()[0] == 0, "nothing is transparent — the cutout was composited again"
+    # And the subject is still opaque: an image that is transparent everywhere is not a photo.
+    assert alpha.getextrema()[1] == 255
+
+
 def test_cleanup_does_not_black_out_a_dark_subject():
     """The regression that shipped in Crate.
 
@@ -86,12 +112,22 @@ def test_cleanup_does_not_black_out_a_dark_subject():
         f"{black:.2%} of the cleaned image is pure black — the levels pass is running after "
         "compositing again"
     )
-    # Whole-image brightness, not a centre sample: when rembg is available the pipeline CROPS to
-    # the subject, so a before/after centre comparison would measure the reframing rather than
-    # the exposure. Measured across both code paths and both fixtures, this lands between 87 and
-    # 169; a blackened image would be near zero.
-    brightness = overall_mean(cleaned)
-    assert brightness > 50, f"the cleaned image came out near-black (mean {brightness})"
+    # Brightness, measured RELATIVE to the subject the camera saw rather than against an
+    # absolute floor.
+    #
+    # It used to be `overall_mean(cleaned) > 50`, which passed for the wrong reason: cleanup
+    # composited onto white, so a field of 255s dominated the average and the assertion was
+    # mostly measuring the background. Now that the cutout keeps its alpha there is no
+    # background to measure, and the honest question is whether the SUBJECT survived. Measured
+    # on this fixture the subject goes from a centre of ~(72,75,82) to ~(38,38,45) — autocontrast
+    # clipping shadows on an image whose subject is deliberately the darkest thing in frame.
+    # The defect this guards produced ~(0,0,0).
+    before = sum(mean_of_center(dark_photo_bytes())) / 3
+    after = sum(mean_of_center(cleaned)) / 3
+    assert after > before * 0.25, (
+        f"the subject collapsed from {before:.0f} to {after:.0f} — the levels pass is running "
+        "after the background removal again"
+    )
 
 
 def test_levels_preserve_the_subjects_colour():

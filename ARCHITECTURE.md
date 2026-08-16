@@ -597,6 +597,32 @@ file. Discarding a draft deletes its directory, for the same reason from the oth
 The U2-Net weights are **baked into the image** at build time. Otherwise the first scan after
 every deploy stalls on a ~170 MB download, and fails outright on a host with no egress.
 
+
+### Cleaned photos keep their alpha
+
+Cleanup is levels → background removal → crop-to-subject, and the result is stored as an **RGBA
+cutout, not composited onto white**. White is the eBay convention Crate needs and it was inherited
+wholesale; a household catalog read on a phone that is usually in dark mode is not an eBay
+listing, and every photograph rendered as a glaring white card in a charcoal list. Transparency
+lets each photo sit on the surface it is on and look right in both themes — the same reasoning as
+the accent's light/dark role swap. The client already draws photos on `colors.panelHigh`, so no
+client change was needed.
+
+**The model never sees this file**, which is what makes the change safe: `scan_pipeline` sends the
+ORIGINALS to both the identify and the label pass, measured in Crate as the better input. Worth
+knowing before anyone points a vision call at a cleaned copy — most stacks flatten alpha to
+**black**, which would put a dark subject on a dark ground and be strictly worse than the white
+this used to store.
+
+One consequence in the tests, and it matters more than the change itself: `Image.convert("RGB")`
+maps a transparent pixel to black, so the blackening guards would have measured the cut-out ground
+as if it were subject and fired permanently. The obvious fix for that — loosening the thresholds —
+would have quietly disabled the only test that ever caught the real defect. Instead the fixtures
+measure **visible pixels only** (`_visible_pixels`), and the brightness assertion is now relative
+to the subject the camera saw rather than an absolute floor: the old `overall_mean > 50` passed
+because a field of 255s dominated the average, which is to say it was mostly measuring the
+background it is now the absence of.
+
 ## The capture queue (client)
 
 The one write-behind queue in the app, and the only table in the local database whose contents
@@ -687,6 +713,27 @@ screen for four minutes rather than failing fast into the offline cache.
 copies its DDL verbatim from the committed `schemas/…/2.json` rather than restating the entity;
 the on-device test compares column for column, and a hand-typed nullability difference is exactly
 what reads as correct and fails there.
+
+## An empty screen must say WHY it is empty
+
+Three times in this app a screen has confidently reported nothing when the truth was "I could not
+find out":
+
+| Screen | Said | Meant |
+|---|---|---|
+| Review | "Nothing waiting" | four drafts existed; the ViewModel never re-fetched |
+| Totes | "No totes yet" | the cache was empty *and* the server was unreachable |
+| Person → fits | (would have said) "nothing fits" | no size is recorded to match against |
+
+The pattern is the same every time and so is the cost: a screen that says "there is nothing" is
+believed, and the person acts on it — creating A14 for the second time, or walking away from a bin
+that has exactly what they came for. An empty state is a **claim about the world**, and it may
+only be made when the app actually knows.
+
+So: every list that can be empty for two different reasons distinguishes them, and the
+distinguishing state gets its own Roborazzi baseline. `ToteListViewModel.unreachable` exists for
+exactly this and is only consulted when the list is empty — with bins on screen a failed refresh
+is not worth saying, because the screen still answers the question it was opened for.
 
 ## The review stack (client)
 

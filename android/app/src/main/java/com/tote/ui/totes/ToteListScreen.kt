@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +38,7 @@ import com.tote.ui.theme.ToteTheme
 import com.tote.util.UiState
 import design.pulse.ui.components.Caption
 import design.pulse.ui.components.EmptyState
+import design.pulse.ui.components.ErrorState
 import design.pulse.ui.components.PanelCard
 import design.pulse.ui.components.SectionHeader
 
@@ -47,12 +49,15 @@ fun ToteListScreen(
 ) {
     val totes by viewModel.totes.collectAsStateWithLifecycle()
     val createState by viewModel.create.collectAsStateWithLifecycle()
+    val unreachable by viewModel.unreachable.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
 
     ToteListContent(
         totes = totes,
         onOpenTote = onOpenTote,
         onNewTote = { showCreate = true },
+        unreachable = unreachable,
+        onRetry = viewModel::refresh,
     )
 
     if (showCreate) {
@@ -77,6 +82,8 @@ fun ToteListContent(
     onOpenTote: (String) -> Unit,
     onNewTote: () -> Unit,
     modifier: Modifier = Modifier,
+    unreachable: Boolean = false,
+    onRetry: () -> Unit = {},
 ) {
     val spacing = ToteTheme.spacing
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -97,11 +104,23 @@ fun ToteListContent(
 
             if (totes.isEmpty()) {
                 item {
-                    EmptyState(
-                        icon = Icons.Filled.Inventory2,
-                        title = "No totes yet",
-                        subtitle = "Create one, write its code on an index card, and start filling it.",
-                    )
+                    // An empty cache means one of two very different things, and saying the
+                    // wrong one invites someone to create A14 for the second time.
+                    if (unreachable) {
+                        ErrorState(
+                            icon = Icons.Outlined.CloudOff,
+                            title = "Can't reach Tote",
+                            detail = "Nothing is cached on this phone yet, so there is nothing " +
+                                "to show offline. Check you're on the tailnet.",
+                            onRetry = onRetry,
+                        )
+                    } else {
+                        EmptyState(
+                            icon = Icons.Filled.Inventory2,
+                            title = "No totes yet",
+                            subtitle = "Create one, write its code on an index card, and start filling it.",
+                        )
+                    }
                 }
             }
 
