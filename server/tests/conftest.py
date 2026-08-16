@@ -8,9 +8,12 @@ os.environ.setdefault("DB_NULLPOOL", "true")
 
 import pytest
 import pytest_asyncio
+from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
-from app.database import Base, engine
+from alembic import command
+from app.database import AsyncSessionLocal, engine
 from app.limiter import limiter
 from app.main import app
 
@@ -26,16 +29,51 @@ def event_loop():
     loop.close()
 
 
-@pytest_asyncio.fixture(scope="session", autouse=True)
-async def setup_tables():
-    """Ensure all tables exist before any test runs (safe to call after alembic)."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    await engine.dispose()
+@pytest.fixture(scope="session", autouse=True)
+def migrate():
+    """Build the schema with ALEMBIC, not `Base.metadata.create_all`.
+
+    The siblings use create_all here, and for them it is equivalent. It is not equivalent for
+    Tote: two schema objects exist ONLY in migration 0001 because SQLAlchemy cannot express
+    them on a model — the functional unique index on `lower(totes.code)` and the GIN index on
+    `items.search_vector`. Under create_all both would be silently absent, so the tests that
+    prove "a14 and A14 are the same bin" and that search uses an index would be testing a
+    schema that never ships.
+
+    Deliberately synchronous and session-scoped: alembic's env.py calls asyncio.run() itself,
+    which would explode inside an already-running loop.
+    """
+    command.upgrade(Config("alembic.ini"), "head")
     yield
+
+
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def dispose_engine():
+    yield
+    await engine.dispose()
 
 
 @pytest_asyncio.fixture
 async def client():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
+
+
+@pytest_asyncio.fixture
+async def db():
+    async with AsyncSessionLocal() as session:
+        yield session
+
+
+@pytest_asyncio.fixture
+async def raw_sql():
+    """Execute SQL directly, for asserting database-level constraints that the ORM would never
+    exercise (functional indexes, generated columns)."""
+
+    async def _run(sql: str, **params):
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(text(sql), params)
+            await session.commit()
+            return result
+
+    return _run

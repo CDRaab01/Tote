@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     database_url: str
     secret_key: str
     algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
 
     # Test-suite setting: pooled asyncpg connections bind to the creating event loop, which
     # breaks under pytest-asyncio's per-test loops ("Task attached to a different loop").
