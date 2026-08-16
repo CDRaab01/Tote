@@ -79,6 +79,7 @@ fun ReviewScreen(
     ReviewContent(
         state = state,
         onEdit = viewModel::edit,
+        onEditApparel = viewModel::editApparel,
         onConfirm = { viewModel.confirm() },
         onDiscard = viewModel::discard,
         onSkip = viewModel::skip,
@@ -92,6 +93,7 @@ fun ReviewScreen(
 fun ReviewContent(
     state: ReviewUiState,
     onEdit: ((DraftEdits) -> DraftEdits) -> Unit,
+    onEditApparel: ((DraftEdits) -> DraftEdits) -> Unit = onEdit,
     onConfirm: () -> Unit,
     onDiscard: () -> Unit,
     onSkip: () -> Unit,
@@ -269,6 +271,61 @@ fun ReviewContent(
                     }
                 }
 
+                // ── Clothing, if this is clothing ────────────────────────────
+                item {
+                    SectionHeader(
+                        label = "If it's clothing",
+                        channel = colors.provenance.base,
+                    )
+                }
+                item {
+                    OutlinedTextField(
+                        value = state.edits.sizeRaw,
+                        onValueChange = { v -> onEditApparel { it.copy(sizeRaw = v) } },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Size, exactly as the tag reads") },
+                        placeholder = { Text("4T, 6X, 32x30, M/L…") },
+                        // The derived reading sits UNDER the raw value rather than in the
+                        // section header's trailing slot, where it was clipped — and this is the
+                        // better place for it anyway: it describes this field, and it has the
+                        // room to say which of the two outcomes happened rather than only one.
+                        supportingText = { Text(sizeSupportingText(draft)) },
+                    )
+                }
+                item {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
+                        items(DEPARTMENTS) { dept ->
+                            SlateChip(
+                                selected = state.edits.department == dept,
+                                label = departmentLabel(dept),
+                                onClick = {
+                                    onEditApparel {
+                                        it.copy(
+                                            department =
+                                                if (it.department == dept) null else dept
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+                item {
+                    // Not decoration: a bare "8" cannot be placed on the ladder without one.
+                    // Kept to one line — Caption renders in caps, and three lines of it shouts.
+                    Caption(text = "Needed to tell a youth 8 from a women's 8.")
+                }
+                item {
+                    OutlinedTextField(
+                        value = state.edits.material,
+                        onValueChange = { v -> onEditApparel { it.copy(material = v) } },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Material") },
+                    )
+                }
+
                 // ── Which bin ────────────────────────────────────────────────
                 item {
                     SectionHeader(
@@ -391,6 +448,43 @@ private fun scanNotice(draft: DraftDto): String? = when {
     else -> null
 }
 
+/** The departments the server accepts, in the order a household picks from them. */
+private val DEPARTMENTS = listOf("girls", "boys", "womens", "mens", "unisex")
+
+private fun departmentLabel(value: String) = when (value) {
+    "girls" -> "Girls"
+    "boys" -> "Boys"
+    "womens" -> "Women's"
+    "mens" -> "Men's"
+    "unisex" -> "Unisex"
+    else -> value
+}
+
+/**
+ * What to say under the size field.
+ *
+ * Both outcomes are stated, and neither is phrased as a fault. A string the ladder could not
+ * place is the **designed** result — the reading survives verbatim and a human reads it — so
+ * calling it "unrecognised" would turn a working outcome into a chore the reviewer thinks they
+ * have to fix.
+ */
+private fun sizeSupportingText(draft: DraftDto): String {
+    val system = draft.apparel?.sizeSystem
+        ?: return "Kept word for word. Not placed on the size ladder, which is fine — " +
+            "nothing is ever guessed."
+    val ladder = when (system) {
+        "infant_months" -> "infant sizing"
+        "toddler" -> "toddler sizing"
+        "youth_numeric", "youth_alpha" -> "youth sizing"
+        "adult_alpha" -> "adult sizing"
+        "womens_numeric" -> "women's sizing"
+        "mens_waist" -> "men's waist sizing"
+        "shoe_us_child", "shoe_us_adult" -> "shoe sizing"
+        else -> system
+    }
+    return "Kept word for word, and placed on the ladder as $ladder."
+}
+
 /** Selection in Tote's own channel — see the note in the capture screen's chip. */
 @Composable
 private fun SlateChip(selected: Boolean, label: String, onClick: () -> Unit) {
@@ -453,8 +547,8 @@ private fun ReviewPreview() {
                 categories = listOf(CategoryDto("c1", "Seasonal decor")),
                 loading = false,
             ),
-            onEdit = {}, onConfirm = {}, onDiscard = {}, onSkip = {}, onBack = {}, onRetry = {},
-            photoUrlFor = { _, _ -> "" },
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = { _, _ -> "" },
         )
     }
 }

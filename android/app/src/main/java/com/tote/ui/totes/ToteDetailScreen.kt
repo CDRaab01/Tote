@@ -284,13 +284,17 @@ private fun ItemRow(item: ItemDto, actionLabel: String, onAction: () -> Unit) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                val sub = when {
+                val status = when {
                     item.isOverdue -> "Overdue — expected back ${item.expectedBack}"
                     item.status == "loaned" -> "Lent out"
                     item.status == "out" -> "Out since it was unpacked"
                     else -> null
                 }
-                if (sub != null) {
+                // The tag's own words, joined to the status rather than stacked under it. This
+                // is the line someone reads while holding an open bin, and every extra row on it
+                // costs a garment's worth of scrolling.
+                val sub = listOfNotNull(item.apparel?.sizeRaw, status).joinToString(" · ")
+                if (sub.isNotEmpty()) {
                     Spacer(Modifier.height(spacing.xs))
                     Caption(text = sub)
                 }

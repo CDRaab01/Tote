@@ -65,6 +65,21 @@ object ToteMigrations {
     }
 
     /**
+     * v3 — the garment tag's reading, cached for offline search (Phase 5).
+     *
+     * A plain `ADD COLUMN`, nullable with no default, which is the one shape SQLite will do
+     * in place. **Not** drop-and-recreate: `cached_items` is disposable in principle, but
+     * rebuilding it here would empty the offline catalog until the next successful sync — and
+     * the whole reason this table exists is the attic, where that sync cannot happen.
+     *
+     * Only `size_raw` is cached, deliberately. The system/ordinal index belongs to the server;
+     * a client copy would eventually be compared against a ladder this app does not implement.
+     */
+    private val MIGRATION_2_3 = Migration(2, 3) { db ->
+        db.execSQL("ALTER TABLE `cached_items` ADD COLUMN `sizeRaw` TEXT")
+    }
+
+    /**
      * Passed to `Room.databaseBuilder(...).addMigrations(*ALL)`.
      *
      * Order does not matter to Room — it finds a path through the graph — but keeping them in
@@ -72,5 +87,6 @@ object ToteMigrations {
      */
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
+        MIGRATION_2_3,
     )
 }

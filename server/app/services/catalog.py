@@ -13,11 +13,12 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.item import Item
+from app.models.item import Item, ItemApparel
 from app.models.location import Location
 from app.models.movement import Movement
 from app.models.tote import Tote
 from app.schemas.catalog import ApparelOut, ItemOut, ToteOut
+from app.sizing import SIZE_SYSTEMS, comparable, parse_size
 
 
 def local_today() -> datetime.date:
@@ -52,6 +53,29 @@ def item_query(user_id: uuid.UUID) -> Select:
         # approval, and a draft turning up in search results would be exactly that. The review
         # stack queries drafts explicitly instead.
         .where(Item.is_draft.is_(False))
+    )
+
+
+def apply_size_filter(query: Select, raw: str, tolerance: float = 1.0) -> Select:
+    """Narrow a query to items that are approximately this size.
+
+    Matches on the ORDINAL, not the string, so "4T" also finds a garment whose tag read "4"
+    under a girls department — which is the whole point of having an index. Two rules keep it
+    honest:
+
+    * **Only within comparable lineages.** A men's waist never matches a toddler size, however
+      close the numbers land on the shared axis.
+    * **An unparseable filter falls back to matching `size_raw` textually** rather than returning
+      nothing. Someone typing "M/L" into the box means it literally, and an empty result would
+      read as "you own none of these" when the truth is "we could not index that".
+    """
+    reading = parse_size(raw)
+    if reading is None:
+        return query.where(ItemApparel.size_raw.ilike(f"%{raw.strip()}%"))
+    systems = [s for s in SIZE_SYSTEMS if comparable(s, reading.system)]
+    return query.where(
+        ItemApparel.size_system.in_(systems),
+        ItemApparel.size_ordinal.between(reading.ordinal - tolerance, reading.ordinal + tolerance),
     )
 
 

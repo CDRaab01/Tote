@@ -460,3 +460,68 @@ async def test_a_scan_survives_a_photo_that_cannot_be_cleaned(auth_client, monke
     # photo, not a broken frame.
     photo = await auth_client.get(f"/items/{r.json()['id']}/photos/0")
     assert photo.status_code == 200
+
+
+async def test_confirming_without_an_apparel_block_keeps_what_the_label_read(
+    auth_client, monkeypatch
+):
+    """Omitted means "leave it", not "clear it".
+
+    Every other field on DraftConfirm is overwritten outright, because every other field is on
+    the review screen and a blank one is a decision. Apparel is a section a user may never open,
+    and clearing a correctly-read 4T because nobody scrolled to it would silently destroy the
+    only reading of a tag now sealed in a bin.
+    """
+    import app.services.scan_pipeline as pipeline
+    from app.services.ai.identify_prompts import IdentifyDraft
+    from app.services.ai.label_prompts import LabelDraft
+
+    async def fake_identify(urls, categories=None, client=None):
+        return IdentifyDraft(name="Winter coat", confidence="high")
+
+    async def fake_label(urls, client=None):
+        return LabelDraft(size="4T", department="girls")
+
+    monkeypatch.setattr(pipeline, "identify_item", fake_identify)
+    monkeypatch.setattr(pipeline, "read_label", fake_label)
+
+    tote = (await auth_client.post("/totes", json={"code": "S20"})).json()
+    draft = (await _scan(auth_client, photo_bytes())).json()
+    assert draft["apparel"]["size_raw"] == "4T"
+
+    confirmed = (
+        await auth_client.post(
+            f"/drafts/{draft['id']}/confirm",
+            json={"tote_id": tote["id"], "name": "Winter coat"},
+        )
+    ).json()
+    assert confirmed["apparel"]["size_raw"] == "4T"
+    assert confirmed["apparel"]["size_ordinal"] == 4.0
+
+
+async def test_confirming_with_an_apparel_block_rederives_the_index(auth_client, monkeypatch):
+    """A human correcting the size on the review screen must not leave a stale ordinal behind."""
+    import app.services.scan_pipeline as pipeline
+    from app.services.ai.identify_prompts import IdentifyDraft
+
+    async def fake_identify(urls, categories=None, client=None):
+        return IdentifyDraft(name="Snowsuit", confidence="high")
+
+    monkeypatch.setattr(pipeline, "identify_item", fake_identify)
+
+    tote = (await auth_client.post("/totes", json={"code": "S21"})).json()
+    draft = (await _scan(auth_client, photo_bytes())).json()
+
+    confirmed = (
+        await auth_client.post(
+            f"/drafts/{draft['id']}/confirm",
+            json={
+                "tote_id": tote["id"],
+                "name": "Snowsuit",
+                "apparel": {"size_raw": "6X"},
+            },
+        )
+    ).json()
+    assert confirmed["apparel"]["size_raw"] == "6X"
+    assert confirmed["apparel"]["size_system"] == "youth_numeric"
+    assert confirmed["apparel"]["size_ordinal"] == 6.5

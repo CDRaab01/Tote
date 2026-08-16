@@ -3,6 +3,7 @@ package com.tote.ui.review
 import com.tote.data.local.CachedTote
 import com.tote.data.local.CatalogDao
 import com.tote.data.remote.ApiService
+import com.tote.data.remote.ApparelDto
 import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.DraftConfirm
 import com.tote.data.remote.DraftDto
@@ -22,6 +23,7 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.eq
@@ -194,6 +196,76 @@ class ReviewViewModelTest {
         // Carrying them would silently apply one item's corrected name to the next photograph.
         assertEquals("Second", vm.state.value.edits.name)
         assertEquals(1, vm.state.value.edits.quantity)
+    }
+
+    @Test
+    fun `an untouched clothing section is omitted from the confirm body`() = runTest {
+        """Omitted means "leave what the label read" on the server. Sending an unchanged copy
+        would work today and would silently start clearing fields the moment this form stops
+        carrying every column the row has."""
+        val draft = DraftDto(
+            id = "d1", name = "Winter coat", draftToteId = "t1", photoCount = 1,
+            apparel = ApparelDto(sizeRaw = "4T", sizeSystem = "toddler", department = "girls"),
+        )
+        val vm = vmWith(draft)
+        api.stub {
+            onBlocking { confirmDraft(any(), any()) } doAnswer {
+                ItemDto(id = "i1", name = "Winter coat", status = "stored")
+            }
+        }
+        dispatcher.scheduler.advanceUntilIdle()
+
+        // The reviewer edits the NAME only and files it.
+        vm.edit { it.copy(name = "Snow coat") }
+        vm.confirm()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        argumentCaptor<DraftConfirm>().apply {
+            verify(api).confirmDraft(eq("d1"), capture())
+            assertNull(firstValue.apparel, "apparel must be omitted when untouched")
+            assertEquals("Snow coat", firstValue.name)
+        }
+    }
+
+    @Test
+    fun `touching the clothing section sends it, and the server re-derives the index`() = runTest {
+        val draft = DraftDto(
+            id = "d1", name = "Winter coat", draftToteId = "t1", photoCount = 1,
+            apparel = ApparelDto(sizeRaw = "4T", sizeSystem = "toddler"),
+        )
+        val vm = vmWith(draft)
+        api.stub {
+            onBlocking { confirmDraft(any(), any()) } doAnswer {
+                ItemDto(id = "i1", name = "Winter coat", status = "stored")
+            }
+        }
+        dispatcher.scheduler.advanceUntilIdle()
+
+        vm.editApparel { it.copy(sizeRaw = "6X", department = "girls") }
+        vm.confirm()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        argumentCaptor<DraftConfirm>().apply {
+            verify(api).confirmDraft(eq("d1"), capture())
+            assertEquals("6X", firstValue.apparel?.sizeRaw)
+            assertEquals("girls", firstValue.apparel?.department)
+        }
+    }
+
+    @Test
+    fun `the clothing section starts from what the label read`() = runTest {
+        val draft = DraftDto(
+            id = "d1", name = "Coat", draftToteId = "t1", photoCount = 1,
+            apparel = ApparelDto(sizeRaw = "4T", department = "girls", material = "Fleece"),
+        )
+        val vm = vmWith(draft)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("4T", vm.state.value.edits.sizeRaw)
+        assertEquals("girls", vm.state.value.edits.department)
+        assertEquals("Fleece", vm.state.value.edits.material)
+        // And it is not "touched" merely by being populated.
+        assertEquals(false, vm.state.value.edits.touchedApparel)
     }
 
     @Test

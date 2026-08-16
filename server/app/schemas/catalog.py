@@ -381,6 +381,12 @@ class DraftConfirm(BaseModel):
     category_id: uuid.UUID | None = None
     quantity: int = Field(default=1, ge=1)
     condition: str | None = None
+    # OMITTED means "leave what the label pass read", not "clear it" — unlike every field above,
+    # which is overwritten outright. The asymmetry is deliberate: the item fields are all on the
+    # review screen and a blank one is a decision, while apparel is a section a user may never
+    # open, and clearing a correctly-read 4T because nobody scrolled to it would be a silent
+    # loss of the only reading of a tag now sealed in a bin.
+    apparel: ApparelPatch | None = None
 
     @field_validator("condition")
     @classmethod

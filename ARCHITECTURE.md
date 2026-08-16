@@ -58,6 +58,7 @@ Tote/
 │  │     ├─ photo_store.py      binaries on the volume, paths in the DB
 │  │     ├─ scan_pipeline.py    photo → draft (+ the label pass)
 │  │     ├─ apparel_draft.py    a label reading → an item_apparel row
+│  │     ├─ apparel_write.py    THE single writer of item_apparel
 │  │     ├─ sizing_hints.py     should this item get a label pass at all
 │  │     └─ ai/                 vision transport, prompt, salvage parser
 │  ├─ alembic/versions/0001_    the whole schema
@@ -861,6 +862,57 @@ Verified live against `gemma-4-e4b` on 2026-08-16: a drawn tag reading `4T / GIR
 came back parsed to `toddler`, ordinal `4.0`. Both negative controls — a brand-and-care label with
 no size, and a photo that is not a label at all — returned **no size**, which is the half that
 actually matters.
+
+## Apparel on the client
+
+### The tag's own words go where people look
+
+`size_raw` rides on the **same caption line** as the bin on a search hit, and beside the status
+on a tote-detail row. Not a row of its own: the question someone is asking is "which bin", and a
+second line competes with the answer while costing a garment's worth of scrolling in a list they
+are reading with an open bin in front of them.
+
+### The review form states both outcomes, and neither is a fault
+
+Under the size field, the app says either *"Kept word for word, and placed on the ladder as
+toddler sizing"* or *"Kept word for word. Not placed on the size ladder, which is fine — nothing
+is ever guessed."* The second is the **designed** result, so it is phrased as a working outcome
+rather than as "unrecognised", which would read as a chore the reviewer has to clear.
+
+That text sits under the field rather than in the section header's trailing slot, where the
+first version put it — and where rendering showed it clipped off the right edge.
+
+### An untouched clothing section is OMITTED from confirm
+
+`DraftEdits.touchedApparel` tracks whether the reviewer changed anything in that section, and the
+confirm body carries `apparel` only when they did. The server reads an omitted block as "leave
+what the label read", so sending an unchanged copy would work *today* and would silently start
+clearing columns the moment this form stops carrying every field the row has. Two tests pin it.
+
+### Only `size_raw` is cached (Room v3)
+
+The offline search matches it, because "4T" is a thing people type standing in front of the bins —
+exactly where there is no signal. The derived system and ordinal are **not** cached: the server
+owns that index, and a client copy would eventually be compared against a ladder this app does not
+implement.
+
+The migration is a plain nullable `ADD COLUMN`, not drop-and-recreate. `cached_items` is
+disposable in principle, but rebuilding it would empty the offline catalog until the next
+successful sync — and the attic is precisely where that sync cannot happen.
+
+## Size-aware filtering
+
+`GET /items?size=4T` matches on the **ordinal**, not the string, so it also finds a garment whose
+tag read "4" under a girls department — the point of having an index at all. Three rules:
+
+- **Only within comparable lineages.** A men's waist never matches a toddler size however close
+  the numbers land on the shared axis.
+- **An inner join**, unlike every other join in `item_query`. Filtering by size means the caller
+  wants things that *have* a size, so an item with no apparel row is correctly absent rather than
+  swept in by a null.
+- **An unparseable filter falls back to matching `size_raw` textually.** Someone typing "M/L"
+  means it literally, and an empty result would read as "you own none of these" when the truth is
+  "we could not index that".
 
 ## Not yet built
 

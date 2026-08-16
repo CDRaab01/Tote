@@ -172,7 +172,12 @@ private fun SearchHitRow(item: ItemDto, onClick: () -> Unit) {
                     item.status == "out" -> "Out of its tote"
                     else -> "Not in a tote"
                 }
-                Caption(text = where)
+                // The size rides on the same line as the bin rather than earning a row of its
+                // own: the question is "which bin", and a second line would compete with the
+                // answer. Shown verbatim — this is the tag's own words.
+                Caption(
+                    text = item.apparel?.sizeRaw?.let { "$where · $it" } ?: where,
+                )
             }
             if (item.isOverdue) {
                 Spacer(Modifier.width(spacing.sm))

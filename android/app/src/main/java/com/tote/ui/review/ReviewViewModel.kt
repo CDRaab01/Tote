@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.tote.data.local.CachedTote
 import com.tote.data.local.CatalogDao
 import com.tote.data.remote.ApiService
+import com.tote.data.remote.ApparelPatch
 import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.DraftConfirm
 import com.tote.data.remote.DraftDto
@@ -31,6 +32,19 @@ data class DraftEdits(
     val condition: String? = null,
     val categoryId: String? = null,
     val toteId: String? = null,
+    /**
+     * The garment tag, verbatim. Null when the item is not clothing OR the label pass never ran.
+     *
+     * `touchedApparel` tracks whether the reviewer actually changed anything here, because an
+     * untouched section must be OMITTED from the confirm body rather than sent as-is. The server
+     * treats an omitted apparel block as "leave what the label read"; sending an unchanged copy
+     * would work today and would silently start clearing fields the moment this form stops
+     * carrying every column the row has.
+     */
+    val sizeRaw: String = "",
+    val department: String? = null,
+    val material: String = "",
+    val touchedApparel: Boolean = false,
 ) {
     /** Filing needs a destination and a name; everything else may legitimately be blank. */
     val canConfirm: Boolean get() = name.isNotBlank() && toteId != null
@@ -46,6 +60,9 @@ data class DraftEdits(
             // Pre-selected from the bin chosen at capture time, which is the whole payoff of
             // carrying it through the queue — the common case needs no tap here at all.
             toteId = draft.draftToteId,
+            sizeRaw = draft.apparel?.sizeRaw.orEmpty(),
+            department = draft.apparel?.department,
+            material = draft.apparel?.material.orEmpty(),
         )
     }
 }
@@ -119,6 +136,13 @@ class ReviewViewModel @Inject constructor(
         _state.value = _state.value.copy(edits = transform(_state.value.edits))
     }
 
+    /** Any edit inside the clothing section, which is what makes it get sent at all. */
+    fun editApparel(transform: (DraftEdits) -> DraftEdits) {
+        _state.value = _state.value.copy(
+            edits = transform(_state.value.edits).copy(touchedApparel = true)
+        )
+    }
+
     /** Leave this one for later without deciding about it. */
     fun skip() = moveTo(_state.value.index + 1)
 
@@ -157,6 +181,16 @@ class ReviewViewModel @Inject constructor(
                         categoryId = s.edits.categoryId,
                         quantity = s.edits.quantity,
                         condition = s.edits.condition,
+                        // Omitted unless the reviewer touched it — see DraftEdits.touchedApparel.
+                        apparel = if (s.edits.touchedApparel) {
+                            ApparelPatch(
+                                sizeRaw = s.edits.sizeRaw.takeIf { it.isNotBlank() },
+                                department = s.edits.department,
+                                material = s.edits.material.takeIf { it.isNotBlank() },
+                            )
+                        } else {
+                            null
+                        },
                     ),
                 )
                 dropCurrent()
