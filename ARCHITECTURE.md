@@ -33,7 +33,8 @@ Tote/
 │        ├─ search/             SearchViewModel + SearchScreen (the home screen)
 │        ├─ totes/              ToteList + ToteDetail, with their ViewModels
 │        ├─ capture/            CaptureViewModel + CaptureScreen/CaptureContent
-│        ├─ navigation/         three tabs + the pushed detail route
+│        ├─ review/             ReviewViewModel + ReviewScreen, DraftBadgeViewModel
+│        ├─ navigation/         four tabs + the pushed detail route
 │        ├─ components/         HazardRule, ToteButton
 │        └─ theme/ToteTheme.kt  semantic layer over PULSE
 ├─ server/                      FastAPI backend
@@ -620,11 +621,67 @@ copies its DDL verbatim from the committed `schemas/…/2.json` rather than rest
 the on-device test compares column for column, and a hand-typed nullability difference is exactly
 what reads as correct and fails there.
 
+## The review stack (client)
+
+The gate between a photograph and the catalog. Nothing the model produced is filed until someone
+taps **File it**, and every field it filled in is editable first — the house AI rule, which Tote
+has no exception to. `POST /drafts/{id}/confirm` is the only path from a photograph to a
+catalogued item, and it is what writes the `initial` movement row.
+
+**One draft at a time, not a scrolling list.** This is the tail of a batch — twenty items
+photographed in one pass — and a list of twenty expandable cards is a screen people abandon
+halfway, which leaves the catalog half-true. A counter says where you are; Back, Skip and Discard
+say what else you can do.
+
+**Position is preserved.** Deciding about a draft removes it from the in-memory stack and lands
+on the next one; it does not re-fetch. A refresh here would drop someone back at the top of a
+stack they were ten items into, and that is the mechanism by which a review session stops
+halfway. `ReviewViewModelTest` asserts both the landing and the single fetch.
+
+**Edits reset on every move.** They are per-draft and held apart from the DTO. Carrying them
+would silently apply one item's corrected name to the next photograph in the stack.
+
+**The destination is pre-selected** from the bin chosen at capture time (`draft_tote_id`), which
+is the payoff for carrying it through the queue: the common case needs no tap here at all. Filing
+still requires *some* bin — a confirmed item that is in no bin and never was is indistinguishable
+from a bug — and the bin list comes from the Room cache, because reviewing happens on the way
+back from the garage before the Wi-Fi is good again.
+
+**No polling.** The sibling app this pattern came from polls because its scan is asynchronous.
+Tote's is synchronous — it identifies before it answers — so a draft that exists is already
+processed, and polling would be asking a question whose answer cannot change.
+
+### The two scan notices are kept apart
+
+`scan_error = "identify_unavailable"` and `scan_confidence = "low"` render as different messages,
+because the server went to trouble to keep them distinct and collapsing them here would waste
+that. The first means the model could not be reached and nobody looked at this photograph at all;
+the second means it looked and found the photo hard. Merged into one "check this", a server
+outage would send someone off to reshoot a perfectly good picture.
+
+### Destructive actions speak in the error voice
+
+Discard — on both the review stack and the capture queue — deletes photographs, the one artefact
+in this app that cannot be recreated. It renders in `colorScheme.error` rather than the accent, so
+it does not look like the Skip beside it. Three identical tonal buttons where the third is
+unrecoverable is a row designed for the wrong tap. `ToteButton` grew optional `channel`/
+`dimChannel` for this.
+
+### The Review tab carries a badge
+
+`DraftBadgeViewModel` is deliberately separate from `ReviewViewModel`: a badge that only appears
+once you open the tab it is on does nothing. An uncatalogued draft is work someone believes is
+finished and is not — the bin is taped shut and nothing says the item never reached the catalog —
+so it is the rose attention channel, visible from every screen. It refreshes when the local queue
+changes (an upload finishing is what creates a draft) with a slow ticker as a backstop for drafts
+created on another device, and it fails silently: a tailnet blip must not raise an error over
+whatever screen someone is actually using.
+
 ## Not yet built
 
-The Android review stack (the remaining client half of Phase 4)
-(Phase 3); photo capture and the AI draft pipeline (Phase 4); the sizing ladder (Phase 5);
-people and lending (Phase 6); backups (Phase 7, once there are photos to lose).
+Phase 4 is complete on both sides. What remains: the sizing ladder (Phase 5); people, `fits()`
+and lending (Phase 6); backups (Phase 7 — and there are photos to lose now, which moves that up
+the list); polish and the Roborazzi/empty-state sweep (Phase 8).
 
 The smoke script carries an explicit list of what each phase must add to it. Crate's stopped at
 `/users/me` for months, so "auth works" read as "the app works" while the pipeline the app exists

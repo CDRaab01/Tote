@@ -342,6 +342,25 @@ private fun ShotThumbnail(file: File, onRemove: () -> Unit) {
     }
 }
 
+/**
+ * Discarding a queued capture speaks in the error voice, not the accent.
+ *
+ * These photographs have not reached the server at all, so this row is the only place they
+ * exist. Rendering the destructive action identically to its neighbours is how the wrong tap
+ * becomes easy, and there is nothing to undo it with.
+ */
+@Composable
+private fun DiscardButton(onDiscard: () -> Unit) {
+    ToteButton(
+        text = "Discard",
+        onClick = onDiscard,
+        compact = true,
+        tonal = true,
+        channel = MaterialTheme.colorScheme.error,
+        dimChannel = MaterialTheme.colorScheme.errorContainer,
+    )
+}
+
 /** True for the two states that are waiting on a person rather than on a network. */
 private val CaptureQueueEntity.needsAttention: Boolean
     get() = state == CaptureQueueEntity.STATE_FAILED ||
@@ -408,7 +427,7 @@ private fun QueueRow(
                     )
                 }
                 if (!entry.needsAttention) {
-                    ToteButton(text = "Discard", onClick = onDiscard, compact = true, tonal = true)
+                    DiscardButton(onDiscard)
                 }
             }
             if (entry.needsAttention) {
@@ -422,12 +441,7 @@ private fun QueueRow(
                         // keeps it available without making it the obvious tap.
                         tonal = uncertain,
                     )
-                    ToteButton(
-                        text = "Discard",
-                        onClick = onDiscard,
-                        compact = true,
-                        tonal = true,
-                    )
+                    DiscardButton(onDiscard)
                 }
             }
         }

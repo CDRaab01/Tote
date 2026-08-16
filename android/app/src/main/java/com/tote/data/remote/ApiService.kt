@@ -103,4 +103,23 @@ interface ApiService {
         @Part photos: List<MultipartBody.Part>,
         @Part("tote_id") toteId: RequestBody? = null,
     ): DraftDto
+
+    /** The review stack, oldest first — the order they were shot in, which is the order the
+     *  person remembers them in. */
+    @GET("drafts")
+    suspend fun drafts(): List<DraftDto>
+
+    /**
+     * Accept a draft into the catalog.
+     *
+     * The only path from a photograph to a catalogued item, and the moment the `initial`
+     * movement row is written. Every field in the body overwrites the draft's — the human's
+     * edits win outright rather than merging, so a corrected name cannot be quietly reverted.
+     */
+    @POST("drafts/{id}/confirm")
+    suspend fun confirmDraft(@Path("id") id: String, @Body body: DraftConfirm): ItemDto
+
+    /** Throw a draft away, photos and all. */
+    @DELETE("drafts/{id}")
+    suspend fun discardDraft(@Path("id") id: String)
 }

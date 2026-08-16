@@ -66,6 +66,14 @@ fun ToteButton(
     enabled: Boolean = true,
     tonal: Boolean = false,
     compact: Boolean = false,
+    /**
+     * Override the channel a **tonal** button speaks in — its label colour and, via [dimChannel],
+     * its fill. The point is a destructive action that does not look like its neighbours: three
+     * identical tonal buttons where one deletes photographs is a row where the wrong tap is easy
+     * and unrecoverable.
+     */
+    channel: Color? = null,
+    dimChannel: Color? = null,
     leadingIcon: (@Composable () -> Unit)? = null,
 ) {
     if (tonal) {
@@ -76,6 +84,8 @@ fun ToteButton(
             enabled = enabled,
             tonal = true,
             compact = compact,
+            channel = channel ?: Pulse.accent.base,
+            dimChannel = dimChannel ?: Pulse.accent.dim,
             leadingIcon = leadingIcon,
         )
     } else {
