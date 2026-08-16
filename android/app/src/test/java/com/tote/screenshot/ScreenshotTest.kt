@@ -12,8 +12,14 @@ import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.captureRoboImage
-import com.tote.ui.HomeScreen
+import com.tote.data.local.CachedTote
+import com.tote.data.remote.ItemDto
+import com.tote.data.remote.ToteDetailDto
 import com.tote.ui.auth.LoginContent
+import com.tote.ui.search.SearchContent
+import com.tote.ui.search.SearchUiState
+import com.tote.ui.totes.ToteDetailContent
+import com.tote.ui.totes.ToteListContent
 import com.tote.ui.theme.ToteTheme
 import com.tote.util.UiState
 import org.junit.Rule
@@ -61,8 +67,75 @@ class ScreenshotTest {
         compose.onRoot().captureRoboImage("screenshots/$name.png", roborazziOptions = roborazziOptions)
     }
 
-    @Test fun home_light() = capture("home_light", dark = false) { HomeScreen() }
-    @Test fun home_dark() = capture("home_dark", dark = true) { HomeScreen() }
+    // ── Phase 2: the screens someone actually uses ───────────────────────────
+
+    private val hits = listOf(
+        ItemDto(
+            id = "1", name = "Ratchet set", quantity = 1, status = "stored",
+            toteCode = "G01", locationName = "Garage rack B",
+        ),
+        ItemDto(
+            id = "2", name = "Socket adapter", quantity = 2, status = "loaned",
+            isOverdue = true, expectedBack = "2026-08-01",
+        ),
+    )
+
+    @Test fun search_idle_light() = capture("search_idle_light", dark = false) {
+        SearchContent(SearchUiState(totes = 14, items = 213, out = 6), {}, {})
+    }
+
+    @Test fun search_idle_dark() = capture("search_idle_dark", dark = true) {
+        SearchContent(SearchUiState(totes = 14, items = 213, out = 6), {}, {})
+    }
+
+    @Test fun search_results_dark() = capture("search_results_dark", dark = true) {
+        SearchContent(SearchUiState(query = "ratchet", searched = true, results = hits), {}, {})
+    }
+
+    // The offline path gets its own baseline: it is the state someone hits in the attic, and
+    // the whole point is that it says so rather than pretending to be a normal result set.
+    @Test fun search_offline_dark() = capture("search_offline_dark", dark = true) {
+        SearchContent(
+            SearchUiState(query = "ratchet", searched = true, results = hits, offline = true),
+            {}, {},
+        )
+    }
+
+    @Test fun search_no_results_dark() = capture("search_no_results_dark", dark = true) {
+        SearchContent(SearchUiState(query = "banjo", searched = true), {}, {})
+    }
+
+    private val totes = listOf(
+        CachedTote("1", "A14", "Christmas decor", null, "Attic", 37, 0, false),
+        CachedTote("2", "A15", "Winter clothes 4T", null, "Attic", 12, 3, false),
+        CachedTote("3", "G01", "Power tools", null, "Garage rack B", 8, 1, false),
+    )
+
+    @Test fun totes_light() = capture("totes_light", dark = false) { ToteListContent(totes, {}, {}) }
+    @Test fun totes_dark() = capture("totes_dark", dark = true) { ToteListContent(totes, {}, {}) }
+
+    @Test fun totes_empty_dark() = capture("totes_empty_dark", dark = true) {
+        ToteListContent(emptyList(), {}, {})
+    }
+
+    private val detail = ToteDetailDto(
+        id = "1", code = "A14", label = "Christmas decor", itemCount = 2, outCount = 1,
+        items = listOf(
+            ItemDto(id = "a", name = "Pre-lit tree, 7ft", quantity = 1, status = "stored"),
+            ItemDto(id = "b", name = "Ornament box", quantity = 4, status = "stored"),
+        ),
+        itemsOut = listOf(
+            ItemDto(id = "c", name = "Outdoor lights", quantity = 6, status = "out"),
+        ),
+    )
+
+    @Test fun tote_detail_light() = capture("tote_detail_light", dark = false) {
+        ToteDetailContent(detail, {}, {}, {}, {}, {})
+    }
+
+    @Test fun tote_detail_dark() = capture("tote_detail_dark", dark = true) {
+        ToteDetailContent(detail, {}, {}, {}, {}, {})
+    }
 
     // LoginContent is the stateless body precisely so it can be captured here: the stateful
     // LoginScreen needs Hilt and a real AppAuth service, neither of which exists in a JVM test.

@@ -15,7 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.tote.ui.HomeScreen
+import com.tote.ui.navigation.ToteNavHost
 import com.tote.ui.auth.AuthViewModel
 import com.tote.ui.auth.LoginScreen
 import com.tote.ui.theme.ToteTheme
@@ -53,7 +53,7 @@ private fun Gate(viewModel: AuthViewModel = hiltViewModel()) {
                 CircularProgressIndicator()
             }
         }
-        true -> HomeScreen()
+        true -> ToteNavHost()
         false -> LoginScreen()
     }
 }

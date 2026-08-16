@@ -7,7 +7,7 @@ suite-wide rule; silently-drifting docs have burned two sibling repos already.
 The build plan and the reasoning behind the locked decisions live in [CLAUDE.md](CLAUDE.md).
 This file describes what exists **now**.
 
-## Current state: Phase 2 (catalog, ledger, search) — server side
+## Current state: Phase 2 (catalog, ledger, search)
 
 ```
 Tote/
@@ -16,13 +16,17 @@ Tote/
 │     ├─ ToteApp.kt             @HiltAndroidApp entry point
 │     ├─ MainActivity.kt        single activity + the signed-in/out Gate
 │     ├─ data/
+│     │  ├─ CatalogRepository   the single place the app talks to the catalog
 │     │  ├─ local/TokenStore    session tokens in their own DataStore
+│     │  ├─ local/CatalogCache  Room read cache — offline search
 │     │  └─ remote/             ApiService, DTOs, AuthInterceptor, SuiteAuthManager
-│     ├─ di/NetworkModule.kt    Retrofit/OkHttp/Json wiring
+│     ├─ di/                    NetworkModule, DatabaseModule
 │     ├─ util/UiState.kt        Idle/Loading/Success/Error
 │     └─ ui/
-│        ├─ HomeScreen.kt       Phase 0 placeholder — replaced in Phase 2
 │        ├─ auth/               AuthViewModel + LoginScreen/LoginContent
+│        ├─ search/             SearchViewModel + SearchScreen (the home screen)
+│        ├─ totes/              ToteList + ToteDetail, with their ViewModels
+│        ├─ navigation/         two tabs + the pushed detail route
 │        ├─ components/         HazardRule, ToteButton
 │        └─ theme/ToteTheme.kt  semantic layer over PULSE
 ├─ server/                      FastAPI backend
@@ -306,10 +310,65 @@ Every route resolves rows scoped to the authenticated user and returns **404, no
 someone else's — asserted across GET/PATCH/DELETE and `move`. 403 would let an authenticated user
 probe which ids exist and tell "not yours" apart from "does not exist".
 
+## Client
+
+**Search is the home screen.** The app's job is answering "where is the X", so a browse list
+first would make the common case the second thing someone sees. The tote list is the second tab;
+tote detail is a pushed route, not a tab, so the bottom bar hides there.
+
+### The offline cache, and its limits
+
+`CatalogCache` (Room) holds a snapshot of the catalog so the app works in the attic and the
+garage, which is exactly where the Wi-Fi is worst. A catalog you cannot read standing in front of
+the bins is a catalog you stop using.
+
+Three decisions keep it honest:
+
+- **The server stays the source of truth.** Nothing is written back from the cache; every
+  mutation goes to the API and then refreshes the snapshot. There is deliberately **no
+  write-behind queue** — a move recorded only locally would be a hole in the server's ledger, and
+  the ledger is what this app is built around. A move is an instruction that can be retried; a
+  photo (Phase 4) is new data that cannot be re-derived, which is why *that* earns a queue and
+  this does not.
+- **Sync is clear-then-insert in one transaction**, not upsert-and-reconcile. An item deleted on
+  the server has to disappear here too; an upsert-only sync leaves tombstones, and a tombstone in
+  this app means a trip to the attic for something that no longer exists.
+- **Offline results are labelled offline.** The cache matches with `LIKE`, not Postgres
+  full-text — reproducing stemming and ranking would drift from the server's answers, and two
+  different notions of "matches" is worse than one honest simpler one. Presenting them
+  identically would quietly teach that search is inconsistent.
+
+`toteCode` and `locationName` are stored denormalised because the server already denormalises
+them: offline search must answer "which bin, and where is it" without a join the cache cannot
+reliably reproduce.
+
+### Screen decisions
+
+- A search hit shows **bin and location on the row**, not a tap away — that *is* the answer, and
+  making someone open a detail screen to see it turns a one-glance question into two taps.
+- Tote detail surfaces **"Out of this tote"** as its own section. That gap is the answer to "I
+  thought the lights were in here".
+- Unpack and repack are **mutually exclusive** on screen: showing both at once invites the wrong
+  tap on a bin already open on the floor.
+- Bulk operations send `itemIds = null` for "everything". `encodeDefaults` is on so the null is
+  sent explicitly, preserving the server's distinction between null and `[]`.
+- Tab navigation uses `popUpTo(startDestination) { saveState = true }`. Without it, bouncing
+  between tabs grows the back stack and Back walks the whole history instead of leaving the app —
+  a bug Crate shipped and had to fix later.
+- A "0 out" count is hidden rather than shown as zero: a permanently-present field trains people
+  to ignore it exactly when it stops being zero.
+
+### A Room caveat that must be resolved before Phase 4
+
+`DatabaseModule` uses `fallbackToDestructiveMigration()`. That is safe **today** because the
+database holds only a disposable snapshot the next refresh restores. It will **not** be safe once
+the photo capture queue lands in Phase 4: queued captures are data that exists nowhere else, and
+a schema bump would silently delete them along with their files. Split the queue into its own
+database, or add real migrations, **before** that phase.
+
 ## Not yet built
 
-The Android half of Phase 2 (tote list, tote detail, item add/edit, search screen, Room cache for
-offline search); NFC and the index card
+NFC and the index card
 (Phase 3); photo capture and the AI draft pipeline (Phase 4); the sizing ladder (Phase 5);
 people and lending (Phase 6); backups (Phase 7, once there are photos to lose).
 
