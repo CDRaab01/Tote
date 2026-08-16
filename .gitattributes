@@ -13,3 +13,10 @@ gradlew text eol=lf
 *.apk binary
 *.aab binary
 *.png binary
+
+# The executable bit does not survive a Windows checkout, and git records mode from the working
+# tree — so `gradlew` and the container entrypoint were committed 100644 and CI died with exit
+# 126 ("found, not executable") on the very first run. Fixed with `git update-index --chmod=+x`;
+# these are recorded here so the next person knows the mode is deliberate and load-bearing:
+#   android/gradlew            100755  (CI runs ./gradlew on ubuntu)
+#   server/docker-entrypoint.sh 100755 (the Dockerfile also chmods it, belt and braces)
