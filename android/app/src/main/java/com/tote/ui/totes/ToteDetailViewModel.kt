@@ -9,6 +9,7 @@ import com.tote.data.remote.ToteDetailDto
 import com.tote.nfc.TagIo
 import com.tote.nfc.TagWriteResult
 import com.tote.nfc.WriteState
+import com.tote.util.ApiErrors
 import com.tote.util.UiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -40,7 +41,7 @@ class ToteDetailViewModel @Inject constructor(
                     // Detail is a live read, not a cached one: unpack/repack decisions are made
                     // standing in front of the bin, and acting on a stale list is how the
                     // catalog and the attic diverge.
-                    _state.value = UiState.Error("Couldn't load this tote. Check you're on the tailnet.")
+                    _state.value = UiState.Error(ApiErrors.message(it, "Couldn't load this tote."))
                 }
         }
     }

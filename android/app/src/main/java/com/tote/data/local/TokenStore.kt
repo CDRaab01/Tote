@@ -16,25 +16,45 @@ import kotlinx.coroutines.flow.map
 // preferences.
 private val Context.authDataStore by preferencesDataStore(name = "tote_auth")
 
+/**
+ * The slice of the session the renewal path needs.
+ *
+ * A seam, not indirection for its own sake: `TokenAuthenticator`'s rules are about *when* to
+ * renew, retry, or sign out, and testing them through a real DataStore would mean a Robolectric
+ * context and a file-backed singleton shared between tests — flakiness bought for nothing.
+ */
+interface SessionTokens {
+    suspend fun currentAccessToken(): String?
+
+    suspend fun currentRefreshToken(): String?
+
+    suspend fun save(access: String, refresh: String)
+
+    suspend fun clear()
+}
+
 @Singleton
 class TokenStore @Inject constructor(
     @ApplicationContext private val context: Context,
-) {
+) : SessionTokens {
     private val accessKey = stringPreferencesKey("access_token")
     private val refreshKey = stringPreferencesKey("refresh_token")
 
     val accessToken: Flow<String?> = context.authDataStore.data.map { it[accessKey] }
 
-    suspend fun currentAccessToken(): String? = accessToken.first()
+    override suspend fun currentAccessToken(): String? = accessToken.first()
 
-    suspend fun save(access: String, refresh: String) {
+    override suspend fun currentRefreshToken(): String? =
+        context.authDataStore.data.map { it[refreshKey] }.first()
+
+    override suspend fun save(access: String, refresh: String) {
         context.authDataStore.edit {
             it[accessKey] = access
             it[refreshKey] = refresh
         }
     }
 
-    suspend fun clear() {
+    override suspend fun clear() {
         context.authDataStore.edit { it.clear() }
     }
 }

@@ -7,6 +7,12 @@ class SuiteLoginRequest(BaseModel):
     suite_token: str
 
 
+class RefreshRequest(BaseModel):
+    """A refresh token previously minted by /auth/suite (or a prior /auth/refresh)."""
+
+    refresh_token: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.tote.data.CatalogRepository
 import com.tote.data.local.CachedTote
 import com.tote.data.remote.ToteCreate
+import com.tote.util.ApiErrors
 import com.tote.util.UiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -51,10 +52,9 @@ class ToteListViewModel @Inject constructor(
                     // 409 is the case worth naming: the code is printed on a physical card, so a
                     // duplicate is a real-world ambiguity and "already exists" is the useful thing
                     // to say, not "HTTP 409".
-                    val duplicate = it.message?.contains("409") == true
                     _create.value = UiState.Error(
-                        if (duplicate) "A tote with that code already exists."
-                        else "Couldn't create the tote. Check you're on the tailnet."
+                        if (ApiErrors.statusOf(it) == 409) "A tote with that code already exists."
+                        else ApiErrors.message(it, "Couldn't create the tote.")
                     )
                 }
         }

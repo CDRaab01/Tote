@@ -22,11 +22,12 @@ Tote/
 │     │  ├─ local/CatalogCache  Room read cache — offline search
 │     │  ├─ local/CaptureQueue  Room queue table — the only local-origin data
 │     │  └─ remote/             ApiService, DTOs, AuthInterceptor, SuiteAuthManager,
-│     │                         ScanTimeoutInterceptor
+│     │                         ScanTimeoutInterceptor, TokenAuthenticator + RefreshApi
 │     ├─ di/                    NetworkModule, DatabaseModule
 │     ├─ nfc/                   TagIo, NfcWriteSession, TapRouter
 │     ├─ work/UploadWorker.kt   drains the capture queue when connected
 │     ├─ util/UiState.kt        Idle/Loading/Success/Error
+│     ├─ util/ApiErrors.kt      failure → the message that names the real cause
 │     ├─ util/ImageBytes.kt     ≤1600px JPEG downscale before upload
 │     └─ ui/
 │        ├─ auth/               AuthViewModel + LoginScreen/LoginContent
@@ -154,6 +155,41 @@ activity inheriting the app theme, which is `android:Theme.Material`, and it cra
 back from the browser with "You need to use a Theme.AppCompat theme". The crash is invisible to
 CI and to every screenshot test, because it only happens on a real device at the exact moment a
 user signs in.
+
+### Session renewal
+
+An access token lives 30 minutes; the refresh token that comes with it lives 7 days.
+`POST /auth/refresh` redeems one for a new pair. It is **not** gated on
+`SUITE_JWKS_URL`/`SUITE_ISSUER` the way `/auth/suite` is — the refresh token is Tote's own HS256
+session token, so renewal needs no identity server, and a momentarily unreachable dragonfly-id
+must not log every phone out. It is stateless (signature + `"type": "refresh"` claim, no DB
+lookup); a deleted user still fails at the next authenticated call, where `get_current_user`
+checks the row.
+
+On the client, `TokenAuthenticator` (an OkHttp `Authenticator`, so it fires only on a 401 of a
+request that already carried credentials) renews and replays the call through `RefreshApi` — a
+second, bare OkHttp client with no auth interceptor and no authenticator, because a 401 on the
+renewal itself would otherwise recurse. Note that OkHttp does **not** re-run application
+interceptors on an authenticated retry, so the authenticator sets the new `Authorization` header
+itself rather than leaving it to `AuthInterceptor`.
+
+Three rules there are each a bug if dropped, and each has a test:
+
+- **One attempt.** Returning a request from an `Authenticator` re-runs it; without the
+  `priorResponse` stop condition a permanently-rejected token loops forever.
+- **Sign out only on a 4xx.** A dead refresh token is unrecoverable and clearing the store is
+  what returns the app to the sign-in screen (`signedIn` is derived from the stored access
+  token). An unreachable server is *not* unrecoverable — clearing there would sign the user out
+  on any Wi-Fi blip, in a garage, which is where this app is used.
+- **Single-flight.** Refresh tokens rotate, so two calls 401ing together would otherwise race and
+  the loser would redeem an already-spent token and sign the user out mid-session.
+
+This whole path was missing until 2026-08-16, and its absence was a production incident: the
+server minted a refresh token, the client stored it, and nothing could redeem it. Thirty minutes
+after each sign-in every call 401'd permanently, while the app still considered itself signed in
+and the UI blamed the tailnet. `util/ApiErrors` now maps a failure by status — no HTTP status at
+all is the genuine can't-reach-the-tailnet case, and 401 says the session expired — because copy
+that names the wrong cause sends the next hour of debugging to the wrong place.
 
 ## Server
 

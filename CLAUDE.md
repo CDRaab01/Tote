@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **219 server** (pytest, real Postgres) + **77 Android** (49 unit + 28 Roborazzi) |
+| Tests | **247 server** (pytest, real Postgres) + **83 Android** (measured 2026-08-16) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -459,6 +459,12 @@ redirect `com.tote:/oauth2redirect`, **keep the AppCompat theme override on
 `RedirectUriReceiverActivity`** — suite apps use `android:Theme.Material` and AppAuth
 crashes on the redirect otherwise), `synthetic_smoke.py`. Alembic `0001` for all §4 tables
 including the GIN index.
+**Amended 2026-08-16 — `POST /auth/refresh` + client `TokenAuthenticator`.** Phase 1 shipped the
+siblings' SSO shape but *not* their `/auth/refresh`, and the client stored a refresh token it had
+no way to redeem. Access tokens live 30 minutes, so the app wedged half an hour after every
+sign-in — every call 401ing, the app still believing it was signed in (a stored token string is
+not a valid one), and the UI saying "check you're on the tailnet". Found in production. See
+ARCHITECTURE.md "Session renewal" for the three client rules that each have a test behind them.
 *Exit: "Sign in with Dragonfly" works against the live identity server; schema migrates
 **and downgrades** cleanly on a fresh DB.*
 
