@@ -77,3 +77,15 @@ def pure_black_fraction(data: bytes) -> float:
     img = open_image(data).convert("RGB")
     pixels = list(img.getdata())
     return sum(1 for p in pixels if p == (0, 0, 0)) / len(pixels)
+
+
+def overall_mean(data: bytes) -> int:
+    """Mean brightness of the whole image, 0-255.
+
+    Used instead of a centre sample when the cleanup path may CROP: crop-to-subject changes what
+    "the centre" contains, so a before/after centre comparison measures the reframing rather than
+    the exposure. Whole-image brightness is comparable across both paths.
+    """
+    img = open_image(data).convert("RGB")
+    pixels = list(img.getdata())
+    return sum(sum(p) for p in pixels) // (3 * len(pixels))

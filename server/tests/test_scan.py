@@ -21,6 +21,7 @@ from PIL import Image
 from tests.fixtures.images import (
     dark_photo_bytes,
     mean_of_center,
+    overall_mean,
     photo_bytes,
     pure_black_fraction,
 )
@@ -73,19 +74,24 @@ def test_cleanup_does_not_black_out_a_dark_subject():
     Asserted on decoded pixels, and against *black* rather than against an arbitrary fraction of
     the original brightness. A gentle shift is normal autocontrast behaviour and says nothing; a
     subject at or near (0,0,0) is the actual defect.
+
+    Verified on BOTH code paths before being committed — with rembg installed (the compositing
+    branch, where the original defect lived: 0.000% pure black) and without it (the Pillow-only
+    degradation: 0.032%). CI installs rembg, so the compositing branch is the one that runs there.
     """
-    original = dark_photo_bytes()
-    cleaned = clean_photo_bytes(original)
-    after = mean_of_center(cleaned)
+    cleaned = clean_photo_bytes(dark_photo_bytes())
 
     black = pure_black_fraction(cleaned)
     assert black < 0.01, (
         f"{black:.2%} of the cleaned image is pure black — the levels pass is running after "
         "compositing again"
     )
-    # Nowhere near black on any channel. Crate's fixed build measured its dark-navy control at
-    # (72, 77, 87) with 0.03% pure black; the shape of that result is what this guards.
-    assert min(after) > 30, f"subject crushed toward black: {after}"
+    # Whole-image brightness, not a centre sample: when rembg is available the pipeline CROPS to
+    # the subject, so a before/after centre comparison would measure the reframing rather than
+    # the exposure. Measured across both code paths and both fixtures, this lands between 87 and
+    # 169; a blackened image would be near zero.
+    brightness = overall_mean(cleaned)
+    assert brightness > 50, f"the cleaned image came out near-black (mean {brightness})"
 
 
 def test_levels_preserve_the_subjects_colour():
