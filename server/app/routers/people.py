@@ -19,6 +19,7 @@ from app.database import get_db
 from app.models.item import Item
 from app.models.movement import Movement
 from app.models.person import Person, PersonSize
+from app.models.user import UserSettings
 from app.schemas.catalog import ItemOut, MovementOut
 from app.schemas.people import (
     FitsOut,
@@ -362,10 +363,17 @@ async def nudge_overdue(user: CurrentUser, db: Db):
             "title": title,
         }
 
+    # The per-user override lives on `user_settings`, NOT on `users` — reading it off the user
+    # 500'd in production while every test passed, because the test environment has no ntfy
+    # configured and so never reached this line at all. See the test that now does.
+    override = (
+        await db.execute(select(UserSettings.ntfy_topic).where(UserSettings.user_id == user.id))
+    ).scalar_one_or_none()
+
     sent = await ntfy.send(
         title,
         message,
-        topic=user.ntfy_topic or None,
+        topic=override or None,
         priority=4,
         tags=["hourglass_flowing_sand"],
     )
