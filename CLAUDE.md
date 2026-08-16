@@ -12,24 +12,22 @@
 
 ## START HERE — state as of 2026-08-16
 
-**Phases 0-4 are complete.** Everything below is merged to `main`, deployed, and verified
+**Phases 0-5 and 7 are complete.** Everything below is merged to `main`, deployed, and verified
 against production — not just green in CI.
 
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **83 server** (pytest, real Postgres) + **71 Android** (46 unit + 25 Roborazzi) |
+| Tests | **219 server** (pytest, real Postgres) + **77 Android** (49 unit + 28 Roborazzi) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
 
-**Phase 5 — sizing + apparel** (§8). Copy Crate's `app/apparel/`, build the `app/sizing/` ladder
-(§5 — the hardest logic in this app), wire the label pass into the scan pipeline, and surface the
-apparel fields in the review and detail UI.
+**Phase 6 — people, fits, and lending** (§8), then **Phase 8 — polish + release**.
 
-**Before that, though: the on-device pass has never been run**, and Phase 4 just added the two
-things that most need it — the camera flow and a WorkManager queue holding photos that exist
-nowhere else. See the open items table.
+**Before either: the on-device pass has never been run.** Phases 4 and 5 added the camera flow, a
+WorkManager queue holding photos that exist nowhere else, and a Room schema now at **v3** — all
+of which only a real phone can exercise. See the open items table.
 
 ### Six things that will cost you time if you do not know them
 
@@ -498,7 +496,7 @@ cleanup mocked in CI; live LM Studio smoke locally. **Bake the U2-Net weights in
 image** so the container works offline and cold-starts fast.
 *Exit: photo → reviewed item in a tote, end-to-end on device against real LM Studio.*
 
-**Phase 5 — Sizing + apparel.** 🔶 **SERVER DONE 2026-08-16 (#11); ANDROID UI NOT STARTED.**
+**Phase 5 — Sizing + apparel.** ✅ **DONE 2026-08-16** (#11 server, #12 client).
 `app/sizing/` (the ladder, 90 table-driven tests), `app/apparel/` copied from Crate and trimmed,
 the narrow label pass wired into the scan pipeline with **its own `except`**, and apparel on
 `ItemOut`/`ItemPatch`. Verified live against the real model, **including the negative controls**:
@@ -508,7 +506,11 @@ parse** without a department (youth 8 vs women's 8 — designed, not a gap); `si
 `size_ordinal` are **never client-settable**, they are re-derived from `size_raw` on every write;
 and `Item.apparel` is `lazy="selectin"` because a lazy load under asyncio raises MissingGreenlet
 from inside Pydantic's `from_attributes`, on paths that never mention apparel.
-**Still to do:** apparel fields in the review + detail UI, and size-aware filtering.
+The client adds the clothing section to review, the tag's words on search and tote-detail rows,
+`GET /items?size=` matching by ordinal, and Room **v3** caching `size_raw` for offline search.
+Two client rules worth knowing: an **untouched** clothing section is omitted from the confirm body
+(the server reads omitted as "leave what the label read"), and only `size_raw` is cached — never
+the derived index, which the server owns.
 *Exit: a garment photographed with its tag lands with `size_raw` verbatim and a correct
 ordinal; an unreadable tag lands with a null ordinal and no invented size; the ladder's
 table-driven tests cover every system including 6X.*

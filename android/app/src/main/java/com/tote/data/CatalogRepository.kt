@@ -85,6 +85,8 @@ class CatalogRepository @Inject constructor(
         locationName = locationName
             ?: currentToteId?.let(locationByTote::get)?.let(locationNames::get),
         isOverdue = isOverdue,
+        // So "4T" finds the coat offline, which is the one place someone types it.
+        sizeRaw = apparel?.sizeRaw,
     )
 
     /**

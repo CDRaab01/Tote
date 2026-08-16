@@ -14,6 +14,7 @@ import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.tote.data.local.CachedTote
 import com.tote.data.local.CaptureQueueEntity
+import com.tote.data.remote.ApparelDto
 import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.DraftDto
 import com.tote.data.remote.ItemDto
@@ -81,6 +82,11 @@ class ScreenshotTest {
         ItemDto(
             id = "1", name = "Ratchet set", quantity = 1, status = "stored",
             toteCode = "G01", locationName = "Garage rack B",
+        ),
+        ItemDto(
+            id = "3", name = "Girls' winter coat", quantity = 1, status = "stored",
+            toteCode = "A15", locationName = "Attic",
+            apparel = ApparelDto(sizeRaw = "4T", sizeSystem = "toddler"),
         ),
         ItemDto(
             id = "2", name = "Socket adapter", quantity = 2, status = "loaned",
@@ -247,14 +253,16 @@ class ScreenshotTest {
     @Test fun review_light() = capture("review_light", dark = false) {
         ReviewContent(
             reviewState(identified, DraftEdits.from(identified)),
-            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
         )
     }
 
     @Test fun review_dark() = capture("review_dark", dark = true) {
         ReviewContent(
             reviewState(identified, DraftEdits.from(identified)),
-            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
         )
     }
 
@@ -271,7 +279,8 @@ class ScreenshotTest {
         )
         ReviewContent(
             reviewState(draft, DraftEdits.from(draft)),
-            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
         )
     }
 
@@ -279,7 +288,8 @@ class ScreenshotTest {
         val draft = identified.copy(scanConfidence = "low")
         ReviewContent(
             reviewState(draft, DraftEdits.from(draft)),
-            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
         )
     }
 
@@ -291,7 +301,8 @@ class ScreenshotTest {
     fun review_full_dark() = capture("review_full_dark", dark = true) {
         ReviewContent(
             reviewState(identified, DraftEdits.from(identified)),
-            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
         )
     }
 
@@ -300,14 +311,67 @@ class ScreenshotTest {
     fun review_full_light() = capture("review_full_light", dark = false) {
         ReviewContent(
             reviewState(identified, DraftEdits.from(identified)),
-            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
+        )
+    }
+
+    // Phase 5: the clothing section. The size the label read, and the state that matters more —
+    // a tag whose string could NOT be placed on the ladder, which is a designed outcome and must
+    // not read as an error the reviewer has to fix.
+    private val garment = DraftDto(
+        id = "d9",
+        name = "Girls' winter coat",
+        description = "A quilted coat with a fleece lining.",
+        scanConfidence = "high",
+        draftToteId = "1",
+        photoCount = 2,
+        apparel = ApparelDto(
+            sizeRaw = "4T", sizeSystem = "toddler", sizeOrdinal = 4.0f,
+            sizeType = "toddler", department = "girls", material = "100% Cotton",
+        ),
+    )
+
+    @Test
+    @Config(qualifiers = "+h1500dp")
+    fun review_apparel_dark() = capture("review_apparel_dark", dark = true) {
+        ReviewContent(
+            reviewState(garment, DraftEdits.from(garment)),
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
+        )
+    }
+
+    @Test
+    @Config(qualifiers = "+h1500dp")
+    fun review_apparel_light() = capture("review_apparel_light", dark = false) {
+        ReviewContent(
+            reviewState(garment, DraftEdits.from(garment)),
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
+        )
+    }
+
+    // The tag said something the ladder cannot place. Nothing is guessed, nothing is flagged as
+    // wrong, and the reading survives verbatim — the whole design in one frame.
+    @Test
+    @Config(qualifiers = "+h1500dp")
+    fun review_unparsed_size_dark() = capture("review_unparsed_size_dark", dark = true) {
+        val odd = garment.copy(
+            apparel = ApparelDto(sizeRaw = "M/L", department = "girls", material = "Fleece")
+        )
+        ReviewContent(
+            reviewState(odd, DraftEdits.from(odd)),
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
         )
     }
 
     @Test fun review_empty_dark() = capture("review_empty_dark", dark = true) {
         ReviewContent(
             ReviewUiState(totes = captureTotes, loading = false),
-            {}, {}, {}, {}, {}, {}, photoUrlFor = noPhotos,
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
         )
     }
 

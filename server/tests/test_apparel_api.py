@@ -113,3 +113,53 @@ async def test_apparel_survives_a_round_trip_through_the_list_endpoint(auth_clie
 
     hits = (await auth_client.get("/search", params={"q": "winter"})).json()
     assert hits[0]["item"]["apparel"]["size_system"] == "youth_numeric"
+
+
+async def test_the_size_filter_matches_by_ordinal_not_by_string(auth_client):
+    """The whole point of having an index: "4T" also finds a garment whose tag read "4" under a
+    girls department, because they are the same rung of the same ladder."""
+    tote = (await auth_client.post("/totes", json={"code": "C09"})).json()
+    for name, size, dept in [
+        ("Toddler coat", "4T", None),
+        ("Girls sweater", "4", "girls"),
+        ("Big kid jacket", "12", "boys"),
+        ("Ratchet set", None, None),
+    ]:
+        item = (await auth_client.post("/items", json={"name": name, "tote_id": tote["id"]})).json()
+        if size:
+            await auth_client.patch(
+                f"/items/{item['id']}",
+                json={"apparel": {"size_raw": size, "department": dept}},
+            )
+
+    hits = (await auth_client.get("/items", params={"size": "4T"})).json()
+    names = {h["name"] for h in hits}
+    assert "Toddler coat" in names
+    assert "Girls sweater" in names
+    # Out of tolerance, and — critically — the item with no apparel row at all is absent rather
+    # than swept in by a null.
+    assert "Big kid jacket" not in names
+    assert "Ratchet set" not in names
+
+
+async def test_an_unparseable_size_filter_falls_back_to_the_raw_text(auth_client):
+    """Someone typing "M/L" means it literally. Returning nothing would read as "you own none of
+    these" when the truth is "we could not index that"."""
+    tote = (await auth_client.post("/totes", json={"code": "C10"})).json()
+    item = (await auth_client.post("/items", json={"name": "Hoodie", "tote_id": tote["id"]})).json()
+    await auth_client.patch(f"/items/{item['id']}", json={"apparel": {"size_raw": "M/L"}})
+
+    hits = (await auth_client.get("/items", params={"size": "M/L"})).json()
+    assert [h["name"] for h in hits] == ["Hoodie"]
+
+
+async def test_the_size_filter_never_crosses_an_incomparable_lineage(auth_client):
+    """A men's waist must not match a toddler size however close the numbers land."""
+    tote = (await auth_client.post("/totes", json={"code": "C11"})).json()
+    jeans = (
+        await auth_client.post("/items", json={"name": "Work jeans", "tote_id": tote["id"]})
+    ).json()
+    await auth_client.patch(f"/items/{jeans['id']}", json={"apparel": {"size_raw": "32x30"}})
+
+    hits = (await auth_client.get("/items", params={"size": "4T"})).json()
+    assert hits == []

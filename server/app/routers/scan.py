@@ -21,6 +21,7 @@ from app.models.tote import Tote
 from app.schemas.catalog import DraftConfirm, DraftOut, ItemOut
 from app.security import CurrentUser
 from app.services import photo_store
+from app.services.apparel_write import apply_apparel
 from app.services.catalog import item_query, to_item_out
 from app.services.movement import record_move
 from app.services.scan_pipeline import scan_photos
@@ -143,6 +144,13 @@ async def confirm(draft_id: uuid.UUID, body: DraftConfirm, user: CurrentUser, db
     item.condition = body.condition
     item.is_draft = False
     item.draft_tote_id = None
+
+    # Apparel is merged, not replaced: an omitted block leaves the label pass's reading intact.
+    # Passed through the same helper the PATCH path uses, so `size_system`/`size_ordinal` are
+    # re-derived from `size_raw` here too and a client still cannot store an index that
+    # disagrees with the reading it indexes.
+    if body.apparel is not None:
+        await apply_apparel(db, item, body.apparel.model_dump(exclude_unset=True))
 
     # Filing is a movement like any other, so it leaves an `initial` ledger row. An item that
     # appeared in a bin with no history would be the first hole in the ledger.

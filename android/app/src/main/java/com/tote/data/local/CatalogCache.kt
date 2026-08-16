@@ -39,6 +39,15 @@ data class CachedItem(
     val toteCode: String?,
     val locationName: String?,
     val isOverdue: Boolean,
+    /**
+     * The garment tag's reading, verbatim, for clothing.
+     *
+     * Cached because "4T" is a thing people search for standing in front of the bins, which is
+     * exactly where there is no signal. Only `size_raw` is cached, not the derived system or
+     * ordinal: the server owns that index, and a client that stored it would eventually be
+     * comparing against a stale copy of a ladder it does not implement.
+     */
+    val sizeRaw: String? = null,
 )
 
 @Entity(tableName = "cached_totes")
@@ -75,6 +84,7 @@ interface CatalogDao {
         WHERE name LIKE '%' || :q || '%'
            OR description LIKE '%' || :q || '%'
            OR notes LIKE '%' || :q || '%'
+           OR sizeRaw LIKE '%' || :q || '%'
         ORDER BY name LIMIT 50
         """
     )
@@ -127,7 +137,7 @@ interface CatalogDao {
  */
 @Database(
     entities = [CachedItem::class, CachedTote::class, CaptureQueueEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class ToteDatabase : RoomDatabase() {
