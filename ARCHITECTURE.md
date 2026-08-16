@@ -1071,11 +1071,84 @@ asserts on what reaches the transport (stubbed; CI never makes an outbound reque
 that gap, and it is the general lesson: **a branch guarded by configuration the test environment
 lacks is a branch with no coverage at all**, however many tests surround it.
 
+
+## People, fits, and lending (client)
+
+Five tabs now, and People is the fifth and last one this app gets — a bottom bar carries no more.
+It earns the slot because "what fits her right now" and "who has the drill" are asked as often as
+"which bin", and burying the two features the ledger was *built* for under a menu would make them
+the two nobody uses.
+
+**No Room cache behind People, unlike the catalog.** The bins have to be readable in an attic with
+no signal because that is where they physically are. People are read at the kitchen table on the
+way to deciding what to go and look for, and a stale wearer profile is worse than an honest
+failure: it is what sends someone up a ladder for a size the child grew out of in March. The one
+exception is the **destination picker** in the outgrown and returned flows, which reads bins from
+the Room cache — filing outgrown clothes happens on the way back from the attic, and a picker that
+needed the network would be empty exactly when it is used.
+
+### `answered = false` is not an empty result
+
+The distinction the whole fits endpoint is built around, and it is a *rendering* rule as much as a
+data one:
+
+| Server says | Screen says |
+|---|---|
+| `answered: false`, `reason: no_sizes_recorded` | **"We can't say yet"** — record a size and this fills in |
+| `answered: false`, other reason | **"We can't say yet"** — the reading could not be placed on the ladder, so matching would be a guess |
+| `answered: true`, `items: []` | **"Nothing in that size"** — we checked, and we own nothing that matches |
+
+One of those sentences means *go and read a tag*; the other means *stop looking*. They have
+separate Roborazzi baselines (`person_fits_unanswered_dark`, `person_fits_nothing_dark`) precisely
+because a regression that collapsed them would pass every unit test in the suite and be visible
+nowhere else.
+
+Narrowing to a garment type **re-asks the server** rather than filtering the list here. Matching
+against the size ladder has exactly one writer and it is not the client; a client-side filter would
+eventually disagree with the ntfy nudge, and the person in the attic has no way to tell which of
+the two lied.
+
+### Sizes are recorded, never derived here
+
+The record-size dialog sends `size_raw` and nothing else. `size_system`/`size_ordinal` are derived
+server-side on every write, and a client that could set them could file a 4T indexed as an adult L
+— which would then match on every fits query forever, silently. The screen shows the tag's own
+words everywhere and never the ordinal: the index exists to be queried, not read.
+
+### Lending
+
+From the bin the thing is in, because that is where someone is standing when they hand it over.
+`reason = "loaned"` plus `person_id`, and optionally `expected_back`.
+
+**The date is optional and stays optional.** Plenty of lending genuinely happens without one, and
+a required field here would be either lied to or filled with an invented date — which manufactures
+an overdue nudge nobody agreed to, and that is how a notification channel gets muted and stops
+working for the loans that did have a date.
+
+`loaned_to` comes back on every item and the row says **"Lent to Dave"**, not "lent out". The two
+are the same fact and only one of them gets the drill back. The item row itself never knows the
+answer; it comes from the newest `loaned` movement, which is the entire reason this needs a ledger
+rather than a status column.
+
+Returning requires a destination bin. `returned` is an inbound reason and the server rejects it
+without one (422) — the UI honours that rather than working around it, because an item that is
+"back" but in no bin is exactly the state the catalog exists to make impossible.
+
+### The overdue card on Home
+
+Search-first Home carries one card the app volunteers unprompted: what is out past its date, named
+with who has it. It sits above the stats and only while idle — mid-search it would be between
+someone and the answer they came for.
+
+Overdue is computed **server-side**, against the household's local today. The card and the ntfy
+nudge therefore cannot disagree about what "overdue" means, which they would within hours of each
+other if the phone's clock or the container's UTC got a vote. A failed fetch leaves the card
+absent rather than raising: an unreachable server genuinely cannot tell you that anything is late.
+
 ## Not yet built
 
-Phases 0-4 and the backup half of Phase 7 are complete. What remains: the sizing ladder
-(Phase 5); people, `fits()` and lending (Phase 6); polish and the Roborazzi/empty-state sweep
-(Phase 8).
+Phases 0-7 are complete on both sides. What remains is Phase 8: polish, the empty/error-state
+sweep, the README, and the Dragonfly `ServiceRegistry` row now that the URL is real.
 
 The smoke script carries an explicit list of what each phase must add to it. Crate's stopped at
 `/users/me` for months, so "auth works" read as "the app works" while the pipeline the app exists

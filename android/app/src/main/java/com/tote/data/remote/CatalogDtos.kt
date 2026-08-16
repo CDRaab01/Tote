@@ -70,6 +70,10 @@ data class ItemDto(
     @SerialName("location_name") val locationName: String? = null,
     // Computed server-side so a screen and a notification cannot disagree about "overdue".
     @SerialName("is_overdue") val isOverdue: Boolean = false,
+    // Who has it, for a loaned item. Resolved server-side from the LEDGER (the newest `loaned`
+    // movement), because the item row knows only that it is out — which is the whole reason
+    // "who has the drill" needs the ledger to be answerable at all.
+    @SerialName("loaned_to") val loanedTo: String? = null,
     // Present only for clothing. Absent is normal — most things in a house are not garments.
     val apparel: ApparelDto? = null,
 )
@@ -199,6 +203,9 @@ data class MoveRequest(
     @SerialName("to_tote_id") val toToteId: String? = null,
     val note: String? = null,
     @SerialName("expected_back") val expectedBack: String? = null,
+    // Who it went to, for `reason = "loaned"`. This is the field that turns "it is out" into
+    // "Dave has it" — the item row never learns the answer, only the movement does.
+    @SerialName("person_id") val personId: String? = null,
 )
 
 /**

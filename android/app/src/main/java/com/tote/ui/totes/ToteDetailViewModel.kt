@@ -4,7 +4,9 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tote.data.CatalogRepository
+import com.tote.data.remote.ApiService
 import com.tote.data.remote.ItemCreate
+import com.tote.data.remote.PersonDto
 import com.tote.data.remote.ToteDetailDto
 import com.tote.nfc.TagIo
 import com.tote.nfc.TagWriteResult
@@ -21,6 +23,7 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class ToteDetailViewModel @Inject constructor(
     private val repo: CatalogRepository,
+    private val api: ApiService,
     savedState: SavedStateHandle,
 ) : ViewModel() {
 
@@ -65,6 +68,45 @@ class ToteDetailViewModel @Inject constructor(
     fun repackAll() {
         viewModelScope.launch {
             runCatching { repo.repack(toteId, itemIds = null) }.onSuccess { load() }
+        }
+    }
+
+    /**
+     * Who could borrow something, for the lend picker.
+     *
+     * Loaded lazily when the sheet opens rather than with the screen: most visits to a bin are
+     * about what is in it, and a people request on every open would be a round trip nobody asked
+     * for on the tab used most in a garage.
+     */
+    private val _people = MutableStateFlow<List<PersonDto>>(emptyList())
+    val people: StateFlow<List<PersonDto>> = _people.asStateFlow()
+
+    fun loadPeople() {
+        viewModelScope.launch {
+            runCatching { api.people() }.onSuccess { _people.value = it }
+        }
+    }
+
+    /**
+     * Lend an item out.
+     *
+     * `personId` is what makes this different from taking something out: the item row will know
+     * it is `loaned`, but only the movement knows to whom, and "who has the drill" is answered
+     * from the ledger. A null `expectedBack` is allowed and honest — plenty of lending happens
+     * without a date, and inventing one would manufacture an overdue nudge nobody agreed to.
+     */
+    fun lend(itemId: String, personId: String, expectedBack: String?) {
+        viewModelScope.launch {
+            runCatching {
+                repo.move(
+                    itemId,
+                    com.tote.data.remote.MoveRequest(
+                        reason = "loaned",
+                        personId = personId,
+                        expectedBack = expectedBack?.takeIf { it.isNotBlank() },
+                    ),
+                )
+            }.onSuccess { load() }
         }
     }
 

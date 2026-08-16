@@ -8,12 +8,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -34,6 +37,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.data.remote.ItemDto
+import com.tote.data.remote.PersonDto
 import com.tote.data.remote.ToteDetailDto
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.net.toUri
@@ -56,7 +60,9 @@ fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val writeState by viewModel.write.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
+    var lending by remember { mutableStateOf<String?>(null) }
     var cardUrl by remember { mutableStateOf<String?>(null) }
+    val people by viewModel.people.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // The PDF is handed to the system rather than rendered in-app: printing is the whole point,
@@ -86,7 +92,21 @@ fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
                 onPutBack = viewModel::putBack,
                 onWriteTag = { if (hasNfc(context)) viewModel.beginWrite() },
                 onPrintCard = { cardUrl = viewModel.cardUrl() },
+                onLend = {
+                    viewModel.loadPeople()
+                    lending = it
+                },
             )
+            lending?.let { itemId ->
+                LendDialog(
+                    people = people,
+                    onDismiss = { lending = null },
+                    onLend = { personId, due ->
+                        viewModel.lend(itemId, personId, due)
+                        lending = null
+                    },
+                )
+            }
             if (writeState !is WriteState.Idle) {
                 WriteTagDialog(state = writeState, onDismiss = viewModel::cancelWrite)
             }
@@ -126,6 +146,7 @@ fun ToteDetailContent(
     onRepackAll: () -> Unit,
     onTakeOut: (String) -> Unit,
     onPutBack: (String) -> Unit,
+    onLend: (String) -> Unit = {},
     modifier: Modifier = Modifier,
     onWriteTag: () -> Unit = {},
     onPrintCard: () -> Unit = {},
@@ -204,7 +225,13 @@ fun ToteDetailContent(
             }
 
             items(tote.items, key = { it.id }) { item ->
-                ItemRow(item, actionLabel = "Take out", onAction = { onTakeOut(item.id) })
+                ItemRow(
+                    item,
+                    actionLabel = "Take out",
+                    onAction = { onTakeOut(item.id) },
+                    secondaryLabel = "Lend",
+                    onSecondary = { onLend(item.id) },
+                )
             }
 
             // The gap, shown rather than hidden. This section is the answer to "I thought the
@@ -271,7 +298,13 @@ private fun TagAndCardRow(
 }
 
 @Composable
-private fun ItemRow(item: ItemDto, actionLabel: String, onAction: () -> Unit) {
+private fun ItemRow(
+    item: ItemDto,
+    actionLabel: String,
+    onAction: () -> Unit,
+    secondaryLabel: String? = null,
+    onSecondary: () -> Unit = {},
+) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
 
@@ -285,8 +318,11 @@ private fun ItemRow(item: ItemDto, actionLabel: String, onAction: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 val status = when {
-                    item.isOverdue -> "Overdue — expected back ${item.expectedBack}"
-                    item.status == "loaned" -> "Lent out"
+                    // Naming the borrower is the entire point of recording the loan: "lent out"
+                    // and "Dave has it" are the same fact and only one of them gets it back.
+                    item.isOverdue ->
+                        "Overdue — ${item.loanedTo ?: "someone"} has had it since ${item.expectedBack}"
+                    item.status == "loaned" -> "Lent to ${item.loanedTo ?: "someone"}"
                     item.status == "out" -> "Out since it was unpacked"
                     else -> null
                 }
@@ -299,7 +335,24 @@ private fun ItemRow(item: ItemDto, actionLabel: String, onAction: () -> Unit) {
                     Caption(text = sub)
                 }
             }
-            ToteButton(text = actionLabel, onClick = onAction, tonal = true)
+            if (secondaryLabel != null) {
+                ToteButton(
+                    text = secondaryLabel,
+                    onClick = onSecondary,
+                    tonal = true,
+                    compact = true,
+                )
+                Spacer(Modifier.width(spacing.sm))
+            }
+            // Compact once there are two buttons on the row: at full width they squeeze the
+            // item name into an ellipsis, and the name is the one thing this screen exists to
+            // show — a row reading "Ornament box …" is a row that failed at its job.
+            ToteButton(
+                text = actionLabel,
+                onClick = onAction,
+                tonal = true,
+                compact = secondaryLabel != null,
+            )
         }
     }
 }
@@ -390,6 +443,67 @@ private fun AddItemDialog(onDismiss: () -> Unit, onAdd: (String, Int) -> Unit) {
                 onClick = { onAdd(name, qty.toIntOrNull() ?: 1) },
                 enabled = name.isNotBlank(),
             ) { Text("Add") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+
+/**
+ * Lend an item to someone, optionally by a date.
+ *
+ * The date is optional on purpose. Plenty of lending genuinely happens without one, and a
+ * required field here would either be lied to or would manufacture an overdue nudge nobody
+ * agreed to — which is how a notification channel gets muted and stops working for the loans
+ * that did have a date.
+ */
+@Composable
+private fun LendDialog(
+    people: List<PersonDto>,
+    onDismiss: () -> Unit,
+    onLend: (String, String?) -> Unit,
+) {
+    var personId by remember { mutableStateOf<String?>(null) }
+    var due by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Lend it out") },
+        text = {
+            Column {
+                if (people.isEmpty()) {
+                    Text(
+                        "Nobody to lend to yet — add someone on the People tab first.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                } else {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(ToteTheme.spacing.sm)) {
+                        items(people, key = { it.id }) { person ->
+                            FilterChip(
+                                selected = personId == person.id,
+                                onClick = { personId = person.id },
+                                label = { Text(person.name) },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(ToteTheme.spacing.md))
+                    OutlinedTextField(
+                        value = due,
+                        onValueChange = { due = it },
+                        label = { Text("Back by (optional)") },
+                        placeholder = { Text("2026-09-30") },
+                        singleLine = true,
+                    )
+                    Spacer(Modifier.height(ToteTheme.spacing.sm))
+                    Caption(text = "With a date, it nags on the day after. Without one, it just remembers who has it.")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { personId?.let { onLend(it, due.takeIf { d -> d.isNotBlank() }) } },
+                enabled = personId != null,
+            ) { Text("Lend") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )

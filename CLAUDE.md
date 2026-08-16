@@ -12,18 +12,18 @@
 
 ## START HERE — state as of 2026-08-16
 
-**Phases 0-5 and 7 are complete.** Everything below is merged to `main`, deployed, and verified
+**Phases 0-7 are complete.** Everything below is merged to `main`, deployed, and verified
 against production — not just green in CI.
 
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **251 server** (pytest, real Postgres) + **89 Android** (measured 2026-08-16) |
+| Tests | **251 server** (pytest, real Postgres) + **104 Android** (measured 2026-08-16) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
 
-**Phase 6 — people, fits, and lending** (§8), then **Phase 8 — polish + release**.
+**Phase 8 — polish + release** (§8). Phase 6 landed 2026-08-16.
 
 **Before either: the on-device pass has never been run.** Phases 4 and 5 added the camera flow, a
 WorkManager queue holding photos that exist nowhere else, and a Room schema now at **v3** — all
@@ -532,14 +532,20 @@ the derived index, which the server owns.
 ordinal; an unreadable tag lands with a null ordinal and no invented size; the ladder's
 table-driven tests cover every system including 6X.*
 
-**Phase 6 — People, fits, and lending.** 🔶 **SERVER DONE 2026-08-16 (#13); ANDROID UI NOT
-STARTED.** `/people` CRUD + size history, `GET /people/{id}/fits`, `/people/{id}/on-loan`,
+**Phase 6 — People, fits, and lending.** ✅ **DONE 2026-08-16** (#13 server, #17 client). `/people` CRUD + size history, `GET /people/{id}/fits`, `/people/{id}/on-loan`,
 `/people/{id}/outgrown`, `GET /overdue`, `POST /overdue/nudge`, `loaned_to` on every item, and
 ntfy pinned as compose literals. Three things to know: **`fits` distinguishes "nothing matches"
 from "cannot say"** (`answered:false` + a `reason`) and a client MUST NOT render them the same;
 `loaned_to` comes from the newest `loaned` movement in ONE query per page, because the item row
 never knows who has it; and **due today is not overdue**, or the nudge becomes noise.
-**Still to do:** the Android people/fits/lending UI and the Home attention card.
+The client adds a fifth tab (People — the last one a bottom bar can carry), the person screen
+with sizes/fits/on-loan, lending from the bin an item is in, the outgrown → tote flow, and the
+overdue card on Home. Three client rules, all in ARCHITECTURE.md: **`answered:false` and an empty
+`items` render as different screens** with separate Roborazzi baselines, because one means "read a
+tag" and the other means "stop looking"; narrowing by garment type **re-asks the server** rather
+than filtering locally, since the ladder has one writer; and the lend date stays **optional**,
+because an invented due date manufactures a nudge nobody agreed to and that is how a notification
+channel gets muted.
 *Exit: "what fits Emma" returns items with their totes; a lent item nags on time.*
 
 **Phase 7 — Backups + deploy hardening.** ✅ **DONE 2026-08-16** (#10). `deploy/backup.ps1`

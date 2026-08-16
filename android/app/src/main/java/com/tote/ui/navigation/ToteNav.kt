@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.FactCheck
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
@@ -32,6 +33,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.tote.nfc.TapRouter
 import com.tote.nfc.TapTarget
 import com.tote.ui.capture.CaptureScreen
+import com.tote.ui.people.PeopleScreen
+import com.tote.ui.people.PersonDetailScreen
 import com.tote.ui.review.ReviewScreen
 import com.tote.ui.review.DraftBadgeViewModel
 import com.tote.ui.search.SearchScreen
@@ -40,24 +43,34 @@ import com.tote.ui.theme.ToteTheme
 import com.tote.ui.totes.ToteListScreen
 
 /**
- * Four tabs: Find, Totes, Catalogue, Review.
+ * Five tabs: Find, Totes, People, Catalogue, Review.
  *
  * Search leads because it is the primary query path — the app's whole job is answering "where
  * is the X", and putting a browse list first would make the common case the second thing.
  * Catalogue and Review are the two halves of the occasional bulk session and sit after it.
+ *
+ * **People is a browse entry point, not a settings screen.** "What fits her right now" and "who
+ * has the drill" are questions asked as often as "which bin", and burying them under a menu
+ * would make the two features the ledger was built for the two nobody uses. Five is the most a
+ * bottom bar can carry, so this is the last tab this app gets.
  */
 object Routes {
     const val SEARCH = "search"
     const val TOTES = "totes"
+    const val PEOPLE = "people"
     const val CAPTURE = "capture"
     const val REVIEW = "review"
     const val TOTE_DETAIL = "totes/{toteId}"
+    const val PERSON_DETAIL = "people/{personId}"
 
     fun toteDetail(id: String) = "totes/$id"
+
+    fun personDetail(id: String) = "people/$id"
 }
 
 /** The tab routes, which is also the set on which the bottom bar is shown. */
-private val TAB_ROUTES = setOf(Routes.SEARCH, Routes.TOTES, Routes.CAPTURE, Routes.REVIEW)
+private val TAB_ROUTES =
+    setOf(Routes.SEARCH, Routes.TOTES, Routes.PEOPLE, Routes.CAPTURE, Routes.REVIEW)
 
 @Composable
 fun ToteNavHost(
@@ -116,6 +129,12 @@ fun ToteNavHost(
                         label = { Text("Totes") },
                     )
                     NavigationBarItem(
+                        selected = route == Routes.PEOPLE,
+                        onClick = { nav.tabTo(Routes.PEOPLE) },
+                        icon = { Icon(Icons.Filled.People, contentDescription = null) },
+                        label = { Text("People") },
+                    )
+                    NavigationBarItem(
                         selected = route == Routes.CAPTURE,
                         onClick = { nav.tabTo(Routes.CAPTURE) },
                         icon = { Icon(Icons.Filled.PhotoCamera, contentDescription = null) },
@@ -157,12 +176,21 @@ fun ToteNavHost(
             composable(Routes.TOTES) {
                 ToteListScreen(onOpenTote = { nav.navigate(Routes.toteDetail(it)) })
             }
+            composable(Routes.PEOPLE) {
+                PeopleScreen(onOpenPerson = { nav.navigate(Routes.personDetail(it)) })
+            }
             composable(Routes.CAPTURE) { CaptureScreen() }
             composable(Routes.REVIEW) { ReviewScreen() }
             composable(
                 Routes.TOTE_DETAIL,
                 arguments = listOf(navArgument("toteId") { type = NavType.StringType }),
             ) { ToteDetailScreen() }
+            composable(
+                Routes.PERSON_DETAIL,
+                arguments = listOf(navArgument("personId") { type = NavType.StringType }),
+            ) {
+                PersonDetailScreen(onOpenTote = { nav.navigate(Routes.toteDetail(it)) })
+            }
         }
     }
 }
