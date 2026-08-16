@@ -360,13 +360,36 @@ reliably reproduce.
 - A "0 out" count is hidden rather than shown as zero: a permanently-present field trains people
   to ignore it exactly when it stops being zero.
 
-### A Room caveat that must be resolved before Phase 4
+### Real migrations, no destructive fallback
 
-`DatabaseModule` uses `fallbackToDestructiveMigration()`. That is safe **today** because the
-database holds only a disposable snapshot the next refresh restores. It will **not** be safe once
-the photo capture queue lands in Phase 4: queued captures are data that exists nowhere else, and
-a schema bump would silently delete them along with their files. Split the queue into its own
-database, or add real migrations, **before** that phase.
+`DatabaseModule` has **no** `fallbackToDestructiveMigration()`. It used to, and that was safe only
+while this database held nothing but a disposable copy of server state. From Phase 4 the photo
+capture queue lives here: forty photos taken in a garage with no signal, which the server has
+never seen. For that data this database is the **only** copy, and a destructive fallback would
+delete it on the next schema bump — silently, no crash, leaving the JPEGs orphaned on disk with
+nothing recording what they were of.
+
+Without the fallback, a missing migration is a **loud** failure: the app refuses to open the
+database. That is the right way round — a crash gets fixed, a silent wipe gets discovered months
+later by someone who thinks the camera is broken. The job of the tests below is to move that
+failure from a phone to CI.
+
+| Piece | Where | What it guarantees |
+|---|---|---|
+| `schemas/…/<n>.json` | committed | the record of what version *n* looked like. Nothing can be validated without it, so a test asserts it exists |
+| `ToteMigrations.ALL` | main | the only way the database moves between versions |
+| `ToteDatabaseMigrationTest` | **JVM, every PR** | every shipped version can still reach the newest through the migration graph, and no migration names a version that was never exported |
+| `ToteDatabaseMigrationAndroidTest` | **on device, by hand** | the migrations actually produce the schema they claim, column for column |
+
+The split is deliberate. Room's `MigrationTestHelper` needs real instrumentation, and this suite's
+CI has no device — so the *fatal* mistake (bump without a migration) is checked on the JVM where
+it can run on every PR, and the *subtler* one (a migration whose SQL is slightly wrong) is checked
+on device. The alternative was to skip both because the perfect check cannot run in CI.
+
+**The JVM guard discovers versions from the filesystem**, so nobody has to remember to update it
+when version 3 appears. Verified by temporarily bumping to version 2: with no migration it fails
+with *"No migration path to version 2 from version(s) [1]"*; with one it passes. Both directions
+were checked before the experiment was reverted.
 
 ## NFC, the QR, and the index card
 

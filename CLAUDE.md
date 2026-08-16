@@ -391,7 +391,12 @@ UID storage and mismatch warning, `/t/<code>` server page, `GET /totes/{id}/card
 *Exit: tap a written tag on a locked phone → Tote opens that tote; a printed card's QR
 resolves to the same place; a dead tag is recoverable via the card.*
 
-**Phase 4 — Photo capture → AI draft.** Batch capture queue (camera + gallery, downscale,
+**Phase 4 — Photo capture → AI draft.** ⚠️ **Prerequisite done 2026-08-16**: the Room database
+now uses real migrations with **no destructive fallback**, guarded by a JVM test that walks the
+committed schema exports (and an on-device test for column-level validation). Adding the capture
+queue to that database is now safe — a version bump without a migration fails CI instead of
+deleting queued photos. **Bumping `version` requires a migration and a committed schema export;
+the procedure is in `ToteMigrations`' KDoc.** Batch capture queue (camera + gallery, downscale,
 Room queue, WorkManager upload), `POST /items/scan` pipeline: rembg/Pillow cleanup, Gemma
 identify + category + condition, draft persisted. Review stack with full editing. Vision and
 cleanup mocked in CI; live LM Studio smoke locally. **Bake the U2-Net weights into the

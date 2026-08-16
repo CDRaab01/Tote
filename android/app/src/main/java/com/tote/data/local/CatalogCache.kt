@@ -111,7 +111,17 @@ interface CatalogDao {
     }
 }
 
-@Database(entities = [CachedItem::class, CachedTote::class], version = 1, exportSchema = false)
+/**
+ * The local database.
+ *
+ * `exportSchema = true` and the exported JSON is COMMITTED. That file is not a build artefact —
+ * it is the record of what version N actually looked like, and it is the only thing a migration
+ * test can validate against. Deleting it silently disables every guard below it.
+ *
+ * **Bumping `version` requires a migration.** There is no destructive fallback: see
+ * `DatabaseModule`, and `ToteDatabaseMigrationTest` for the procedure.
+ */
+@Database(entities = [CachedItem::class, CachedTote::class], version = 1, exportSchema = true)
 abstract class ToteDatabase : RoomDatabase() {
     abstract fun catalogDao(): CatalogDao
 }
