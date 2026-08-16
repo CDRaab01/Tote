@@ -35,6 +35,10 @@ import com.tote.ui.search.SearchContent
 import com.tote.ui.search.SearchUiState
 import com.tote.ui.totes.ToteDetailContent
 import com.tote.ui.totes.ToteListContent
+import androidx.compose.foundation.layout.Column
+import com.tote.ui.components.PickerList
+import com.tote.ui.components.PickerField
+import com.tote.ui.components.PickerOption
 import com.tote.ui.theme.ToteTheme
 import com.tote.util.UiState
 import org.junit.Rule
@@ -534,6 +538,50 @@ class ScreenshotTest {
             onAddItem = {}, onUnpackAll = {}, onRepackAll = {}, onTakeOut = {}, onPutBack = {},
         )
     }
+
+
+    /**
+     * The picker, open, with enough bins that the search box earns its place — the state the
+     * chip strip could not represent at all. Fourteen identical grey bins is the number from the
+     * product's own problem statement, so it is the number the control has to survive.
+     */
+    @Test fun picker_open_dark() = capture("picker_open_dark", dark = true) {
+        PickerList(
+            options = (1..14).map {
+                PickerOption(
+                    id = "t$it",
+                    label = "A%02d · %s".format(it, binLabels[it % binLabels.size]),
+                    detail = if (it % 2 == 0) "Attic" else "Garage rack B",
+                )
+            },
+            selectedId = "t3",
+            onPick = {},
+            noneLabel = "Decide later",
+            searchHint = "Search bins",
+        )
+    }
+
+    @Test fun picker_field_dark() = capture("picker_field_dark", dark = true) {
+        Column {
+            PickerField(
+                label = "Filing into",
+                selected = "D1 · Blankets",
+                placeholder = "Decide later",
+                onClick = {},
+            )
+            PickerField(
+                label = "Category",
+                selected = null,
+                placeholder = "No category",
+                onClick = {},
+            )
+        }
+    }
+
+    private val binLabels = listOf(
+        "Blankets", "Christmas decor", "Winter 5T", "Power tools", "Vintage games",
+        "Kitchen spares", "Documents",
+    )
 
     // LoginContent is the stateless body precisely so it can be captured here: the stateful
     // LoginScreen needs Hilt and a real AppAuth service, neither of which exists in a JVM test.

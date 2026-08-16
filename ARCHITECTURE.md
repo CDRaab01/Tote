@@ -757,6 +757,49 @@ The affordance lives one tap deep, in the app's error voice, behind its own conf
 beside "Take out" on the row. A destructive action next to an everyday one is a mis-tap away from
 taking a photograph that cannot be retaken once the bin is taped shut.
 
+## Picking one thing out of a list that grows
+
+Every choose-a-bin, choose-a-category, choose-a-person control was a horizontally-scrolling strip
+of chips. That shape is fine for five fixed options and wrong for anything that grows: the options
+run off the edge, you cannot see how many there are, and finding "G07" among thirty bins means
+dragging sideways past twenty-nine others. The catalog is *supposed* to reach fourteen bins and
+beyond — that is the product's own problem statement — so the control has to scale with it.
+
+`PickerField` + `PickerDialog` (`ui/components/Picker.kt`) replace it. The closed state is a
+field showing the current choice, because most of the time it is being **read** rather than
+changed — someone glancing at the capture screen to confirm the bin before shooting twenty
+photographs into it. The open state is a vertical list with a search box, appearing only once
+there are enough options to be worth filtering.
+
+Applied to: the capture screen's destination, review's category and destination, the
+outgrown/returned bin picker, and the lend-to-person picker.
+
+**Chips stayed where chips are right** — condition, department, garment type. Five options that
+never change are faster to compare side by side than behind a tap, and they read as a set rather
+than a lookup. What they got instead is `FlowRow` in place of `LazyRow`: they now **wrap** rather
+than scroll, so "Poor" and "Unisex" stop being clipped at the screen edge. The rule is about
+user-grown lists, not about chips being bad.
+
+Three details that are decisions rather than styling:
+
+- **Search matches the detail line as well as the label.** Someone hunting for a bin thinks "the
+  one in the attic" as readily as "A15". `matchOptions` is pure and tested for exactly this,
+  including that a word from the *middle* of a label matches — prefix-only matching would mean
+  "blankets" finds nothing, because every label starts with the bin code, which is the part
+  someone is least likely to remember.
+- **"None" is a row, not a second tap on the selection.** "Tap the selected chip again to clear
+  it" only works if you already knew it. Where clearing is legitimate (category, capture
+  destination) it is a labelled row; where it is not (filing at review, an outgrown destination)
+  there is no such row, because an item confirmed into the catalog and in no bin is
+  indistinguishable from a bug.
+- **No confirm button.** Picking is the confirmation. A list where every row is a decision and
+  there is still an OK to press is a list you tap twice for no reason.
+
+`PickerList` exists as a separate composable from `PickerDialog` for a test reason worth knowing:
+an `AlertDialog` renders in its own window and a Robolectric screenshot of one **never reaches
+idle** — it times out after 60 s of composition attempts. The list is the part whose layout is
+worth verifying, so it is the part that can be rendered alone.
+
 ## An empty screen must say WHY it is empty
 
 Three times in this app a screen has confidently reported nothing when the truth was "I could not

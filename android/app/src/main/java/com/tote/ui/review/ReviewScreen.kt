@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,6 +30,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,6 +52,9 @@ import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.DraftDto
 import com.tote.data.remote.PhotoUrls
 import com.tote.ui.components.HazardRule
+import com.tote.ui.components.PickerDialog
+import com.tote.ui.components.PickerField
+import com.tote.ui.components.PickerOption
 import com.tote.ui.components.ToteButton
 import com.tote.ui.theme.ToteTheme
 import design.pulse.ui.components.Caption
@@ -123,6 +130,8 @@ fun ReviewContent(
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
     val draft = state.current
+    var showTotePicker by remember { mutableStateOf(false) }
+    var showCategoryPicker by remember { mutableStateOf(false) }
 
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         LazyColumn(
@@ -247,32 +256,19 @@ fun ReviewContent(
                 if (state.categories.isNotEmpty()) {
                     item { SectionHeader(label = "Category", channel = colors.search.base) }
                     item {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
-                            items(state.categories, key = { it.id }) { category ->
-                                SlateChip(
-                                    selected = state.edits.categoryId == category.id,
-                                    label = category.name,
-                                    // Tapping the selected one clears it: a wrong category is
-                                    // worse than none, and there must be a way back to none.
-                                    onClick = {
-                                        onEdit {
-                                            it.copy(
-                                                categoryId =
-                                                    if (it.categoryId == category.id) null
-                                                    else category.id
-                                            )
-                                        }
-                                    },
-                                )
-                            }
-                        }
+                        PickerField(
+                            selected = state.categories
+                                .firstOrNull { it.id == state.edits.categoryId }?.name,
+                            placeholder = "No category",
+                            onClick = { showCategoryPicker = true },
+                        )
                     }
                 }
 
                 item { SectionHeader(label = "Condition", channel = colors.stored.base) }
                 item {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
-                        items(CONDITIONS) { condition ->
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(spacing.sm), verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
+                        CONDITIONS.forEach { condition ->
                             SlateChip(
                                 selected = state.edits.condition == condition,
                                 label = conditionLabel(condition),
@@ -312,8 +308,8 @@ fun ReviewContent(
                     )
                 }
                 item {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
-                        items(DEPARTMENTS) { dept ->
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(spacing.sm), verticalArrangement = Arrangement.spacedBy(spacing.sm)) {
+                        DEPARTMENTS.forEach { dept ->
                             SlateChip(
                                 selected = state.edits.department == dept,
                                 label = departmentLabel(dept),
@@ -362,15 +358,13 @@ fun ReviewContent(
                                 "come back — filing needs a destination.",
                         )
                     } else {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
-                            items(state.totes, key = { it.id }) { tote ->
-                                SlateChip(
-                                    selected = state.edits.toteId == tote.id,
-                                    label = tote.label?.let { "${tote.code} · $it" } ?: tote.code,
-                                    onClick = { onEdit { it.copy(toteId = tote.id) } },
-                                )
-                            }
-                        }
+                        PickerField(
+                            selected = state.totes
+                                .firstOrNull { it.id == state.edits.toteId }
+                                ?.let { tote -> tote.label?.let { "${tote.code} · $it" } ?: tote.code },
+                            placeholder = "Choose a bin",
+                            onClick = { showTotePicker = true },
+                        )
                     }
                 }
 
@@ -444,6 +438,45 @@ fun ReviewContent(
                 }
             }
         }
+    }
+
+    if (showTotePicker) {
+        PickerDialog(
+            title = "Filing into",
+            options = state.totes.map { tote ->
+                PickerOption(
+                    id = tote.id,
+                    label = tote.label?.let { "${tote.code} · $it" } ?: tote.code,
+                    detail = tote.locationName,
+                )
+            },
+            selectedId = state.edits.toteId,
+            onPick = { id ->
+                onEdit { it.copy(toteId = id) }
+                showTotePicker = false
+            },
+            onDismiss = { showTotePicker = false },
+            // No "none" row: filing REQUIRES a bin. An item that is confirmed into the catalog
+            // and in no bin is indistinguishable from a bug.
+            searchHint = "Search bins",
+        )
+    }
+    if (showCategoryPicker) {
+        PickerDialog(
+            title = "Category",
+            options = state.categories.map { PickerOption(id = it.id, label = it.name) },
+            selectedId = state.edits.categoryId,
+            onPick = { id ->
+                onEdit { it.copy(categoryId = id) }
+                showCategoryPicker = false
+            },
+            onDismiss = { showCategoryPicker = false },
+            // A wrong category is worse than none, so there is always a way back to none — and
+            // as an explicit row, because "tap the selected chip again" only works if you
+            // already knew it.
+            noneLabel = "No category",
+            searchHint = "Search categories",
+        )
     }
 }
 
