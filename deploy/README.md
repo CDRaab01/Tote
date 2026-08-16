@@ -90,10 +90,71 @@ powershell C:\Code\Tote\deploy\redeploy.ps1
 powershell C:\Code\Tote\deploy\redeploy.ps1 -Ref 1a2b3c4   # roll back
 ```
 
+## Backups
+
+`deploy/backup.ps1` writes a verified, self-contained set:
+
+```
+<BackupDir>\tote-YYYYMMDD-HHmmss\
+  db.dump        pg_dump custom format (-Fc)
+  photos.tar.gz  the /data/photos volume
+  MANIFEST.json  sizes, counts, deployed commit
+```
+
+```powershell
+powershell C:\Code\Tote\deploy\backup.ps1 -BackupDir \\Diskstation\Media2\Backups\Tote
+powershell C:\Code\Tote\deploy\backup.ps1 -Verify      # check the newest set, write nothing
+```
+
+**Run it from the deployment clone, not a worktree.** Compose derives its project name from the
+directory, so `C:\Code\Tote-something\deploy\backup.ps1` finds no running stack and refuses —
+correctly, but it looks like a broken script the first time.
+
+Two volumes, and they are not equally replaceable. The catalog rows are a list of paths; the
+**photographs are the artifact**. An item was in someone's hands in a garage and is now sealed in
+a taped bin in an attic — losing the photos volume means the only way to learn what a bin holds
+is to carry fourteen of them down and open every one.
+
+The script **verifies before it claims success** and **prunes only after** a good new set exists,
+so a failing run can never delete the last good backup. What it checks:
+
+| Check | Catches |
+|---|---|
+| `db.dump` ≥ 1 KB | a dump that failed and left a stub |
+| `photos.tar.gz` ≥ 100 B *(unless the DB genuinely has zero photo rows)* | a truncated archive, without false-alarming on an empty catalog |
+| `tar tzf` inside a container | a corrupt archive — and it tells that apart from Docker being down, which is a WARN, not a FAIL |
+| photo files ≥ `item_photos` rows | missing originals (the pipeline writes files *before* committing rows, so files ≥ rows always holds) |
+
+On the Dragonfly host this is not scheduled directly. `C:\Scripts\Backup-ToteArchive.ps1` wraps
+it and owns scheduling, gpg encryption, NAS delivery, retention and logging — the same division
+of labour as Crate. `MANIFEST.json` is promoted to the NAS **unencrypted on purpose** so the
+freshness check in `Test-SuiteInvariants.ps1` can read a set's age without the passphrase.
+
+### Restoring from a backup
+
+Rehearsed 2026-08-16 against a real set, not just written down:
+
+```powershell
+# 1. Decrypt, if the set came from the NAS (the local sets written by backup.ps1 are plaintext).
+& "C:\Program Files\Git\usr\bin\gpg.exe" --batch --yes --passphrase-file `
+  C:\Users\Sonic\.dragonfly-suite\db-backup.gpg.pass -o db.dump -d db.dump.gpg
+
+# 2. Restore the database into a THROWAWAY first. Never straight over prod: a restore you have
+#    not looked at is a claim, and this is the step where you find out the dump was empty.
+docker exec tote-db-1 psql -U tote -d postgres -c "CREATE DATABASE tote_restore_test;"
+docker cp db.dump tote-db-1:/tmp/restore.dump
+docker exec tote-db-1 pg_restore -U tote -d tote_restore_test --no-owner /tmp/restore.dump
+docker exec tote-db-1 psql -U tote -d tote_restore_test -c "\dt"   # expect 12 tables
+
+# 3. Photos back onto the volume.
+docker run --rm --volumes-from tote-server-1 -v "${PWD}:/backup" `
+  alpine tar xzf /backup/photos.tar.gz -C /data/photos
+```
+
+A restore is only finished when the rows and the files agree: `select count(*) from item_photos`
+against `find /data/photos -type f | wc -l`. Rows without files is a catalog of paths pointing at
+nothing, which reads as a working app right up until someone opens an item.
+
 ## Not built yet
 
-Backups. Crate's photos went unbacked-up for weeks and its backup script could not run at all on
-this host's PowerShell 5.1 (`Set-Content -AsByteStream` is 7+ only) — it threw on the first step
-and left empty timestamped directories that looked like real backup sets. When Tote grows a photo
-volume in Phase 4, backups land in Phase 7 with a **restore actually rehearsed**, and the freshness
-alarm asserts the newest artifact's age rather than the scheduled task's configuration.
+Nothing in this file. Phase 8 (polish/release) is the remaining deploy-adjacent work.

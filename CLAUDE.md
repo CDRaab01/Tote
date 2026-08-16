@@ -512,11 +512,15 @@ self-hosted ntfy on `host.docker.internal:8095` — **never ntfy.sh**, whose top
 effectively public URLs).
 *Exit: "what fits Emma" returns items with their totes; a lent item nags on time.*
 
-**Phase 7 — Backups + deploy hardening.** `deploy/backup.ps1` (DB dump + photos tar +
-MANIFEST, verify before claiming success, prune only after the new set verifies) **and its
-scheduled task**, gpg → NAS, freshness assertion added to `Test-SuiteInvariants.ps1`.
-Post-deploy smoke that pushes a real generated image through `/items/scan` and asserts the
-draft processed — not one that stops at `/users/me`.
+**Phase 7 — Backups + deploy hardening.** ✅ **DONE 2026-08-16** (#10). `deploy/backup.ps1`
+(DB dump + photos tar + MANIFEST; verifies before claiming success, prunes only after the new
+set verifies) and the scan stage in `scripts/synthetic_smoke.py`. Two inherited bugs were found
+by *running* it: a set could pass at write time and fail `-Verify` a minute later, and a corrupt
+archive produced a PowerShell stack trace instead of a diagnosis (5.1 turns native stderr into a
+terminating error even with `2>$null`). **Crate has both.** Restore rehearsed end to end.
+Host-side wiring (`Backup-ToteArchive.ps1`, the scheduled task, the `tote` row in
+`Backup-DragonflyDatabases.ps1`, the `Test-SuiteInvariants.ps1` freshness check) lives in
+`C:\Scripts` and is recorded in OPERATIONS.md, not here.
 *Exit: a backup set exists, has been **verified by decrypting and restoring from what
 actually landed**, and a stale or 0-byte set fails the weekly check.*
 

@@ -7,7 +7,7 @@ suite-wide rule; silently-drifting docs have burned two sibling repos already.
 The build plan and the reasoning behind the locked decisions live in [CLAUDE.md](CLAUDE.md).
 This file describes what exists **now**.
 
-## Current state: Phase 4 (photo capture → AI draft) — server side + the capture queue
+## Current state: Phases 0-4 complete, plus Phase 7's backups
 
 ```
 Tote/
@@ -58,7 +58,8 @@ Tote/
 │  │     └─ ai/                 vision transport, prompt, salvage parser
 │  ├─ alembic/versions/0001_    the whole schema
 │  └─ tests/                    pytest, asyncio_mode=auto
-├─ scripts/synthetic_smoke.py   post-deploy smoke (SSO-only apps have no login to script)
+├─ deploy/backup.ps1            verified DB + photos backup set
+├─ scripts/synthetic_smoke.py   post-deploy smoke: auth AND a real scan through the pipeline
 ├─ docker-compose.yml           db + server, host ports 8008/5439
 └─ .github/workflows/           ci.yml, notify.yml, release.yml, deploy.yml
 ```
@@ -677,11 +678,107 @@ changes (an upload finishing is what creates a draft) with a slow ticker as a ba
 created on another device, and it fails silently: a tailnet blip must not raise an error over
 whatever screen someone is actually using.
 
+## Backups
+
+Two Docker volumes hold everything: `pgdata` and `photos`. Compose only claims they survive a
+redeploy — not `down -v`, not a disk failure, not a host rebuild. `deploy/backup.ps1` writes a
+timestamped set (`db.dump`, `photos.tar.gz`, `MANIFEST.json`) somewhere else entirely.
+
+**The two volumes are not equally replaceable.** The catalog rows are a list of paths; the
+photographs are the artifact. An item was in someone's hands in a garage and is now sealed in a
+taped bin in an attic — losing `photos` means the only way to learn what a bin holds is to carry
+fourteen of them down and open every one. Losing `pgdata` is bad; losing `photos` is the exact
+failure the app exists to prevent.
+
+### Division of labour
+
+| Layer | Owns |
+|---|---|
+| `deploy/backup.ps1` (repo) | producing a **verified** set |
+| `C:\Scripts\Backup-ToteArchive.ps1` (host) | scheduling, gpg, NAS delivery, retention, logging |
+| `Test-SuiteInvariants.ps1` (host) | asserting a recent set actually **landed** |
+
+Same split as Crate, for the same reason: the repo script must stay runnable by hand on any
+machine with the stack up, and secrets/paths belong to the host. `MANIFEST.json` is promoted to
+the NAS **unencrypted on purpose** — it holds only counts, sizes and a timestamp, and leaving it
+readable is what lets the freshness check work without the gpg passphrase.
+
+### Verify, then prune — never the other way round
+
+The script checks what it wrote before reporting success, and deletes old sets only after a good
+new one exists, so a failing run can never remove the last good backup. This host has already
+proved why: the nightly DB job produced **nothing for two weeks** while `Get-ScheduledTask`
+reported `State=Ready`.
+
+Four checks, each aimed at a specific way a backup lies:
+
+- `db.dump` under 1 KB — the dump failed and left a stub.
+- `photos.tar.gz` under 100 B — a truncated archive. **Suspended when the database genuinely has
+  zero photo rows**, because an empty gzipped tar is ~45 B and a brand-new Tote would otherwise
+  fail its backup every night until the first scan. A nightly false alarm is the fastest way to
+  train someone to ignore a real one.
+- `tar tzf` inside a container — a corrupt archive. Docker being unavailable is a **WARN**, not a
+  FAIL: that says nothing about the archive, and condemning a good set for it is its own failure.
+- photo files ≥ `item_photos` rows — missing originals. This holds because `scan_pipeline`
+  persists originals to disk *before* committing their rows, so files ≥ rows is an invariant of
+  any consistent set.
+
+Two bugs were found by running it rather than reading it, both inherited from Crate:
+
+1. **A set could pass at write time and fail `-Verify` a minute later.** Verification had no row
+   count, so the "zero photos is legitimate" exemption could not apply — and `-Verify` never ran
+   the files-vs-rows cross-check at all, so it was simultaneously too strict and too lax.
+   `-Verify` now reads `photo_rows` from the set's own manifest and asks the same question the
+   write path asked. Tote hit this on its very first backup: 87-byte archive, 0 rows, PASS then
+   FAIL.
+2. **A corrupt archive produced a PowerShell stack trace instead of a diagnosis.** Under the
+   script-level `$ErrorActionPreference = "Stop"`, Windows PowerShell 5.1 turns a native
+   command's stderr into a terminating `NativeCommandError` — and `2>$null` does not prevent it —
+   so `docker run` against a bad archive killed the script before it could tell "corrupt" apart
+   from "Docker is down". It failed closed, which is the important half, but the wrapper's log at
+   04:30 is the only thing anyone reads. `Test-BackupSet` now sets `Continue` in its own scope,
+   which is the correct semantic for a function whose job is to classify failures.
+
+The dump is written by redirecting through `cmd.exe`, never through the PowerShell pipeline:
+`Set-Content -AsByteStream` is PowerShell 7+ only and this host has no `pwsh`, while the 5.1
+spelling (`-Encoding Byte`) decodes the bytes to text and corrupts the dump.
+
+### Restore is rehearsed, not documented
+
+The procedure in `deploy/README.md` was run end to end on 2026-08-16 against a real set: restore
+into a throwaway database, confirm all 12 tables land, then untar the photos back onto the volume.
+A restore that has only been written down is a claim.
+
+## The deploy smoke exercises the pipeline, not just the front door
+
+`scripts/synthetic_smoke.py` draws a real PNG with `zlib`/`struct` (no Pillow — the script is
+stdlib-only so it survives a dependency change under it), pushes it through `POST /items/scan`,
+asserts a **draft** came back with a photo attached, and then deletes it.
+
+Three deliberate choices:
+
+- **Fails on no draft; warns on `identify_unavailable`.** Those are different claims. The first
+  means this deploy broke the pipeline; the second means LM Studio is not loaded on the host —
+  real, but not this deploy's fault, and paging `tote-alerts` for it on every redeploy is how an
+  alert channel gets muted. The server already separates transport failure from content failure;
+  the smoke honours the same line.
+- **A non-draft response is a hard failure.** If a scan ever produced a catalogued item directly,
+  something model-generated would have entered the catalog unreviewed, which is the one rule this
+  app has no exception to.
+- **It cleans up.** This runs against production on every green push to `main`. A smoke that left
+  its drafts behind would fill the review stack with pictures of a test gradient, and the first
+  person to notice would be someone reviewing a real bin.
+
+Its own timeout is 240 s, not the script's 20 s default, for the same reason the Android client
+overrides OkHttp's: `/items/scan` is synchronous and a single photo measured 35.5 s. Verified
+against the live model on 2026-08-16 — the generated circle came back as *"Striped red circle
+decor"*, low confidence, one photo, and the draft was gone afterwards.
+
 ## Not yet built
 
-Phase 4 is complete on both sides. What remains: the sizing ladder (Phase 5); people, `fits()`
-and lending (Phase 6); backups (Phase 7 — and there are photos to lose now, which moves that up
-the list); polish and the Roborazzi/empty-state sweep (Phase 8).
+Phases 0-4 and the backup half of Phase 7 are complete. What remains: the sizing ladder
+(Phase 5); people, `fits()` and lending (Phase 6); polish and the Roborazzi/empty-state sweep
+(Phase 8).
 
 The smoke script carries an explicit list of what each phase must add to it. Crate's stopped at
 `/users/me` for months, so "auth works" read as "the app works" while the pipeline the app exists
