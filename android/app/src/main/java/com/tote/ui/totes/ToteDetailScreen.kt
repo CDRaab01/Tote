@@ -72,6 +72,7 @@ fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val writeState by viewModel.write.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
+    var confirmingUnpack by remember { mutableStateOf(false) }
     var lending by remember { mutableStateOf<String?>(null) }
     var openItem by remember { mutableStateOf<ItemDto?>(null) }
     var cardUrl by remember { mutableStateOf<String?>(null) }
@@ -99,7 +100,7 @@ fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
             ToteDetailContent(
                 tote = s.data,
                 onAddItem = { showAdd = true },
-                onUnpackAll = viewModel::unpackAll,
+                onUnpackAll = { confirmingUnpack = true },
                 onRepackAll = viewModel::repackAll,
                 onTakeOut = viewModel::moveOut,
                 onPutBack = viewModel::putBack,
@@ -136,6 +137,33 @@ fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
                     onLend = { personId, due ->
                         viewModel.lend(itemId, personId, due)
                         lending = null
+                    },
+                )
+            }
+            if (confirmingUnpack) {
+                // One tap used to move every item in the bin with no question asked. Unpack is
+                // recoverable (Repack all inverts it) but it rewrites the ledger N times — worth
+                // one deliberate tap on a 37-item bin, cheap on a 2-item one.
+                AlertDialog(
+                    onDismissRequest = { confirmingUnpack = false },
+                    title = { Text("Unpack all ${s.data.itemCount} item${if (s.data.itemCount == 1) "" else "s"}?") },
+                    text = {
+                        Text(
+                            "Everything in this bin is marked out, one ledger entry each. " +
+                                "Repack all puts them back.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                viewModel.unpackAll()
+                                confirmingUnpack = false
+                            },
+                        ) { Text("Unpack") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmingUnpack = false }) { Text("Cancel") }
                     },
                 )
             }
@@ -211,8 +239,10 @@ fun ToteDetailContent(
                     horizontalArrangement = Arrangement.spacedBy(spacing.sm),
                 ) {
                     ToteButton(text = "Add item", onClick = onAddItem, modifier = Modifier.weight(1f))
-                    // Whichever operation makes sense right now. Showing both at once invites
-                    // the wrong tap on a bin that is already open on the floor.
+                    // Both operations whenever each has something to act on. The old either/or
+                    // hid Repack on any bin with items still inside — so a half-unpacked
+                    // Christmas bin (3 in, 2 out: the normal January state) could only be
+                    // repacked one row at a time.
                     if (tote.itemCount > 0) {
                         ToteButton(
                             text = "Unpack all",
@@ -220,7 +250,8 @@ fun ToteDetailContent(
                             tonal = true,
                             modifier = Modifier.weight(1f),
                         )
-                    } else if (tote.outCount > 0) {
+                    }
+                    if (tote.outCount > 0) {
                         ToteButton(
                             text = "Repack all",
                             onClick = onRepackAll,

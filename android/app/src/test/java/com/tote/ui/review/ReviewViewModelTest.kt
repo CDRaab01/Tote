@@ -1,6 +1,7 @@
 package com.tote.ui.review
 
 import com.tote.data.local.CachedTote
+import com.tote.data.CatalogRepository
 import com.tote.data.local.CatalogDao
 import com.tote.data.remote.ApiService
 import com.tote.data.remote.ApparelDto
@@ -8,6 +9,7 @@ import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.DraftConfirm
 import com.tote.data.remote.DraftDto
 import com.tote.data.remote.ItemDto
+import com.tote.util.FeedbackBus
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
@@ -15,6 +17,7 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -44,6 +47,8 @@ class ReviewViewModelTest {
     private val dispatcher = StandardTestDispatcher()
     private lateinit var api: ApiService
     private lateinit var dao: CatalogDao
+    private lateinit var repo: CatalogRepository
+    private val feedback = FeedbackBus()
 
     private val bins = listOf(
         CachedTote("t1", "A14", "Christmas decor", null, "Attic", 37, 0, false),
@@ -55,6 +60,7 @@ class ReviewViewModelTest {
         Dispatchers.setMain(dispatcher)
         api = mock()
         dao = mock<CatalogDao>().stub { on { totes() } doReturn flowOf(bins) }
+        repo = mock()
     }
 
     @After
@@ -68,7 +74,7 @@ class ReviewViewModelTest {
             onBlocking { drafts() } doReturn drafts.toList()
             onBlocking { categories() } doReturn listOf(CategoryDto("c1", "Seasonal decor"))
         }
-        return ReviewViewModel(api, dao)
+        return ReviewViewModel(api, dao, repo, feedback)
     }
 
     @Test
@@ -305,7 +311,7 @@ class ReviewViewModelTest {
         api.stub {
             onBlocking { drafts() } doAnswer { throw java.io.IOException("offline") }
         }
-        val vm = ReviewViewModel(api, dao)
+        val vm = ReviewViewModel(api, dao, repo, feedback)
         dispatcher.scheduler.advanceUntilIdle()
 
         // Reviewing happens on the way back from the garage, so the destination list comes from
@@ -381,5 +387,67 @@ class ReviewViewModelTest {
         // the review away from someone standing in a garage with the bin still open.
         assertEquals(1, vm.state.value.drafts.size)
         assertNull(vm.state.value.error)
+    }
+
+    // ── The filing loop closes ────────────────────────────────────────
+
+    @Test
+    fun `confirming refreshes the catalog and says where the item went`() = runTest {
+        // The two halves of the old silence: file twenty items and (a) nothing was said, and
+        // (b) the tote list and stat tiles kept their stale counts because this ViewModel
+        // bypasses CatalogRepository and nothing else knew a write had happened.
+        val vm = vmWith(draft("d1", "Ratchet set", toteId = "t1"))
+        api.stub {
+            onBlocking { confirmDraft(any(), any()) } doAnswer {
+                ItemDto(id = "i1", name = "Ratchet set", status = "stored")
+            }
+        }
+        val heard = mutableListOf<String>()
+        val listener = kotlinx.coroutines.CoroutineScope(dispatcher)
+            .launch { feedback.messages.collect { heard += it } }
+        dispatcher.scheduler.advanceUntilIdle()
+
+        vm.confirm()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        verify(repo).refresh()
+        // Named by bin CODE — what is written on the physical box.
+        assertEquals(listOf("Filed Ratchet set into A14"), heard)
+        listener.cancel()
+    }
+
+    @Test
+    fun `skip wraps past the last draft instead of trapping it`() = runTest {
+        // The last draft used to be a trap: Skip disabled, so the only exits were File it
+        // (demands a bin) and Discard (deletes the photographs). "I don't know where this goes
+        // yet" had no answer.
+        val vm = vmWith(draft("d1", "One"), draft("d2", "Two"))
+        dispatcher.scheduler.advanceUntilIdle()
+        vm.skip()
+        assertEquals("d2", vm.state.value.current?.id)
+
+        vm.skip()
+        assertEquals("d1", vm.state.value.current?.id)
+    }
+
+    @Test
+    fun `a failed confirm does not claim success`() = runTest {
+        val vm = vmWith(draft("d1", "Ratchet set", toteId = "t1"))
+        api.stub {
+            onBlocking { confirmDraft(any(), any()) } doAnswer { throw java.io.IOException("no route") }
+        }
+        val heard = mutableListOf<String>()
+        val listener = kotlinx.coroutines.CoroutineScope(dispatcher)
+            .launch { feedback.messages.collect { heard += it } }
+        dispatcher.scheduler.advanceUntilIdle()
+
+        vm.confirm()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        // No refresh, no "Filed …" — the error renders inline on the screen instead.
+        verify(repo, org.mockito.kotlin.never()).refresh()
+        assertEquals(emptyList<String>(), heard)
+        assertEquals(1, vm.state.value.drafts.size)
+        listener.cancel()
     }
 }

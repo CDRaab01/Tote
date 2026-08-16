@@ -17,6 +17,30 @@ object ApiErrors {
     fun statusOf(t: Throwable): Int? = (t as? HttpException)?.code()
 
     /**
+     * The server's own explanation, when it gave one.
+     *
+     * FastAPI answers every rejection with `{"detail": "…"}`, and that sentence is usually the
+     * whole diagnosis — "At most 8 photos per item", "Tote not found". The queue used to throw
+     * it away and store "HTTP 422", which turned a fixable mistake into a mystery. Read
+     * defensively: the error body is a one-shot stream and may be anything at all.
+     */
+    fun detail(t: Throwable): String? {
+        val body = (t as? HttpException)?.response()?.errorBody()?.string() ?: return null
+        return runCatching {
+            val parsed = org.json.JSONObject(body)
+            // Pydantic validation errors nest a list; a plain HTTPException carries a string.
+            when (val d = parsed.get("detail")) {
+                is String -> d
+                is org.json.JSONArray ->
+                    (0 until d.length()).joinToString("; ") { i ->
+                        d.getJSONObject(i).optString("msg").ifBlank { d.get(i).toString() }
+                    }
+                else -> d.toString()
+            }
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    /**
      * @param fallback what to say when the server answered with an unremarkable error — the
      *   caller knows what the user was trying to do, so it writes that sentence.
      */

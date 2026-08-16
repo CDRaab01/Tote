@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **255 server** (pytest, real Postgres) + **124 Android** (measured 2026-08-16) |
+| Tests | **255 server** (pytest, real Postgres) + **127 Android** (measured 2026-08-16) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -603,6 +603,15 @@ picker, and lending. **Chips stayed for condition, department and garment type**
 compared side by side) but wrap with `FlowRow` instead of scrolling, so nothing is clipped at the
 screen edge. `PickerList` is split out from `PickerDialog` because an `AlertDialog` never reaches
 idle under Robolectric — a screenshot of one times out after 60 s. ARCHITECTURE.md has the rest.
+
+**UX round PR 1 — the loop speaks (#22).** `FeedbackBus` + the app's one snackbar on the ToteNav
+Scaffold. Filing announces "Filed X into A14" and finally refreshes the catalog (it never did —
+stale counts everywhere after a batch); every tote-detail write reports failure instead of
+swallowing it; queue rows store the server's own `detail` sentence instead of "HTTP 422" and name
+a 401 as a session problem; both photo-destroying discards got the confirm that the recoverable
+delete already had; Skip wraps past the last draft; mixed bins show both bulk buttons; Unpack-all
+asks first; queueing a capture acknowledges. Rule recorded in ARCHITECTURE.md: only
+user-initiated writes speak.
 
 ---
 

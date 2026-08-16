@@ -14,11 +14,14 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import android.content.Intent
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -39,6 +42,7 @@ import com.tote.ui.review.ReviewScreen
 import com.tote.ui.review.DraftBadgeViewModel
 import com.tote.ui.search.SearchScreen
 import com.tote.ui.totes.ToteDetailScreen
+import com.tote.util.FeedbackViewModel
 import com.tote.ui.theme.ToteTheme
 import com.tote.ui.totes.ToteListScreen
 
@@ -78,8 +82,22 @@ fun ToteNavHost(
     onIntentConsumed: () -> Unit = {},
     tapRouter: TapRouter = hiltViewModel(),
     draftBadge: DraftBadgeViewModel = hiltViewModel(),
+    feedback: FeedbackViewModel = hiltViewModel(),
 ) {
     val nav = rememberNavController()
+    val snackbarHost = remember { SnackbarHostState() }
+
+    // The app's one snackbar. Rendered here because this Scaffold is the only one in the app,
+    // and because the writes that most need a voice finish after their screen is gone — a
+    // queued upload failing, a confirm landing as the review stack advances.
+    LaunchedEffect(Unit) {
+        feedback.bus.messages.collect { message ->
+            // One at a time, newest wins: a backlog of stale outcomes read aloud in order is
+            // worse than the latest one alone.
+            snackbarHost.currentSnackbarData?.dismiss()
+            snackbarHost.showSnackbar(message)
+        }
+    }
     val pendingDrafts by draftBadge.pending.collectAsStateWithLifecycle()
     val tapTarget by tapRouter.target.collectAsStateWithLifecycle()
 
@@ -112,6 +130,7 @@ fun ToteNavHost(
     val route = entry?.destination?.route
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHost) },
         bottomBar = {
             // Hidden on detail, which is a pushed screen rather than a tab.
             if (route in TAB_ROUTES) {
@@ -180,7 +199,9 @@ fun ToteNavHost(
                 PeopleScreen(onOpenPerson = { nav.navigate(Routes.personDetail(it)) })
             }
             composable(Routes.CAPTURE) { CaptureScreen() }
-            composable(Routes.REVIEW) { ReviewScreen() }
+            composable(Routes.REVIEW) {
+                ReviewScreen(onPhotographSomething = { nav.tabTo(Routes.CAPTURE) })
+            }
             composable(
                 Routes.TOTE_DETAIL,
                 arguments = listOf(navArgument("toteId") { type = NavType.StringType }),

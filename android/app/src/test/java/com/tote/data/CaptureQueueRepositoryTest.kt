@@ -109,7 +109,9 @@ class CaptureQueueRepositoryTest {
         assertTrue(repository.drain())
         assertEquals(1, dao.rows.value.size)
         assertEquals(CaptureQueueEntity.STATE_FAILED, dao.rows.value.single().state)
-        assertEquals("HTTP 422", dao.rows.value.single().lastError)
+        // The stored message is now the server's own sentence when it gave one, or this
+        // honest fallback when the body was unreadable (as this mock's empty body is).
+        assertEquals("The server rejected it (HTTP 422)", dao.rows.value.single().lastError)
     }
 
     @Test

@@ -24,12 +24,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.AddAPhoto
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -81,6 +83,7 @@ fun CaptureScreen(
     val queue by viewModel.queue.collectAsStateWithLifecycle()
     val totes by viewModel.totes.collectAsStateWithLifecycle()
     val destination by viewModel.destination.collectAsStateWithLifecycle()
+    var confirmingDiscard by remember { mutableStateOf<String?>(null) }
 
     val cameraLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicture()
@@ -117,8 +120,34 @@ fun CaptureScreen(
         onChooseDestination = viewModel::chooseDestination,
         onQueue = viewModel::queueItem,
         onRetry = viewModel::retry,
-        onDiscard = viewModel::discard,
+        onDiscard = { confirmingDiscard = it },
     )
+    confirmingDiscard?.let { id ->
+        // The other photo-destroying action. These files exist nowhere else — the capture
+        // pipeline's own reason for being — and Discard sat one tap deep with no question
+        // while deleting a re-photographable FILED item asked twice.
+        AlertDialog(
+            onDismissRequest = { confirmingDiscard = null },
+            title = { Text("Discard this capture?") },
+            text = {
+                Text(
+                    "Its photos are deleted with it — they exist nowhere else. There is no undo.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.discard(id)
+                        confirmingDiscard = null
+                    },
+                ) { Text("Discard", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingDiscard = null }) { Text("Keep it") }
+            },
+        )
+    }
 }
 
 data class CaptureUiState(
@@ -412,7 +441,10 @@ private fun QueueRow(
                             // other row's and getting it wrong catalogues the same object twice.
                             uncertain -> "Timed out — it may already be in Review. Check there " +
                                 "before retrying."
-                            failed -> "Rejected by the server (${entry.lastError ?: "error"})"
+                            // The stored message is now the server's own sentence and
+                            // stands alone — wrapping it in "(HTTP …)" style parens made a
+                            // diagnosis read like a code.
+                            failed -> entry.lastError ?: "Rejected by the server"
                             entry.state == CaptureQueueEntity.STATE_UPLOADING -> "Uploading…"
                             else -> "Waiting for a connection"
                         },

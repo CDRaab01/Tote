@@ -20,12 +20,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -84,8 +86,10 @@ private fun conditionLabel(value: String) = when (value) {
  */
 @Composable
 fun ReviewScreen(
+    onPhotographSomething: () -> Unit = {},
     viewModel: ReviewViewModel = hiltViewModel(),
 ) {
+    var confirmingDiscard by remember { mutableStateOf(false) }
     val state by viewModel.state.collectAsStateWithLifecycle()
 
     // Re-read on every resume, not just on first composition. This ViewModel survives a tab
@@ -106,11 +110,40 @@ fun ReviewScreen(
         onEdit = viewModel::edit,
         onEditApparel = viewModel::editApparel,
         onConfirm = { viewModel.confirm() },
-        onDiscard = viewModel::discard,
+        onDiscard = { confirmingDiscard = true },
         onSkip = viewModel::skip,
+        onPhotographSomething = onPhotographSomething,
         onBack = viewModel::back,
         onRetry = viewModel::refresh,
     )
+
+    if (confirmingDiscard) {
+        // Two steps, because this is one of the two photo-destroying actions in the app — and it
+        // sat one mis-tap from Skip in a row of equal-weight buttons. The recoverable delete of
+        // a FILED item already had a confirm; the unrecoverable one did not.
+        AlertDialog(
+            onDismissRequest = { confirmingDiscard = false },
+            title = { Text("Discard this draft?") },
+            text = {
+                Text(
+                    "This deletes the photographs too — they exist nowhere else once the queue " +
+                        "has uploaded them. There is no undo.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.discard()
+                        confirmingDiscard = false
+                    },
+                ) { Text("Discard", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingDiscard = false }) { Text("Keep it") }
+            },
+        )
+    }
 }
 
 /** Stateless body — renderable in a screenshot test without Hilt or a network. */
@@ -124,6 +157,7 @@ fun ReviewContent(
     onSkip: () -> Unit,
     onBack: () -> Unit,
     onRetry: () -> Unit,
+    onPhotographSomething: () -> Unit = {},
     modifier: Modifier = Modifier,
     photoUrlFor: (String, Int) -> String = { id, order -> PhotoUrls.item(id, order) },
 ) {
@@ -177,12 +211,22 @@ fun ReviewContent(
                 }
             } else if (draft == null && !state.loading) {
                 item {
-                    EmptyState(
-                        icon = Icons.Outlined.CheckCircle,
-                        title = "Nothing waiting",
-                        subtitle = "Drafts land here once a capture has uploaded and been " +
-                            "identified. Photograph something on the Catalogue tab.",
-                    )
+                    Column {
+                        EmptyState(
+                            icon = Icons.Outlined.CheckCircle,
+                            title = "Nothing waiting",
+                            subtitle = "Drafts land here once a capture has uploaded and been " +
+                                "identified.",
+                        )
+                        Spacer(Modifier.height(spacing.md))
+                        // A button, not prose naming a tab. The empty review stack is the
+                        // natural end of one batch and the natural start of the next.
+                        ToteButton(
+                            text = "Photograph something",
+                            onClick = onPhotographSomething,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             } else if (draft != null) {
                 // ── The photographs ──────────────────────────────────────────
@@ -412,7 +456,8 @@ fun ReviewContent(
                             text = "Skip",
                             onClick = onSkip,
                             tonal = true,
-                            enabled = state.index < state.drafts.lastIndex && !state.saving,
+                            // Wraps past the end (see ReviewViewModel.skip), so only a single-draft stack pins you.
+                            enabled = state.drafts.size > 1 && !state.saving,
                             modifier = Modifier.weight(1f),
                         )
                         // The error voice, not the accent. This deletes the photographs, which

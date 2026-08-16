@@ -800,6 +800,42 @@ an `AlertDialog` renders in its own window and a Robolectric screenshot of one *
 idle** — it times out after 60 s of composition attempts. The list is the part whose layout is
 worth verifying, so it is the part that can be rendered alone.
 
+## The outcome of a write is said out loud
+
+`FeedbackBus` (`util/Feedback.kt`) is the app's one voice for what a write did: a process-wide
+`SharedFlow` that ViewModels emit into and the single `ToteNav` Scaffold renders as a snackbar.
+Process-wide rather than per-screen because the writes that most need a voice finish after their
+screen is gone — a queued upload failing, a confirm landing as the review stack advances.
+
+**The rule: only user-initiated writes speak.** A passive refresh that fails stays silent; the
+screens carry their own offline states, and a snackbar per failed poll would turn a bad Wi-Fi
+day into a notification stream that teaches dismissal. One message at a time, newest wins.
+
+What closed with it, all found in real use:
+
+- **Filing said nothing.** File-it's only visible effect was the form being replaced by the next
+  draft — and because `ReviewViewModel` bypasses `CatalogRepository` for reads, a confirm never
+  refreshed the Room snapshot either, so the tote list and Find tiles kept stale counts until
+  some other write happened. Confirm now announces "Filed X into A14" (the bin CODE — what is
+  written on the physical box) and refreshes the catalog.
+- **Every write on the bin screen swallowed failure** (`runCatching{}.onSuccess` with no
+  onFailure): offline in the attic — the documented normal condition — the buttons simply
+  looked broken. Each now speaks its failure through the bus via `ApiErrors`.
+- **Queue rows stored "HTTP 422"** while the server's own sentence — "At most 8 photos per
+  item" — was discarded, and a 401 from an expired session read exactly like a validation
+  failure. `ApiErrors.detail()` parses FastAPI's `{"detail": …}` (string or Pydantic list) and
+  the queue stores that; 401 is named as a session problem.
+
+Confirmation moved to where the stakes are. Both photo-destroying discards (a queue row, a
+review draft) were one tap with no question, while deleting a re-photographable FILED item asked
+twice — protection on exactly the wrong action. Both discards now confirm; the wording names the
+photographs. And Skip **wraps** past the last draft: the end of the stack used to be a trap whose
+only enabled exits were File it (demands a bin) and Discard (deletes the photos), so "I don't
+know where this goes yet" had no answer. The empty review stack ends with a "Photograph
+something" button — the natural start of the next batch, not prose naming a tab. Mixed bins
+show both Unpack all and Repack all; the old either/or hid Repack whenever anything was still
+inside, which is the normal January state of a Christmas bin.
+
 ## An empty screen must say WHY it is empty
 
 Three times in this app a screen has confidently reported nothing when the truth was "I could not

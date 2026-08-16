@@ -10,6 +10,7 @@ import com.tote.data.CaptureQueueRepository
 import com.tote.data.local.CachedTote
 import com.tote.data.local.CatalogDao
 import com.tote.data.local.CaptureQueueEntity
+import com.tote.util.FeedbackBus
 import com.tote.work.UploadWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.File
@@ -28,6 +29,7 @@ const val MAX_PHOTOS_PER_ITEM = 8
 class CaptureViewModel @Inject constructor(
     private val app: Application,
     private val repository: CaptureQueueRepository,
+    private val feedback: FeedbackBus,
     catalogDao: CatalogDao,
 ) : ViewModel() {
 
@@ -115,6 +117,14 @@ class CaptureViewModel @Inject constructor(
             }
             repository.enqueue(moved, toteId = tote?.id, toteCode = tote?.code)
             UploadWorker.kick(WorkManager.getInstance(app))
+            // Say it landed. The only signal used to be the thumbnail strip vanishing and a
+            // counter incrementing further down the scroll — likely off-screen mid-batch, on
+            // the one screen used with a bin open and hands full.
+            val photos = "${moved.size} photo${if (moved.size == 1) "" else "s"}"
+            feedback.say(
+                if (tote != null) "Queued — $photos for ${tote.code}"
+                else "Queued — $photos, bin decided at review"
+            )
         }
     }
 
