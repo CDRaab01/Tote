@@ -12,9 +12,14 @@ import datetime
 
 import pytest
 
+from app.services.catalog import local_today
 from app.services.ntfy import overdue_message
 
-TODAY = datetime.date.today()
+# The HOUSEHOLD's today, not the process's. The server compares `expected_back` against
+# `local_today()` because the container runs UTC and the house does not — so a test using
+# `date.today()` would disagree with the code under test for several hours a day, which is
+# precisely the flake that would show up once and never reproduce.
+TODAY = local_today()
 
 
 async def _person(client, name="Emma", **kw):
