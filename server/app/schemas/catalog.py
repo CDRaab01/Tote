@@ -273,6 +273,10 @@ class ItemOut(BaseModel):
     # Computed server-side (clients display, never compute) so "overdue" means the same thing
     # everywhere, including in a notification composed without a UI.
     is_overdue: bool = False
+    # How many photographs this item has. Zero is normal and common: an item added by hand has
+    # none, and the client uses this to decide whether to draw a thumbnail at all rather than
+    # firing a request per row and rendering whatever a 404 looks like.
+    photo_count: int = 0
     # Present only for clothing. Absent is normal — most items in a house are not garments.
     apparel: ApparelOut | None = None
     # Who has it, for a loaned item. Resolved from the LEDGER (the newest `loaned` movement),

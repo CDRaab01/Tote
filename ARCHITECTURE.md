@@ -714,6 +714,49 @@ copies its DDL verbatim from the committed `schemas/…/2.json` rather than rest
 the on-device test compares column for column, and a hand-typed nullability difference is exactly
 what reads as correct and fails there.
 
+## Items are shown, not just listed
+
+A catalog of physical objects is recognised by sight long before it is read. Someone scrolling a
+bin's contents is matching pictures against a memory of the thing, so every list that shows items
+— tote contents, search results, what fits, what someone has on loan — carries the photograph.
+
+Two rows both reading "Toddler Bed Comforter" are indistinguishable as text and obviously
+different as pictures, which is precisely the moment someone notices they filed one twice. That
+is not a hypothetical: it is what the owner's first real bin looked like.
+
+`ItemThumbnail` is driven by **`ItemOut.photo_count`**, a correlated subquery on `item_query` so
+every read path gets it without an N+1. The client must not discover "no photo" by requesting one
+and seeing what comes back — an item added by hand has none, and a 404 per row over the attic's
+Wi-Fi is the wrong way to learn that. Items without a photograph get a placeholder frame rather
+than a collapsed row, so the list does not jump as images resolve.
+
+**The row could not hold everything.** With a thumbnail, a name, "Lend" and "Take out", the name
+truncated to "Toddler Be…" — a row that has failed at its only job. So the row carries the
+thumbnail, a two-line name and the *everyday* action; lending and deleting moved into the item
+sheet behind a tap.
+
+## Deleting an item
+
+The catalog gets things wrong in one way that editing cannot fix: a row that should never have
+existed. A duplicate, a typo, a photograph of the wrong thing. Without a delete the only remedy is
+to live with a bin that claims two comforters when it holds one — and a bin that lies once stops
+being believed, which is the whole asset this app has.
+
+`DELETE /items/{id}` is a hard delete and takes the ledger with it. It is **not** the same
+operation as disposal: "we no longer own this" is a `disposed` movement and keeps its history.
+The confirmation says so, because the two are easy to confuse and only one is recoverable.
+
+**It also deletes the photographs from disk**, which it did not until 2026-08-16. The rows
+cascade; the files did not, so every deleted item left its photos on the volume forever —
+invisible, listed by nothing, and archived faithfully by every nightly backup. In an app where
+the photos ARE the artefact and the rows are paths pointing at them, that is the leak that
+matters. The call happens *after* the commit, so a failed delete can never destroy the one thing
+that cannot be recreated.
+
+The affordance lives one tap deep, in the app's error voice, behind its own confirmation — never
+beside "Take out" on the row. A destructive action next to an everyday one is a mis-tap away from
+taking a photograph that cannot be retaken once the bin is taped shut.
+
 ## An empty screen must say WHY it is empty
 
 Three times in this app a screen has confidently reported nothing when the truth was "I could not

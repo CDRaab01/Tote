@@ -13,7 +13,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.item import Item, ItemApparel
+from app.models.item import Item, ItemApparel, ItemPhoto
 from app.models.location import Location
 from app.models.movement import Movement
 from app.models.person import Person
@@ -37,6 +37,23 @@ def local_today() -> datetime.date:
     return datetime.datetime.now(tz).date()
 
 
+def _photo_count():
+    """How many photos an item has, as a correlated scalar subquery.
+
+    A subquery rather than a second round trip because every read path that shows items shows
+    lists of them — a per-row query would be an N+1 on the screen someone opens while standing in
+    front of an open bin. The client needs the number (not the rows) only to decide whether to
+    draw a thumbnail and whether to say "3 photos".
+    """
+    return (
+        select(func.count(ItemPhoto.id))
+        .where(ItemPhoto.item_id == Item.id)
+        .correlate(Item)
+        .scalar_subquery()
+        .label("photo_count")
+    )
+
+
 def item_query(user_id: uuid.UUID) -> Select:
     """Items with their tote code and location name attached.
 
@@ -45,7 +62,7 @@ def item_query(user_id: uuid.UUID) -> Select:
     would silently hide exactly the items a user is most likely to be hunting for.
     """
     return (
-        select(Item, Tote.code, Location.name)
+        select(Item, Tote.code, Location.name, _photo_count())
         .outerjoin(Tote, Item.current_tote_id == Tote.id)
         .outerjoin(Location, Tote.location_id == Location.id)
         .where(Item.user_id == user_id)
@@ -80,7 +97,12 @@ def apply_size_filter(query: Select, raw: str, tolerance: float = 1.0) -> Select
     )
 
 
-def to_item_out(item: Item, tote_code: str | None, location_name: str | None) -> ItemOut:
+def to_item_out(
+    item: Item,
+    tote_code: str | None,
+    location_name: str | None,
+    photo_count: int = 0,
+) -> ItemOut:
     out = ItemOut.model_validate(item)
     # Only present for clothing, and only when the relationship was actually loaded. Reading it
     # off an unloaded lazy attribute inside an async request would raise MissingGreenlet, so
@@ -90,6 +112,7 @@ def to_item_out(item: Item, tote_code: str | None, location_name: str | None) ->
     out.apparel = ApparelOut.model_validate(item.apparel) if item.apparel is not None else None
     out.tote_code = tote_code
     out.location_name = location_name
+    out.photo_count = photo_count
     # Overdue is computed here, once, so a notification and a screen cannot disagree about it.
     out.is_overdue = bool(
         item.expected_back
@@ -101,7 +124,7 @@ def to_item_out(item: Item, tote_code: str | None, location_name: str | None) ->
 
 async def items_for(db: AsyncSession, query: Select) -> list[ItemOut]:
     rows = (await db.execute(query)).all()
-    out = [to_item_out(item, code, loc) for item, code, loc in rows]
+    out = [to_item_out(item, code, loc, photos) for item, code, loc, photos in rows]
     await attach_borrowers(db, out)
     return out
 

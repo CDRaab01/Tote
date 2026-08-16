@@ -29,6 +29,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.data.remote.ItemDto
 import com.tote.ui.components.HazardRule
+import com.tote.ui.components.ItemThumbnail
 import com.tote.ui.theme.ToteTheme
 import design.pulse.ui.components.Caption
 import design.pulse.ui.components.EmptyState
@@ -195,6 +196,9 @@ private fun SearchHitRow(item: ItemDto, onClick: () -> Unit) {
 
     PanelCard(onClick = onClick, channel = if (item.isOverdue) colors.attention.base else null) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            // A search result is being matched against a memory of the object, not read.
+            ItemThumbnail(item)
+            Spacer(Modifier.width(spacing.md))
             Column(Modifier.weight(1f)) {
                 Text(
                     if (item.quantity > 1) "${item.name} ×${item.quantity}" else item.name,

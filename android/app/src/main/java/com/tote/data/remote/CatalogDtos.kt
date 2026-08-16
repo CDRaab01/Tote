@@ -74,6 +74,10 @@ data class ItemDto(
     // movement), because the item row knows only that it is out — which is the whole reason
     // "who has the drill" needs the ledger to be answerable at all.
     @SerialName("loaned_to") val loanedTo: String? = null,
+    // How many photographs this item has. Zero is normal — anything added by hand has none.
+    // The client uses it to decide whether to draw a thumbnail at all, rather than firing a
+    // request per row and rendering whatever a 404 looks like.
+    @SerialName("photo_count") val photoCount: Int = 0,
     // Present only for clothing. Absent is normal — most things in a house are not garments.
     val apparel: ApparelDto? = null,
 )

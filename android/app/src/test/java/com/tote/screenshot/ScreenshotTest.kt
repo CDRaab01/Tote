@@ -515,6 +515,26 @@ class ScreenshotTest {
         ToteListContent(totes = emptyList(), onOpenTote = {}, onNewTote = {}, unreachable = true)
     }
 
+
+    /**
+     * The bin the owner actually has: one comforter photographed, one added by hand — identical
+     * as text, obviously different as pictures. This baseline is the reason the thumbnail exists.
+     */
+    @Test fun tote_detail_photos_dark() = capture("tote_detail_photos_dark", dark = true) {
+        ToteDetailContent(
+            tote = ToteDetailDto(
+                id = "t9",
+                code = "D1",
+                label = "Blankets",
+                items = listOf(
+                    ItemDto(id = "i1", name = "Toddler Bed Comforter", status = "stored", photoCount = 1),
+                    ItemDto(id = "i2", name = "Toddler Bed Comforter", status = "stored"),
+                ),
+            ),
+            onAddItem = {}, onUnpackAll = {}, onRepackAll = {}, onTakeOut = {}, onPutBack = {},
+        )
+    }
+
     // LoginContent is the stateless body precisely so it can be captured here: the stateful
     // LoginScreen needs Hilt and a real AppAuth service, neither of which exists in a JVM test.
     @Test fun login_light() =

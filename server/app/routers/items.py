@@ -13,6 +13,7 @@ from app.models.item import Item, ItemApparel
 from app.models.movement import Movement
 from app.schemas.catalog import ItemIn, ItemOut, ItemPatch, MoveIn, MovementOut, SearchHit
 from app.security import CurrentUser
+from app.services import photo_store
 from app.services.apparel_write import apply_apparel
 from app.services.catalog import apply_size_filter, item_query, items_for, to_item_out
 from app.services.movement import record_move
@@ -140,6 +141,11 @@ async def delete_item(item_id: uuid.UUID, user: CurrentUser, db: Db):
     item = await _owned_item(db, user.id, item_id)
     await db.delete(item)
     await db.commit()
+    # The rows cascade; the FILES do not. Until this call existed, deleting an item left its
+    # photographs on the volume forever — invisible, un-listed, and counted by nothing except
+    # the backup that dutifully archived them every night. Done after the commit so a failed
+    # delete never destroys the one artefact that cannot be recreated.
+    photo_store.delete_item_photos(item_id)
 
 
 @router.post("/items/{item_id}/move", response_model=MovementOut)
@@ -206,5 +212,6 @@ async def search(
         )
     ).all()
     return [
-        SearchHit(item=to_item_out(item, code, loc), rank=float(r)) for item, code, loc, r in rows
+        SearchHit(item=to_item_out(item, code, loc, photos), rank=float(r))
+        for item, code, loc, photos, r in rows
     ]
