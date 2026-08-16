@@ -518,7 +518,11 @@ apparel vocabulary instead of inventing a parallel one.
    mode is quiet: `release.yml` falls back to the committed debug key and ships an APK that
    cannot install over an existing one. The `Assert signing identity` step is what catches it.
    `TOTE_SERVER_URL` remains optional (overrides the URL compiled into the APK).
-4. **Tailscale Serve `:8448`** — after re-checking `tailscale serve status`. **Not done yet.**
+4. ~~**Tailscale Serve `:8448`**~~ — **DONE 2026-08-15**, live at
+   `https://dragonfly.tail2ce561.ts.net:8448`. Verified additive by diffing the entire
+   `tailscale serve status` output before and after: only the `:8448` row appeared and all
+   eleven pre-existing mappings survived. Do the same on any future Serve change — `--https=<port>`
+   silently overwrites, and Remnant grabbing `:8443` took Home Assistant down for about an hour.
 5. **dragonfly-id + Dragonfly sibling PRs** merged (OIDC client, smoke client, AppRegistry).
 6. **ntfy topic** `tote-alerts`.
 7. **On-device pass** — camera flow, AppAuth redirect, and specifically **NFC read/write on
