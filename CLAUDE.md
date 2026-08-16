@@ -515,11 +515,14 @@ the derived index, which the server owns.
 ordinal; an unreadable tag lands with a null ordinal and no invented size; the ladder's
 table-driven tests cover every system including 6X.*
 
-**Phase 6 — People, fits, and lending.** `people` + `person_sizes`, the `fits()` query,
-outgrown-run flow, lend/return with `expected_back`, Home attention card for overdue items,
-ntfy wiring (literals in compose `environment:`, topic `tote-alerts`, pointed at the
-self-hosted ntfy on `host.docker.internal:8095` — **never ntfy.sh**, whose topics are
-effectively public URLs).
+**Phase 6 — People, fits, and lending.** 🔶 **SERVER DONE 2026-08-16 (#13); ANDROID UI NOT
+STARTED.** `/people` CRUD + size history, `GET /people/{id}/fits`, `/people/{id}/on-loan`,
+`/people/{id}/outgrown`, `GET /overdue`, `POST /overdue/nudge`, `loaned_to` on every item, and
+ntfy pinned as compose literals. Three things to know: **`fits` distinguishes "nothing matches"
+from "cannot say"** (`answered:false` + a `reason`) and a client MUST NOT render them the same;
+`loaned_to` comes from the newest `loaned` movement in ONE query per page, because the item row
+never knows who has it; and **due today is not overdue**, or the nudge becomes noise.
+**Still to do:** the Android people/fits/lending UI and the Home attention card.
 *Exit: "what fits Emma" returns items with their totes; a lent item nags on time.*
 
 **Phase 7 — Backups + deploy hardening.** ✅ **DONE 2026-08-16** (#10). `deploy/backup.ps1`

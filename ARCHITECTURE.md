@@ -47,7 +47,7 @@ Tote/
 │  │  ├─ apparel/               controlled vocabularies + normalizers (from Crate)
 │  │  ├─ sizing/                the size ladder — pure, no I/O
 │  │  ├─ models/                the eleven tables of §4
-│  │  ├─ routers/               suite_auth, users, catalog, totes, items, public, scan
+│  │  ├─ routers/               suite_auth, users, catalog, totes, items, public, scan, people
 │  │  ├─ schemas/               request/response models
 │  │  └─ services/
 │  │     ├─ suite_auth.py       JWKS validation + find-or-create
@@ -59,6 +59,8 @@ Tote/
 │  │     ├─ scan_pipeline.py    photo → draft (+ the label pass)
 │  │     ├─ apparel_draft.py    a label reading → an item_apparel row
 │  │     ├─ apparel_write.py    THE single writer of item_apparel
+│  │     ├─ fits.py             "what fits Emma right now"
+│  │     ├─ ntfy.py             self-hosted push; fail-soft, never ntfy.sh
 │  │     ├─ sizing_hints.py     should this item get a label pass at all
 │  │     └─ ai/                 vision transport, prompt, salvage parser
 │  ├─ alembic/versions/0001_    the whole schema
@@ -913,6 +915,80 @@ tag read "4" under a girls department — the point of having an index at all. T
 - **An unparseable filter falls back to matching `size_raw` textually.** Someone typing "M/L"
   means it literally, and an empty result would read as "you own none of these" when the truth is
   "we could not index that".
+
+## People, fits, and lending
+
+Household members and lendees deliberately share one table. Both answer "where did this go and
+whose is it", and splitting them would mean deciding, at the moment you lend a nephew a coat,
+whether he is family — which is not a question a storage app should ask.
+
+### A person's size is a history, not a value
+
+`person_sizes` **appends**; nothing is overwritten. A child's size is a moving target, and last
+winter's answer is exactly what tells you which bin to open this winter. `current_sizes` takes the
+newest row per garment type with `effective_from` **on or before today** — recording "she will be
+in a 5T in September" must not change what fits her in June.
+
+A person's size goes through the same `parse_size` as a garment tag, so both land on one ladder
+placed by one implementation. An unparseable reading is stored with a null index and still counts
+as a record of what was said.
+
+### `fits` distinguishes "nothing matches" from "cannot say"
+
+This is the endpoint's whole shape. `answered: false` with a `reason` means the question could not
+be asked:
+
+| `reason` | What it means | What fixes it |
+|---|---|---|
+| `no_sizes_recorded` | nobody has said what size this person is | add a size |
+| `no_indexed_size` | a size was recorded but could not be placed on the ladder | re-read the tag |
+
+A client that rendered either as an empty list would tell someone *"you own nothing that fits"*
+when the truth is *"nobody recorded her size"* — and only one of those is a reason to stop
+looking. It is also an INNER join on apparel, so an item with no size is absent rather than swept
+in by a null; and shoe sizes are never matched against sweaters, which a shared ordinal axis makes
+syntactically possible.
+
+### "Who has the drill" comes from the ledger
+
+The item row knows only that it is *out*. Only the movement knows *to whom* — which is the whole
+reason lending needs the ledger. `loaned_to` is resolved from the newest `loaned` movement in
+**one query per page** (`attach_borrowers`), not one per row: it appears on every list, and a
+per-item lookup would make that join quietly quadratic on the screen people use most.
+
+Deleting a person nulls `person_id` on their movements and keeps the rows. A loan that happened
+still happened; erasing it to tidy a contact list would put a hole in the one record this app
+promises never to have holes in.
+
+### The outgrown run is one transaction
+
+`POST /people/{id}/outgrown` writes two movements per item — `outgrown` out of the wearing pile,
+then `moved` into the bin — so a run never rests in the contradictory state of being outgrown and
+nowhere. All-or-nothing: a half-applied run would leave the catalog claiming some of a size is in
+the attic and the rest is still being worn.
+
+The reason is `outgrown`, not `moved`, and that distinction is the point. Six months on, "we
+packed these away" and "she grew out of these" are a bin to re-open and a bin to pass on.
+
+### The nudge
+
+`POST /overdue/nudge` is an **endpoint, not a timer**. Scheduling on this host belongs to
+`C:\Scripts` + Task Scheduler — the same division of labour as the backups — so the service stays
+stateless and the nudge can also be fired by hand.
+
+It reports *why* it sent nothing, because "nothing was overdue", "ntfy is not configured" and
+"ntfy is down" are three different facts and a channel that is quietly broken looks exactly like
+one with nothing to say.
+
+**Never ntfy.sh.** `services/ntfy.py` refuses that host rather than trusting configuration: its
+topics are effectively public URLs, and these messages name what you own and who has it — the same
+reasoning that keeps the whole service tailnet-only. Config is compose `environment:` **literals**
+pointing at `host.docker.internal:8095`; an interpolated `${NTFY_TOPIC:-}` is exactly the shape
+that left Crate's notifications silently empty for weeks.
+
+**Due today is not overdue.** Reporting a loan as late from the moment its date arrives is how a
+nudge becomes noise, so the comparison is strictly `expected_back < local_today()` — in the
+household's timezone, since the container runs UTC and the house does not.
 
 ## Not yet built
 
