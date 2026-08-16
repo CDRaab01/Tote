@@ -15,6 +15,13 @@ val localProperties = Properties().apply {
 
 val keystorePath: String? = System.getenv("KEYSTORE_PATH")
 
+// Room writes one JSON per schema version here, and they are COMMITTED. They are the record of
+// what each shipped version looked like; the migration test validates against them, so without
+// them there is nothing to test a migration against.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 android {
     namespace = "com.tote"
     compileSdk = 37
@@ -88,9 +95,31 @@ android {
         unitTests.isReturnDefaultValues = true
         unitTests.isIncludeAndroidResources = true
     }
+
+    // The exported schemas, as assets — MigrationTestHelper loads them from there and nowhere
+    // else (its `file` parameter is the database file, not the schema directory).
+    //
+    // Scoped to DEBUG rather than main: Robolectric runs against the debug variant, so the
+    // migration test can read them, while the release APK carries none of it. A schema JSON is a
+    // build-time record and has no business shipping to a phone.
+    sourceSets.getByName("debug") {
+        assets.srcDir("$projectDir/schemas")
+    }
+
+    // Same, for the on-device migration test (ToteDatabaseMigrationAndroidTest), which is the
+    // only place Room's MigrationTestHelper can do column-level validation.
+    sourceSets.getByName("androidTest") {
+        assets.srcDir("$projectDir/schemas")
+    }
+
+
 }
 
 tasks.withType<Test>().configureEach {
+    // Where ToteDatabaseMigrationTest lists the exported versions from. It reads the source
+    // tree directly for the listing; MigrationTestHelper itself loads them from assets (below).
+    systemProperty("tote.schemaDir", "$projectDir/schemas")
+
     listOf(
         "roborazzi.test.record",
         "roborazzi.test.verify",
@@ -152,6 +181,7 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(kotlin("test"))
 
+    testImplementation(libs.room.testing)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
@@ -159,6 +189,7 @@ dependencies {
     testImplementation(libs.roborazzi.compose)
     testImplementation(libs.roborazzi.rule)
 
+    androidTestImplementation(libs.room.testing)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     debugImplementation(libs.androidx.ui.tooling)
