@@ -124,7 +124,33 @@ Ruff is pinned to the **same version** in CI and in `pyproject.toml`'s dev extra
 0.4.4 while its pyproject asks for 0.16.2, so a rule added between those versions passes in one
 place and fails in the other.
 
+## Release and deploy
+
+`release.yml` cuts a signed APK on any `main` push touching `android/**`. `versionCode` is
+**epoch minutes** (suite invariant 2 — `github.run_number` was rejected because renaming a
+workflow resets it to 1, which Android reads as a downgrade). The `Assert signing identity` step
+pins the suite signer to `5a596c9e…` and fails the release on any mismatch, so a missing
+`KEYSTORE_*` secret can never silently publish an APK signed with the committed debug key —
+which would be uninstallable over existing installs.
+
+`deploy.yml` fires on `workflow_run` after CI goes green on a **push** to `main` (the weekly
+scheduled CI run is excluded — a bit-rot check must never ship) and runs `deploy/redeploy.ps1` on
+the self-hosted runner. `workflow_dispatch` with a prior SHA in `ref` is the rollback lever.
+
+Two checks guard the deploy, and both exist because of specific past failures:
+
+- **Identity**: `/health` returns a byte-identical `{"status":"ok"}` in every suite app, so
+  polling it alone cannot distinguish Tote from whichever neighbour owns the port. Crate's first
+  deploy pointed at a port Magpie held, got an instant "ok", and reported green while Crate was
+  still booting. `redeploy.ps1` therefore also requires `/version` to report `"Tote API"`.
+- **Freshness**: the post-deploy step asserts the served `/version.commit` equals the commit just
+  deployed, which is what catches a container that silently failed to rebuild.
+
+`TOTE_DIR` is `C:\Code\Tote` — the deploy directory *is* the dev checkout, as for all eight apps.
+Every green deploy `git reset --hard`s it, so work happens in a worktree, never there.
+
 ## Not yet built
 
-`release.yml` (needs the `KEYSTORE_*` secrets) and `deploy.yml` + `deploy/` (need the `TOTE_DIR`
-variable and a `server/.env` on the host). Everything else follows the phase plan in CLAUDE.md.
+Backups (Phase 7, once there are photos to lose), the SSO-aware `synthetic_smoke.py` (Phase 1),
+and the sibling registrations in Dragonfly and dragonfly-id. Everything else follows the phase
+plan in CLAUDE.md.

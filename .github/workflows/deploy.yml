@@ -1,0 +1,178 @@
+name: Deploy
+
+# Redeploys the self-hosted Tote server (Windows + Docker Desktop) on a self-hosted GitHub
+# Actions runner. The runner long-polls GitHub *outbound*, so there are no inbound ports to open
+# on the home network. Tote itself is tailnet-only (Tailscale Serve :8448) - no cloudflared, no
+# public hostname.
+#
+# Auto-deploy fires only after the CI workflow goes green on `main` (workflow_run), so a broken
+# commit never ships. workflow_dispatch is a manual button that doubles as a rollback lever
+# (pass a previous SHA in `ref`).
+#
+# Setup notes live in deploy/README.md.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit SHA or branch to deploy (default: origin/main). Use a prior SHA to roll back."
+        required: false
+        default: "origin/main"
+      bootstrap_host:
+        description: "One-time host setup: create the deployment clone and a minimal server/.env if they don't exist yet."
+        required: false
+        type: boolean
+        default: false
+
+# Never let two deploys run at once; queue the second instead of colliding.
+concurrency:
+  group: tote-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Redeploy server
+    # The `tote` label is assigned when the runner is registered on the host.
+    runs-on: [self-hosted, tote]
+    # Manual runs always proceed; automatic runs require a successful CI run on main that was
+    # triggered by a push (NOT the weekly `schedule:` bit-rot run - that must never ship a
+    # deploy).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.event == 'push')
+    steps:
+      # No actions/checkout: we deploy the canonical clone on the host (vars.TOTE_DIR), not the
+      # runner's ephemeral _work directory. That clone owns the .env file and the pgdata volume.
+      #
+      # shell: powershell is the built-in Windows PowerShell (5.1) - no PowerShell 7 (pwsh)
+      # install required on the host, which matters: Crate's backup script shipped a
+      # `Set-Content -AsByteStream` (7+ only) that threw on every run and left empty backup
+      # directories that looked like real ones. GitHub context is passed via env (not ${{ }}
+      # interpolated into code) so values can't break out of the script.
+      #
+      # Bootstrap is opt-in, one-time, and strictly additive: it creates the deployment clone and
+      # a minimal server/.env only when they are ABSENT. It never overwrites an existing .env -
+      # that file holds real secrets and clobbering it would be unrecoverable (a blind
+      # read-then-write once truncated Spotter's .env to 0 bytes and crash-looped prod).
+      - name: Bootstrap host (one-time)
+        if: inputs.bootstrap_host
+        shell: powershell
+        env:
+          TOTE_DIR: ${{ vars.TOTE_DIR }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dir = $env:TOTE_DIR
+          if ([string]::IsNullOrWhiteSpace($dir)) {
+            throw "TOTE_DIR Actions variable is not set. See deploy/README.md."
+          }
+
+          if (Test-Path (Join-Path $dir ".git")) {
+            Write-Host "Deployment clone already present at $dir - leaving it as is."
+          } else {
+            $parent = Split-Path -Parent $dir
+            if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+            Write-Host "Cloning CDRaab01/Tote into $dir ..."
+            & git clone https://github.com/CDRaab01/Tote.git $dir
+            if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
+          }
+
+          # DATABASE_URL and the SSO pins come from docker-compose.yml's `environment:` block, so
+          # SECRET_KEY is the only value the app actually needs to boot.
+          $envPath = Join-Path $dir "server\.env"
+          if (Test-Path $envPath) {
+            Write-Host "server/.env already exists - leaving it untouched."
+          } else {
+            $bytes = New-Object byte[] 32
+            [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+            $key = -join ($bytes | ForEach-Object { $_.ToString('x2') })
+            # Written with LF endings: CRLF leaves a stray \r inside every parsed value.
+            [System.IO.File]::WriteAllText($envPath, "SECRET_KEY=$key`n")
+            Write-Host "Wrote a minimal server/.env with a freshly generated SECRET_KEY (value not logged)."
+          }
+
+          # Port claims are a "verify these are still free" assumption, and Crate's first deploy
+          # found its original 8005/5436 pick already held by Magpie. Print the neighbours' port
+          # map so a collision names the owner instead of surfacing as a bare "port is already
+          # allocated" from deep inside compose. `docker ps` rather than netstat: Docker Desktop's
+          # proxy does not show these binds as LISTENING, so netstat reports them free.
+          Write-Host "--- containers publishing ports (Tote wants 8008 API / 5439 Postgres) ---"
+          & docker ps --format "{{.Names}}  {{.Ports}}"
+
+      # Sync the clone to the target ref BEFORE invoking redeploy.ps1. PowerShell parses the
+      # whole script at invocation, so a run that lets redeploy.ps1 update itself mid-flight is
+      # really executing the PREVIOUS commit's script - every change to it would land one deploy
+      # late. Worse, a redeploy.ps1 that fails to parse could never repair itself: it would die
+      # before reaching its own `git reset`, leaving the clone pinned to the broken version.
+      # Syncing first makes the script that runs always be the script being deployed.
+      # redeploy.ps1 still fetches/resets itself (idempotent) so a human can run it standalone.
+      - name: Sync deployment clone
+        shell: powershell
+        env:
+          TOTE_DIR: ${{ vars.TOTE_DIR }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_REF: ${{ inputs.ref }}
+          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:TOTE_DIR)) {
+            throw "TOTE_DIR Actions variable is not set. See deploy/README.md."
+          }
+          if (-not (Test-Path (Join-Path $env:TOTE_DIR ".git"))) {
+            throw "No deployment clone at '$env:TOTE_DIR'. Re-run this workflow with bootstrap_host enabled, or see deploy/README.md."
+          }
+          if ($env:EVENT_NAME -eq 'workflow_dispatch') { $ref = $env:INPUT_REF }
+          else { $ref = $env:WORKFLOW_SHA }
+          if ([string]::IsNullOrWhiteSpace($ref)) { $ref = 'origin/main' }
+          Write-Host "Deploying ref: $ref"
+          # Same CVE-2022-24765 self-heal redeploy.ps1 does: the runner's service account is not
+          # the account that owns the clone.
+          & git config --global --add safe.directory $env:TOTE_DIR 2>$null
+          & git -C $env:TOTE_DIR fetch --prune origin
+          if ($LASTEXITCODE -ne 0) { throw "git fetch failed" }
+          & git -C $env:TOTE_DIR reset --hard $ref
+          if ($LASTEXITCODE -ne 0) { throw "git reset failed (unknown ref '$ref'?)" }
+          "DEPLOY_REF=$ref" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
+
+      - name: Redeploy
+        shell: powershell
+        env:
+          TOTE_DIR: ${{ vars.TOTE_DIR }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $script = Join-Path $env:TOTE_DIR "deploy\redeploy.ps1"
+          if (-not (Test-Path $script)) {
+            throw "'$script' not found even after syncing the clone - does this ref contain deploy/redeploy.ps1?"
+          }
+          & $script -Ref $env:DEPLOY_REF
+
+      # Post-deploy check: prove the RIGHT CODE is running, not merely that something answers.
+      # redeploy.ps1's health gate already confirms /version reports "Tote API" (so a neighbour
+      # on the port can't pass); this additionally asserts the running commit matches the ref we
+      # just deployed, which is what catches a container that silently failed to rebuild and is
+      # still serving the previous image.
+      #
+      # Phase 1 replaces this with scripts/synthetic_smoke.py once SSO exists, and later phases
+      # push a real item through the pipeline - Crate's smoke stopped at /users/me for months,
+      # so "auth works" read as "the app works".
+      - name: Post-deploy verification
+        shell: powershell
+        env:
+          TOTE_DIR: ${{ vars.TOTE_DIR }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $expected = (& git -C $env:TOTE_DIR rev-parse --short HEAD).Trim()
+          $ver = Invoke-RestMethod -Uri "http://127.0.0.1:8008/version" -TimeoutSec 10
+          Write-Host "Deployed commit: $expected"
+          Write-Host "Serving commit:  $($ver.commit)   (name '$($ver.name)', built $($ver.built_at))"
+          if ($ver.name -ne "Tote API") {
+            throw "port 8008 is serving '$($ver.name)', not 'Tote API'."
+          }
+          if ($ver.commit -ne $expected) {
+            throw "server reports commit '$($ver.commit)' but '$expected' was deployed - the container did not rebuild."
+          }
+          Write-Host "Post-deploy verification passed."

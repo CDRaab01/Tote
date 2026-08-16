@@ -358,9 +358,12 @@ configured, as an ntfy nudge.
 - ✅ Tote repo: Android skeleton consuming `pulse-ui` (ToteTheme, slate-led, 5 contrast tests),
   FastAPI skeleton with `/health` + `/version` (4 tests), Docker Compose (8008/5439),
   `ci.yml` (ruff check **and** `ruff format --check`, pytest, assembleDebug) + `notify.yml`.
-- ⏳ `release.yml` — **blocked on the `KEYSTORE_*` secrets** (absent as of 2026-08-15; verified
-  against the Actions API, with Crate's as the reference). Landing it before they exist would
-  make the genesis push red and page `tote-alerts` on the first commit.
+- ✅ `release.yml` + `deploy.yml` + `deploy/` — landed once the Actions config existed. The
+  secrets had originally been entered on the repo's **Agent** tab rather than **Actions**; those
+  are separate stores and `${{ secrets.* }}` cannot see the Agent ones, so the API reported zero.
+  Re-set on Actions from `C:\Users\Sonic\.dragonfly-suite\`, after verifying the keystore's
+  SHA-256 matches the suite pin `5a596c9e…` and that `suite-keystore.base64.txt` decodes
+  byte-identically to `suite-release.jks`.
 - ⏳ Sibling PRs: Dragonfly `AppRegistry` + `<queries>`; dragonfly-id `tote` OIDC client +
   smoke client/allowlist. Not started.
 *Exit: empty app builds with the slate theme; CI green; trivial tests pass.*
@@ -506,15 +509,16 @@ apparel vocabulary instead of inventing a parallel one.
 1. ~~**Accent confirmation**~~ — **DONE 2026-08-15**: Slate (charcoal + safety yellow).
 2. ~~**Repo creation**~~ — **DONE 2026-08-15**: `CDRaab01/Tote`, public. Still worth confirming
    Actions settings require approval for first-time fork contributors (suite invariant 7).
-3. **Runner + config** — runner ✅ **DONE** (label `tote`, online, on `DRAGONFLY`). But as of
-   2026-08-15 the repo has **zero Actions variables and zero secrets** (checked via
-   `gh api repos/CDRaab01/Tote/actions/{variables,secrets}`, with Crate's populated set as the
-   control). Still needed:
-   - `TOTE_DIR` variable = `C:\Code\Tote` — required by `deploy.yml`.
-   - `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` secrets — required by
-     `release.yml`, which is why that workflow is not committed yet.
-   - Optional `TOTE_SERVER_URL` variable to override the compiled-in server URL.
-4. **Tailscale Serve `:8448`** — after re-checking `tailscale serve status`.
+3. ~~**Runner + config**~~ — **DONE 2026-08-15**: runner online (label `tote`, host `DRAGONFLY`),
+   `TOTE_DIR` variable set, and all four `KEYSTORE_*` secrets set on the **Actions** tab.
+   **The trap worth remembering:** they were first entered on the repo's **Agent** tab. Agent
+   (Copilot coding-agent) and Actions are separate stores — `${{ secrets.* }}` cannot read the
+   Agent ones, the Actions API reports `total_count: 0`, and there is no way to copy them across
+   (GitHub never exposes a secret's value, and no `copilot` environment is created). The failure
+   mode is quiet: `release.yml` falls back to the committed debug key and ships an APK that
+   cannot install over an existing one. The `Assert signing identity` step is what catches it.
+   `TOTE_SERVER_URL` remains optional (overrides the URL compiled into the APK).
+4. **Tailscale Serve `:8448`** — after re-checking `tailscale serve status`. **Not done yet.**
 5. **dragonfly-id + Dragonfly sibling PRs** merged (OIDC client, smoke client, AppRegistry).
 6. **ntfy topic** `tote-alerts`.
 7. **On-device pass** — camera flow, AppAuth redirect, and specifically **NFC read/write on
