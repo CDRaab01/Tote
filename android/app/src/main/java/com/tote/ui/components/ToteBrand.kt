@@ -13,6 +13,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.tote.ui.theme.ToteTheme
 import design.pulse.ui.components.PulseButton
+import design.pulse.ui.theme.Pulse
 
 /**
  * The yellow band across a charcoal panel — the one mark that makes a surface read as a tote
@@ -64,16 +65,38 @@ fun ToteButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     tonal: Boolean = false,
+    compact: Boolean = false,
+    leadingIcon: (@Composable () -> Unit)? = null,
 ) {
     if (tonal) {
-        PulseButton(text = text, onClick = onClick, modifier = modifier, enabled = enabled, tonal = true)
+        PulseButton(
+            text = text,
+            onClick = onClick,
+            modifier = modifier,
+            enabled = enabled,
+            tonal = true,
+            compact = compact,
+            leadingIcon = leadingIcon,
+        )
     } else {
         PulseButton(
             text = text,
             onClick = onClick,
             modifier = modifier,
             enabled = enabled,
+            compact = compact,
             onChannel = Color.White,
+            leadingIcon = leadingIcon,
         )
     }
 }
+
+/**
+ * The tint for an icon inside a [ToteButton], matching whichever label colour that button uses.
+ *
+ * Exists so a caller cannot hard-code `Color.White` into a tonal button's icon, where the label
+ * is the yellow `accent.base` and a white glyph beside it reads as a rendering fault.
+ */
+@Composable
+fun toteButtonContentColor(tonal: Boolean): Color =
+    if (tonal) Pulse.accent.base else Color.White

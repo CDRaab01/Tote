@@ -13,9 +13,12 @@ import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.tote.data.local.CachedTote
+import com.tote.data.local.CaptureQueueEntity
 import com.tote.data.remote.ItemDto
 import com.tote.data.remote.ToteDetailDto
 import com.tote.ui.auth.LoginContent
+import com.tote.ui.capture.CaptureContent
+import com.tote.ui.capture.CaptureUiState
 import com.tote.ui.search.SearchContent
 import com.tote.ui.search.SearchUiState
 import com.tote.ui.totes.ToteDetailContent
@@ -141,6 +144,67 @@ class ScreenshotTest {
     // can only find by opening it — so it gets its own baseline.
     @Test fun tote_detail_unlabelled_dark() = capture("tote_detail_unlabelled_dark", dark = true) {
         ToteDetailContent(detail.copy(nfcTagUid = null, cardPrintedAt = null), {}, {}, {}, {}, {})
+    }
+
+    // ── Phase 4: capture ─────────────────────────────────────────────────────
+
+    private val captureTotes = listOf(
+        CachedTote("1", "A14", "Christmas decor", null, "Attic", 37, 0, false),
+        CachedTote("2", "A15", "Winter clothes 4T", null, "Attic", 12, 3, false),
+        CachedTote("3", "G01", "Power tools", null, "Garage rack B", 8, 1, false),
+    )
+
+    private fun queued(
+        id: String,
+        photos: Int,
+        state: String,
+        toteCode: String? = "A14",
+        lastError: String? = null,
+    ) = CaptureQueueEntity(
+        id = id,
+        photoPaths = (0 until photos).joinToString("\n") { "/dev/null/photo_$it.jpg" },
+        toteId = "1",
+        toteCode = toteCode,
+        state = state,
+        lastError = lastError,
+        createdAtMs = 0L,
+    )
+
+    // The empty state is the first thing anyone sees on this tab, and it is where the whole
+    // batch idea has to be legible in one read.
+    @Test fun capture_empty_light() = capture("capture_empty_light", dark = false) {
+        CaptureContent(
+            CaptureUiState(totes = captureTotes),
+            {}, {}, {}, {}, {}, {}, {},
+        )
+    }
+
+    @Test fun capture_empty_dark() = capture("capture_empty_dark", dark = true) {
+        CaptureContent(
+            CaptureUiState(totes = captureTotes),
+            {}, {}, {}, {}, {}, {}, {},
+        )
+    }
+
+    // A queue mid-session, with the three states that need to look different at a glance:
+    // waiting (normal), rejected (error), and timed-out (attention — a DIFFERENT recovery).
+    private val busyQueue = CaptureUiState(
+        totes = captureTotes,
+        destination = captureTotes.first(),
+        queue = listOf(
+            queued("a", 3, CaptureQueueEntity.STATE_PENDING),
+            queued("b", 1, CaptureQueueEntity.STATE_UPLOADING),
+            queued("c", 2, CaptureQueueEntity.STATE_UNCERTAIN),
+            queued("d", 5, CaptureQueueEntity.STATE_FAILED, lastError = "HTTP 413"),
+        ),
+    )
+
+    @Test fun capture_queue_light() = capture("capture_queue_light", dark = false) {
+        CaptureContent(busyQueue, {}, {}, {}, {}, {}, {}, {})
+    }
+
+    @Test fun capture_queue_dark() = capture("capture_queue_dark", dark = true) {
+        CaptureContent(busyQueue, {}, {}, {}, {}, {}, {}, {})
     }
 
     // LoginContent is the stateless body precisely so it can be captured here: the stateful

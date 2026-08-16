@@ -7,7 +7,7 @@ suite-wide rule; silently-drifting docs have burned two sibling repos already.
 The build plan and the reasoning behind the locked decisions live in [CLAUDE.md](CLAUDE.md).
 This file describes what exists **now**.
 
-## Current state: Phase 4 (photo capture → AI draft) — server side
+## Current state: Phase 4 (photo capture → AI draft) — server side + the capture queue
 
 ```
 Tote/
@@ -17,17 +17,23 @@ Tote/
 │     ├─ MainActivity.kt        single activity + the signed-in/out Gate
 │     ├─ data/
 │     │  ├─ CatalogRepository   the single place the app talks to the catalog
+│     │  ├─ CaptureQueueRepository  the write-behind photo queue and its drain
 │     │  ├─ local/TokenStore    session tokens in their own DataStore
 │     │  ├─ local/CatalogCache  Room read cache — offline search
-│     │  └─ remote/             ApiService, DTOs, AuthInterceptor, SuiteAuthManager
+│     │  ├─ local/CaptureQueue  Room queue table — the only local-origin data
+│     │  └─ remote/             ApiService, DTOs, AuthInterceptor, SuiteAuthManager,
+│     │                         ScanTimeoutInterceptor
 │     ├─ di/                    NetworkModule, DatabaseModule
 │     ├─ nfc/                   TagIo, NfcWriteSession, TapRouter
+│     ├─ work/UploadWorker.kt   drains the capture queue when connected
 │     ├─ util/UiState.kt        Idle/Loading/Success/Error
+│     ├─ util/ImageBytes.kt     ≤1600px JPEG downscale before upload
 │     └─ ui/
 │        ├─ auth/               AuthViewModel + LoginScreen/LoginContent
 │        ├─ search/             SearchViewModel + SearchScreen (the home screen)
 │        ├─ totes/              ToteList + ToteDetail, with their ViewModels
-│        ├─ navigation/         two tabs + the pushed detail route
+│        ├─ capture/            CaptureViewModel + CaptureScreen/CaptureContent
+│        ├─ navigation/         three tabs + the pushed detail route
 │        ├─ components/         HazardRule, ToteButton
 │        └─ theme/ToteTheme.kt  semantic layer over PULSE
 ├─ server/                      FastAPI backend
@@ -546,9 +552,77 @@ file. Discarding a draft deletes its directory, for the same reason from the oth
 The U2-Net weights are **baked into the image** at build time. Otherwise the first scan after
 every deploy stalls on a ~170 MB download, and fails outright on a host with no egress.
 
+## The capture queue (client)
+
+The one write-behind queue in the app, and the only table in the local database whose contents
+exist nowhere else. Everything else in Room is a disposable copy of server state; a queued
+capture is a JPEG of an object that was in someone's hands in a garage and is now back in a
+taped bin. That asymmetry is the reason `DatabaseModule` has no destructive fallback.
+
+The flow is built for the place it is used. Cataloguing happens at an open bin in an attic or a
+garage — where the Wi-Fi is worst — so nothing in the capture path waits on a network:
+
+1. **Shoot** 1–8 photos of one item. Camera output goes to `cacheDir/captures/` through a
+   `FileProvider`; the gallery path copies to the same place.
+2. **Queue.** The photos move to `filesDir/capture_queue/{id}/` *before* the Room row is written.
+   A cache directory is one the OS may empty at any moment, and a queue row pointing at an
+   evicted JPEG is worse than no row — it claims work that cannot be done or reconstructed.
+3. **Drain.** `UploadWorker` (WorkManager, `CONNECTED` constraint, exponential backoff) calls
+   `CaptureQueueRepository.drain()`, which downscales each photo and posts it to `/items/scan`.
+
+The **destination bin is chosen once and remembered** across captures, and rides along as the
+scan's `tote_id`. The server records it as the draft's *suggested* destination and does not apply
+it — an item enters a tote only when a human confirms. Without this, a batch session would mean
+the same dropdown tap fifty times at review.
+
+Downscaling to ≤1600px happens **at drain time, not at the shutter**. It is a requirement, not an
+optimisation: a modern phone camera clears the server's 8 MB cap on a single frame, so without it
+a bin's worth of captures 413s one at a time after the bin is closed. Doing it late means the
+full-resolution original survives on disk until the server has it — resized at capture, a failed
+upload would leave only the lossy copy of a photo that cannot be retaken.
+
+### Three drain outcomes, because there are three different situations
+
+| Failure | State | Next |
+|---|---|---|
+| `IOException` | `pending` | offline/transient — WorkManager retries with backoff |
+| `HttpException` | `failed` | the server answered and said no. Surfaced; never auto-retried |
+| `SocketTimeoutException` | `uncertain` | **nobody knows whether it landed** |
+
+The third is specific to this app. `POST /items/scan` is **synchronous** — it persists, cleans
+and identifies every photo before it responds, measured at 35.5 s for one photo against the live
+model — so a client timeout is not evidence of failure. It is more likely evidence the server is
+still working and the draft will exist. Retrying automatically would file the same object twice,
+and a duplicate in a storage catalog is indistinguishable from two real ornament boxes. There is
+no idempotency key on the endpoint, so the honest answer is to stop and ask: the row says "it may
+already be in Review, check there before retrying", and offers both.
+
+`drain()` reports **clear** for `uncertain` and `failed` rows. Those wait on a person, and telling
+WorkManager to retry would spin the backoff chain against a queue that cannot move.
+
+A drain also begins by releasing anything left in `uploading` by process death. Uploads run for
+tens of seconds — ample time for Android to kill a backgrounded app — and an `uploading` row
+whose uploader no longer exists would otherwise sit out every future drain forever.
+
+### The scan call needs its own timeout, and only it
+
+OkHttp's default read timeout is 10 s against a call measured at 35.5 s, so without an override
+*every* scan fails — as a timeout, which the queue must then treat as unknown. The queue would
+fill with unresolvable rows for uploads the server was quietly completing, and the symptom would
+read as a broken camera. `ScanTimeoutInterceptor` raises read/write timeouts to 240 s/120 s for
+`/items/scan` alone. Raised globally instead, a dead tailnet connection would hang the search
+screen for four minutes rather than failing fast into the offline cache.
+
+### Room v2
+
+`capture_queue` is the v2 migration, and it is purely additive. `ToteMigrations.MIGRATION_1_2`
+copies its DDL verbatim from the committed `schemas/…/2.json` rather than restating the entity;
+the on-device test compares column for column, and a hand-typed nullability difference is exactly
+what reads as correct and fails there.
+
 ## Not yet built
 
-The Android capture queue and review stack (the client half of Phase 4)
+The Android review stack (the remaining client half of Phase 4)
 (Phase 3); photo capture and the AI draft pipeline (Phase 4); the sizing ladder (Phase 5);
 people and lending (Phase 6); backups (Phase 7, once there are photos to lose).
 

@@ -4,10 +4,12 @@ import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFact
 import com.tote.BuildConfig
 import com.tote.data.remote.ApiService
 import com.tote.data.remote.AuthInterceptor
+import com.tote.data.remote.ScanTimeoutInterceptor
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -30,7 +32,10 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(authInterceptor: AuthInterceptor): OkHttpClient {
+    fun provideOkHttpClient(
+        authInterceptor: AuthInterceptor,
+        scanTimeout: ScanTimeoutInterceptor,
+    ): OkHttpClient {
         val logging = HttpLoggingInterceptor().apply {
             // BODY logging in a release build would print bearer tokens to logcat.
             level = if (BuildConfig.DEBUG) {
@@ -41,7 +46,15 @@ object NetworkModule {
         }
         return OkHttpClient.Builder()
             .addInterceptor(authInterceptor)
+            // Must be an application interceptor, not a network one: `withReadTimeout` only
+            // affects the chain from this point on.
+            .addInterceptor(scanTimeout)
             .addInterceptor(logging)
+            // Stated rather than left to the defaults, because one call deliberately overrides
+            // them and an implicit baseline makes that override impossible to reason about.
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
             .build()
     }
 

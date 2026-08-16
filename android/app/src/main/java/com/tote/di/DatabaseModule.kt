@@ -2,6 +2,7 @@ package com.tote.di
 
 import android.content.Context
 import androidx.room.Room
+import com.tote.data.local.CaptureQueueDao
 import com.tote.data.local.CatalogDao
 import com.tote.data.local.ToteDatabase
 import com.tote.data.local.ToteMigrations
@@ -41,4 +42,7 @@ object DatabaseModule {
 
     @Provides
     fun provideCatalogDao(db: ToteDatabase): CatalogDao = db.catalogDao()
+
+    @Provides
+    fun provideCaptureQueueDao(db: ToteDatabase): CaptureQueueDao = db.captureQueueDao()
 }

@@ -177,11 +177,23 @@ dependencies {
     ksp(libs.room.compiler)
     implementation(libs.kotlinx.coroutines.android)
 
+    // The capture queue drains in the background: a bin's worth of photos shot in a garage with
+    // no signal has to upload later without anyone reopening the app.
+    implementation(libs.work.runtime.ktx)
+    implementation(libs.hilt.work)
+    ksp(libs.hilt.work.compiler)
+
+    // Thumbnails of queued captures and of the server's photos. Rides the app's OkHttp client
+    // (see ToteApp) so authenticated photo URLs load.
+    implementation(libs.coil.compose)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(kotlin("test"))
 
     testImplementation(libs.room.testing)
+    testImplementation(libs.mockito.kotlin)
+    testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.test.manifest)

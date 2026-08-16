@@ -1,10 +1,14 @@
 package com.tote.data.remote
 
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Multipart
 import retrofit2.http.PATCH
 import retrofit2.http.POST
+import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -79,4 +83,24 @@ interface ApiService {
 
     @GET("search")
     suspend fun search(@Query("q") q: String): List<SearchHitDto>
+
+    // ── Capture ──────────────────────────────────────────────────────────────
+
+    /**
+     * One item, 1-8 photos, one draft.
+     *
+     * **Synchronous and slow**: the server persists, cleans and identifies every photo before it
+     * answers — 35.5 s measured for a single photo against the live model, more for a batch. The
+     * default OkHttp read timeout of 10 s would make every call fail, so `ScanTimeoutInterceptor`
+     * raises it for this path only.
+     *
+     * `toteId` is the bin being filled. The server records it as the draft's suggested
+     * destination and does not apply it: an item enters a tote only when a human confirms.
+     */
+    @Multipart
+    @POST("items/scan")
+    suspend fun scanItem(
+        @Part photos: List<MultipartBody.Part>,
+        @Part("tote_id") toteId: RequestBody? = null,
+    ): DraftDto
 }

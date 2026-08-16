@@ -1,0 +1,90 @@
+package com.tote.data.remote
+
+import java.util.concurrent.TimeUnit
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
+
+/**
+ * The scan call gets a long read timeout; nothing else does.
+ *
+ * Both halves matter. Without the raise, every scan fails — `/items/scan` is synchronous and was
+ * measured at 35.5 s for a single photo against a 10 s default, and the failure arrives as a
+ * timeout, which the capture queue must treat as "unknown", so the queue would fill with
+ * unresolvable rows for uploads that actually succeeded. Without the narrowing, a dead tailnet
+ * connection would hang a search screen for four minutes instead of failing fast into the
+ * offline cache.
+ */
+class ScanTimeoutInterceptorTest {
+
+    private lateinit var server: MockWebServer
+    private lateinit var client: OkHttpClient
+
+    /** Records the timeouts the chain reports at the point the request is proceeded with. */
+    private var observedReadMillis = -1
+    private var observedWriteMillis = -1
+
+    @Before
+    fun setUp() {
+        server = MockWebServer().also { it.start() }
+        client = OkHttpClient.Builder()
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .addInterceptor(ScanTimeoutInterceptor())
+            .addInterceptor { chain ->
+                observedReadMillis = chain.readTimeoutMillis()
+                observedWriteMillis = chain.writeTimeoutMillis()
+                chain.proceed(chain.request())
+            }
+            .build()
+    }
+
+    @After
+    fun tearDown() {
+        server.shutdown()
+    }
+
+    private fun call(path: String) {
+        server.enqueue(MockResponse().setBody("{}"))
+        client.newCall(Request.Builder().url(server.url(path)).build()).execute().close()
+    }
+
+    @Test
+    fun `the scan path gets the long timeouts`() {
+        call("/items/scan")
+
+        assertEquals(
+            ScanTimeoutInterceptor.SCAN_READ_TIMEOUT_SECONDS * 1000,
+            observedReadMillis,
+        )
+        assertEquals(
+            ScanTimeoutInterceptor.SCAN_WRITE_TIMEOUT_SECONDS * 1000,
+            observedWriteMillis,
+        )
+    }
+
+    @Test
+    fun `an ordinary call keeps the client's own timeouts`() {
+        call("/search?q=ratchet")
+
+        assertEquals(30_000, observedReadMillis)
+        assertEquals(30_000, observedWriteMillis)
+    }
+
+    @Test
+    fun `the long timeout is long enough for a measured worst case`() {
+        // A single photo measured 35.5 s on the live host, cleanup is sequential per photo, and
+        // the server's own model timeout is 60 s on top. Anything at or below a minute would be
+        // a cap that fires on ordinary use rather than on a fault.
+        assertTrue(
+            ScanTimeoutInterceptor.SCAN_READ_TIMEOUT_SECONDS >= 180,
+            "the scan timeout must cover an eight-photo item, not a one-photo one",
+        )
+    }
+}
