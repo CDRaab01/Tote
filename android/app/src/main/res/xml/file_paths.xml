@@ -1,11 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Camera output lands in cache/captures/ (transient, pre-queue); once a capture is queued its
-     photos move to files/capture_queue/ and stay there until the upload succeeds. The move is
-     the point: a cache directory is one the OS may empty at any moment, and the queue's photos
-     exist nowhere else until the server has them. -->
+<!-- Camera output lands in files/captures/ (staged, pre-queue); once a capture is queued its
+     photos move to files/capture_queue/ and stay there until the upload succeeds.
+
+     BOTH are under files/, never cache/. A cache directory is one the OS may empty at any
+     moment, and it does exactly that when storage runs low — which is when someone is most
+     likely to be photographing a bin. Staging used to live in cache/captures/ and the photos
+     were deleted out from under the app between the shutter and the Queue tap; the copy then
+     threw NoSuchFileException on the main thread and took the whole app down mid-batch.
+     These files exist nowhere else until the server has them. -->
 <paths>
-    <cache-path name="captures" path="captures/" />
+    <files-path name="captures" path="captures/" />
     <files-path name="capture_queue" path="capture_queue/" />
-    <!-- Index-card PDFs, handed to the system print/share sheet. -->
+    <!-- Index-card PDFs, handed to the system print/share sheet. Genuinely disposable: the
+         server re-renders one on demand, so the OS is welcome to reclaim these. -->
     <cache-path name="cards" path="cards/" />
 </paths>

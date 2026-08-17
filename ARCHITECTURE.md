@@ -633,11 +633,11 @@ taped bin. That asymmetry is the reason `DatabaseModule` has no destructive fall
 The flow is built for the place it is used. Cataloguing happens at an open bin in an attic or a
 garage — where the Wi-Fi is worst — so nothing in the capture path waits on a network:
 
-1. **Shoot** 1–8 photos of one item. Camera output goes to `cacheDir/captures/` through a
+1. **Shoot** 1–8 photos of one item. Camera output goes to `filesDir/captures/` through a
    `FileProvider`; the gallery path copies to the same place.
 2. **Queue.** The photos move to `filesDir/capture_queue/{id}/` *before* the Room row is written.
-   A cache directory is one the OS may empty at any moment, and a queue row pointing at an
-   evicted JPEG is worse than no row — it claims work that cannot be done or reconstructed.
+   A queue row pointing at a JPEG that is not there is worse than no row — it claims work that
+   cannot be done or reconstructed.
 3. **Drain.** `UploadWorker` (WorkManager, `CONNECTED` constraint, exponential backoff) calls
    `CaptureQueueRepository.drain()`, which downscales each photo and posts it to `/items/scan`.
 
@@ -651,6 +651,45 @@ optimisation: a modern phone camera clears the server's 8 MB cap on a single fra
 a bin's worth of captures 413s one at a time after the bin is closed. Doing it late means the
 full-resolution original survives on disk until the server has it — resized at capture, a failed
 upload would leave only the lossy copy of a photo that cannot be retaken.
+
+### Nothing in the capture path lives in `cacheDir`
+
+Staging used to be `cacheDir/captures/`, on the reasoning that a photo between the shutter and
+the Queue tap is transient. It is not transient — it is the **only copy in existence**, exactly
+like a queued one, and it is held for as long as it takes to photograph an item, which can be
+minutes with the app backgrounded.
+
+Android empties cache directories without warning when storage runs low. On a phone at 100% full
+it did: the staged JPEGs were deleted out from under the app between the shutter and the tap, and
+`queueItem`'s bare `copyTo` threw `NoSuchFileException` **on the main thread**. The app died
+mid-batch and took every other shot in hand with it — twice in eleven minutes, in production, on
+2026-08-17. The `file_paths.xml` comment had stated the rule correctly the whole time ("a cache
+directory is one the OS may empty at any moment") and the staging directory was in one anyway.
+
+Three consequences, and all three are needed — any one alone leaves a hole:
+
+- **Staging is `filesDir/captures/`.** The OS does not reclaim it.
+- **A missing source is skipped, never fatal.** "Should not happen" is no reason for a batch to
+  be destroyed if it does. The count of skipped photos is **said out loud**: a batch that quietly
+  queues 3 of 5 leaves two holes in the catalogue nobody knows to go back and fill. If *every*
+  file is gone, no row is written and the person is told to shoot again while the bin is still
+  open in front of them.
+- **Shots in hand survive process death**, persisted as paths through `SavedStateHandle` — the
+  same reason the destination bin is. Shooting a bin's worth in a garage with the app backgrounded
+  between photos is precisely when Android kills the process; held only in memory, a half-shot
+  item vanished silently and left its files orphaned.
+
+Durable staging does not clean itself, so the ViewModel **sweeps orphans** on construction:
+anything in the directory that is not in the restored shot list belongs to a session that is gone.
+Left alone it would grow the app's footprint forever, on a phone that is already out of space —
+which is how the whole failure started.
+
+The card PDF stays in `cacheDir`, correctly: the server re-renders one on demand, so it is the one
+file here the OS is welcome to reclaim.
+
+**`FileProvider` cannot be exercised under Robolectric in this project** — `getUriForFile` fails
+to resolve *any* configured root, including ones that predate this change — so `newCameraTarget`
+has no JVM test and `stagingDir` is `internal` to let the location be asserted directly.
 
 ### Three drain outcomes, because there are three different situations
 
