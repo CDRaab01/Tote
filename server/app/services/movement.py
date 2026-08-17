@@ -153,6 +153,11 @@ async def record_move(
     db.add(movement)
 
     item.current_tote_id = new_tote_id
+    # A bag is a grouping INSIDE a tote, so leaving the tote leaves the bag. Cleared here, in
+    # the single writer of derived state, rather than by each caller — a stale container_id on an
+    # item that is out would make a bin's grouping claim something the bin does not contain.
+    # Entering a tote clears it too: the destination's bags are not the source's.
+    item.container_id = None
     item.status = new_status
     item.out_reason = new_out_reason
     item.out_since = new_out_since

@@ -58,6 +58,30 @@ interface ApiService {
     @DELETE("totes/{id}")
     suspend fun deleteTote(@Path("id") id: String)
 
+    // ── Bags inside a tote ───────────────────────────────────────────────────
+    //
+    // Every route hangs off the tote, because a bag cannot exist outside the bin it belongs to
+    // and there is deliberately no operation that moves one between bins.
+
+    @POST("totes/{id}/containers")
+    suspend fun createContainer(
+        @Path("id") toteId: String,
+        @Body body: ContainerIn,
+    ): ContainerDto
+
+    @PATCH("totes/{id}/containers/{containerId}")
+    suspend fun patchContainer(
+        @Path("id") toteId: String,
+        @Path("containerId") containerId: String,
+        @Body body: ContainerPatch,
+    ): ContainerDto
+
+    @DELETE("totes/{id}/containers/{containerId}")
+    suspend fun deleteContainer(
+        @Path("id") toteId: String,
+        @Path("containerId") containerId: String,
+    )
+
     @POST("totes/{id}/unpack")
     suspend fun unpack(@Path("id") id: String, @Body body: BulkMove): List<MovementDto>
 

@@ -282,6 +282,11 @@ holding in both arms; a QR on the same card costs nothing and reads from four fe
   person_id (nullable — who it was lent to, or who outgrew it), moved_at, created_at.
   `items.current_tote_id` and `items.status` are **derived state kept in sync by one
   service module** (`app/services/movement.py`); nothing else writes them directly.
+- `containers` — id, user_id, tote_id, name, notes, created_at. **Bags inside a bin** (migration
+  0005). A *label*, not a location: it belongs to one tote and carries no whereabouts, so
+  `items.current_tote_id` stays the single answer to "where is it" and `items.container_id` only
+  says which bag inside that tote. `notes` is the point — a bag is often only approximately
+  catalogued ("mostly 3-6M onesies"), and that is what you read instead of opening it.
 - `people` — id, user_id, name, birthdate (nullable), notes. The wearer profiles behind
   "what fits Emma right now" and "who has the drill."
 - `person_sizes` — id, person_id, garment_type (`tops|bottoms|shoes|outerwear`),
@@ -790,6 +795,26 @@ Client: the confirm button reads "Save without a bin" (a verb, not the old disab
 to file it"), and the Totes tab carries a collapsed **"Not in a bin (N)"** line in the attention
 channel, absent at zero. Filing from there needs no new screen — the rows open the item sheet,
 whose move button already reads "Put it away" for an item that is out.
+
+
+**Bags inside a bin (#34).** Owner-requested. A real tote of baby clothes is three zip bags and a
+loose blanket, and "which bag is the 3-6M one" was unanswerable — the contents were one flat list,
+the shape that makes somebody tip the bin out on the floor. New `containers` table (migration
+**0005**) plus a nullable `items.container_id`; the bin screen groups its contents by bag with
+loose things last, and the item sheet gains a "Which bag" field when the bin has any.
+**The design decision, owner-confirmed: a bag is a label, not a location.** It belongs to one tote
+and carries no whereabouts, so `items.current_tote_id` stays the single answer to "where is it".
+A movable bag would need its own `tote_id` that the item's could contradict, with nothing failing
+loudly when they drift — two sources of truth in the one app whose whole promise is answering that
+question. So a bag does not move as a unit; its items move, one ledger row each.
+Three things follow mechanically and each has a test: **leaving the tote clears the bag** (in
+`record_move`, the single writer, not in each caller); **an item cannot join a bag in another bin**
+(`PATCH /items/{id}` validates against the item's current tote, 422 otherwise); and **there is no
+way to move a bag** — `ContainerPatch` has no `tote_id` and every route hangs off the tote.
+The two delete rules are the design: `containers.tote_id` CASCADE (a bag has no meaning outside
+its bin), `items.container_id` SET NULL (deleting a bin or a bag loses the grouping, never the
+contents). Which is why removing a bag needs no confirmation — nothing is destroyed but the label,
+and the copy says so.
 
 ---
 

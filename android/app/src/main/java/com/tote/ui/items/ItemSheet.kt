@@ -101,6 +101,7 @@ fun ItemSheet(
             onEditApparel = viewModel::editApparel,
             onPickerQuery = viewModel::pickerQuery,
             onPickCategory = viewModel::pickCategory,
+            onPickBag = viewModel::pickBag,
             onPickBin = viewModel::moveTo,
             onSave = viewModel::save,
             onConfirmDelete = viewModel::confirmDelete,
@@ -128,6 +129,7 @@ fun ItemSheetContent(
     onEditApparel: ((ItemEdits) -> ItemEdits) -> Unit,
     onPickerQuery: (String) -> Unit,
     onPickCategory: (String?) -> Unit,
+    onPickBag: (String?) -> Unit,
     onPickBin: (String) -> Unit,
     onSave: () -> Unit,
     onConfirmDelete: (Boolean) -> Unit,
@@ -188,6 +190,24 @@ fun ItemSheetContent(
                 onPick = { id -> id?.let(onPickBin) },
                 onCancel = { onMode(SheetMode.View) },
                 emptyMessage = "No other bins yet.",
+            )
+            SheetMode.PickBag -> PickerFace(
+                title = "Which bag",
+                subtitle = "Bags are groupings inside this bin. Loose is a perfectly good answer.",
+                options = state.containers.map {
+                    PickerOption(
+                        id = it.id,
+                        label = it.name,
+                        detail = it.notes ?: "${it.itemCount} item${if (it.itemCount == 1) "" else "s"}",
+                    )
+                },
+                selectedId = state.edits.containerId,
+                query = state.pickerQuery,
+                onQueryChange = onPickerQuery,
+                onPick = onPickBag,
+                onCancel = { onMode(SheetMode.Edit) },
+                noneLabel = "Loose in the bin",
+                emptyMessage = "This bin has no bags yet.",
             )
             SheetMode.PickCategory -> PickerFace(
                 title = "Category",
@@ -411,6 +431,17 @@ private fun EditFace(
         onClick = { onMode(SheetMode.PickCategory) },
     )
 
+    if (state.containers.isNotEmpty()) {
+        Spacer(Modifier.height(spacing.md))
+        SectionHeader(label = "Which bag", channel = colors.provenance.base)
+        Spacer(Modifier.height(spacing.sm))
+        PickerField(
+            selected = state.containers.firstOrNull { it.id == edits.containerId }?.name,
+            placeholder = "Loose in the bin",
+            onClick = { onMode(SheetMode.PickBag) },
+        )
+    }
+
     Spacer(Modifier.height(spacing.md))
     SectionHeader(label = "Condition", channel = colors.stored.base)
     Spacer(Modifier.height(spacing.sm))
@@ -621,7 +652,8 @@ private fun ItemSheetPreview() {
                 ),
             ),
             onMode = {}, onEdit = {}, onEditApparel = {}, onPickerQuery = {},
-            onPickCategory = {}, onPickBin = {}, onSave = {}, onConfirmDelete = {}, onDelete = {},
+            onPickCategory = {}, onPickBag = {}, onPickBin = {}, onSave = {},
+            onConfirmDelete = {}, onDelete = {},
         )
     }
 }

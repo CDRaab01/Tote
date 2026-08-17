@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.category import Category
+from app.models.container import Container
 from app.models.item import Item, ItemApparel
 from app.models.movement import Movement
 from app.schemas.catalog import ItemIn, ItemOut, ItemPatch, MoveIn, MovementOut, SearchHit
@@ -122,6 +123,25 @@ async def patch_item(item_id: uuid.UUID, body: ItemPatch, user: CurrentUser, db:
         ).scalar_one_or_none()
         if found is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found")
+    if updates.get("container_id"):
+        # Against the item's CURRENT tote, not merely against ownership. A bag in another bin
+        # would be exactly the contradiction the container model refuses to allow: the item would
+        # claim membership of a grouping inside a bin it is not in.
+        found = (
+            await db.execute(
+                select(Container).where(
+                    Container.id == updates["container_id"],
+                    Container.user_id == user.id,
+                    Container.tote_id == item.current_tote_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if found is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "That bag is not in the tote this item is in",
+            )
+
     apparel_updates = updates.pop("apparel", None)
     for k, v in updates.items():
         setattr(item, k, v)

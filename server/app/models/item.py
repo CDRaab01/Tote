@@ -56,6 +56,13 @@ class Item(Base):
     current_tote_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("totes.id", ondelete="SET NULL"), nullable=True, index=True
     )
+
+    # Which bag inside the tote, if any. NOT whereabouts — that is `current_tote_id`, and a
+    # container carrying its own would give this app two answers to the one question it exists
+    # to answer. Cleared whenever the item leaves the tote; see services/movement.py.
+    container_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("containers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     out_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
     out_since: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

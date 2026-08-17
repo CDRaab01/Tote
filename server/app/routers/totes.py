@@ -16,6 +16,7 @@ from app.models.item import Item
 from app.models.location import Location
 from app.models.movement import Movement
 from app.models.tote import Tote
+from app.routers.containers import containers_for
 from app.schemas.catalog import (
     BulkMoveIn,
     MovementOut,
@@ -111,6 +112,9 @@ async def get_tote(tote_id: uuid.UUID, user: CurrentUser, db: Db):
     tote = await _owned_tote(db, user.id, tote_id)
     base = await to_tote_out(db, tote)
     detail = ToteDetail(**base.model_dump())
+
+    # The bags in this bin. An empty list is the ordinary answer — most bins are not subdivided.
+    detail.containers = await containers_for(db, user.id, tote_id)
 
     detail.items = await items_for(
         db, item_query(user.id).where(Item.current_tote_id == tote_id).order_by(Item.name)

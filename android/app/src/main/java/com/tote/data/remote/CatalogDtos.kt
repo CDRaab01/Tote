@@ -76,9 +76,37 @@ data class ToteDetailDto(
     @SerialName("nfc_tag_uid") val nfcTagUid: String? = null,
     @SerialName("nfc_written_at") val nfcWrittenAt: String? = null,
     @SerialName("card_printed_at") val cardPrintedAt: String? = null,
+    /** The bags in this bin. Empty is ordinary — most bins are not subdivided. */
+    val containers: List<ContainerDto> = emptyList(),
     val items: List<ItemDto> = emptyList(),
     @SerialName("items_out") val itemsOut: List<ItemDto> = emptyList(),
 )
+
+/**
+ * A bag inside a tote — one level of grouping within a bin.
+ *
+ * It is a **label, not a location**. The bag belongs to one tote and carries no whereabouts of
+ * its own; an item's location stays `currentToteId`, full stop. A movable container would give
+ * this app two answers to the one question it exists to answer, and nothing would fail loudly
+ * when they drifted.
+ *
+ * `notes` matters more than it looks: a bag is often only approximately catalogued ("mostly 3-6M
+ * onesies, some vests"), and that is worth recording even when the garments individually are not.
+ */
+@Serializable
+data class ContainerDto(
+    val id: String,
+    @SerialName("tote_id") val toteId: String,
+    val name: String,
+    val notes: String? = null,
+    @SerialName("item_count") val itemCount: Int = 0,
+)
+
+@Serializable
+data class ContainerIn(val name: String, val notes: String? = null)
+
+@Serializable
+data class ContainerPatch(val name: String, val notes: String?)
 
 @Serializable
 data class ItemDto(
@@ -91,6 +119,8 @@ data class ItemDto(
     val condition: String? = null,
     val status: String,
     @SerialName("current_tote_id") val currentToteId: String? = null,
+    // Which bag inside that tote. Null is the ordinary case — most bins are not subdivided.
+    @SerialName("container_id") val containerId: String? = null,
     @SerialName("out_reason") val outReason: String? = null,
     @SerialName("expected_back") val expectedBack: String? = null,
     // Denormalised by the server so a list of hits answers "which bin, and where" without one
@@ -254,6 +284,14 @@ data class ItemUpdate(
     val quantity: Int? = null,
     val condition: String? = null,
     val apparel: ApparelPatch? = null,
+    /**
+     * Which bag inside the item's CURRENT tote.
+     *
+     * Sent on every save like the rest of this body (see the class note), so clearing it is
+     * simply choosing "loose in the bin". The server refuses a bag belonging to another tote —
+     * that would be the one contradiction the container model exists to prevent.
+     */
+    @SerialName("container_id") val containerId: String? = null,
 )
 
 @Serializable
