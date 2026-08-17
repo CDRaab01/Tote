@@ -791,15 +791,48 @@ private fun ItemRow(
                     item.status == "out" -> "Out since it was unpacked"
                     else -> null
                 }
-                // The tag's own words, joined to the status rather than stacked under it. This
-                // is the line someone reads while holding an open bin, and every extra row on it
-                // costs a garment's worth of scrolling.
-                val sub = listOfNotNull(item.apparel?.sizeRaw, status).joinToString(" · ")
-                if (sub.isNotEmpty()) {
+                // The description, on the row at last.
+                //
+                // It was carried on every DTO and shown only inside the item sheet, which is fine
+                // until a bin holds six garments all honestly called "Shirt". As text those rows
+                // were identical and only the thumbnail told them apart; the sentence that DOES
+                // tell them apart — "yellow and green construction digger" — was one tap away on
+                // each of them. Found on the owner's first real bin of baby clothes.
+                //
+                // Two lines, for the same reason the name gets two: the thumbnail, the size and the
+                // action leave this column about twenty characters wide, and one line of that is
+                // "Navy blue sleeves, li…" against "Navy blue with white s…" — which is the failure
+                // this line exists to prevent, just moved a few words later. It only costs height
+                // on the rows whose descriptions are long enough to need it.
+                val detail = listOfNotNull(status, item.description).joinToString(" · ")
+                if (detail.isNotEmpty()) {
                     Spacer(Modifier.height(spacing.xs))
-                    Caption(text = sub)
+                    Text(
+                        detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
+            // The size, as its own mark rather than the first word of a caption.
+            //
+            // For a bin of children's clothing this is the single most-read fact on the screen —
+            // the whole app exists to answer "which bin has the 4T coats" — and it was competing
+            // with the loan status in a dim grey run-on line. Prominent enough here that the size
+            // does not need repeating in the name, which is what was happening: "Shirt 12m" over
+            // a caption reading "12M".
+            item.apparel?.sizeRaw?.let { size ->
+                Spacer(Modifier.width(spacing.sm))
+                Text(
+                    size,
+                    style = ToteTheme.dataType.dataSmall,
+                    color = colors.provenance.base,
+                    maxLines = 1,
+                )
+            }
+
             // ONE action on the row — the everyday one. Lending and deleting live in the
             // sheet behind a tap: a second button here costs the name the width it needs, and
             // a destructive action next to an everyday one is a mis-tap away from deleting a

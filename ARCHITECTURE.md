@@ -1563,6 +1563,26 @@ department there is nothing in the string to tell them apart, so `parse_size` re
 to the bin, a wrong ordinal sends them to the wrong bin twice. A department resolves it (`8` under
 `girls` is a youth 8) because that is evidence, not a guess.
 
+### A bare month is not the same trade — it was a hole
+
+`3m`, `6m` and `9m` were **missing** from `_INFANT_MONTHS`, on the reasoning that infant clothing
+is sold in ranges (`0-3M`, `3-6M`). Real tags and real people do not agree, and the table was
+already inconsistent with itself: `12M`, `18M` and `24M` were bare points from the start.
+
+Found in production, which is the part worth recording. Four garments in the owner's first real
+bin of baby clothes were typed `6m`, parsed to nothing, and were therefore invisible to `fits` —
+the exact silent failure the ladder exists to prevent, and one nothing in CI could have caught
+because it needs somebody to type what is on an actual tag.
+
+The bare points are the **midpoints of the ranges either side of them**: `3-6m` sits at 0.375
+between `3m` (0.25) and `6m` (0.5), so a range and its endpoints interleave in tag order rather
+than colliding. `36m` is here too — some tags say it instead of `3T` — and it lands on the same
+ordinal `3T` does, which is the point of one shared axis. Two tests pin exactly that: that the
+twelve infant rungs are strictly increasing and all distinct, and that `36m` and `3T` agree.
+
+Unlike the bare number above, this is **not** a designed under-read. `6m` is unambiguous; there
+was simply no row for it.
+
 ## Name-first capture: the question you do not ask
 
 The scan makes two vision calls for a garment — the omnibus `identify_item` and the narrow
@@ -1671,10 +1691,29 @@ actually matters.
 
 ### The tag's own words go where people look
 
-`size_raw` rides on the **same caption line** as the bin on a search hit, and beside the status
-on a tote-detail row. Not a row of its own: the question someone is asking is "which bin", and a
-second line competes with the answer while costing a garment's worth of scrolling in a list they
-are reading with an open bin in front of them.
+`size_raw` rides on the **same caption line** as the bin on a search hit. On a **tote-detail row**
+it is now its own element instead — `dataSmall`, in the provenance violet, between the text column
+and the action button.
+
+That changed after looking at a real bin. On a screen of children's clothing the size is the
+single most-read fact — the whole app exists to answer "which bin has the 4T coats" — and it was
+the first words of a dim grey run-on caption it shared with the loan status. Two consequences, one
+of them the point: it is legible at a glance, and it is prominent enough that **the size does not
+need repeating in the name**, which is what people were doing (`Shirt 12m` above a caption reading
+`12M`).
+
+The row's second line is now the item's **description**, and up to two lines of it. It was carried
+on every DTO and shown only inside the item sheet, which is fine until a bin holds six garments all
+honestly called "Shirt": as text those rows were identical, only the thumbnail told them apart, and
+the sentence that *does* tell them apart was one tap away on each of them. Two lines rather than
+one because the thumbnail, the size and the action leave that column about twenty characters wide,
+and one line of it is `Navy blue sleeves, li…` against `Navy blue with white s…` — the same failure,
+moved a few words later. Height is only spent on the rows whose descriptions need it.
+
+`tote_detail_same_name_dark` / `_light` are the baselines for exactly this, six near-identical rows
+in one frame. The light one is separate on purpose: the size mark is the first place the provenance
+violet carries *text* at data-type size, and a ratio that holds against charcoal says nothing about
+one against white.
 
 ### The review form states both outcomes, and neither is a fault
 

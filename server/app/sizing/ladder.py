@@ -103,15 +103,30 @@ _COMPARABLE_PAIRS: frozenset[frozenset[str]] = frozenset(
 # Children's ordinals ARE approximate age in years. Written out rather than computed so the
 # 6X row can exist at all, and so every value is reviewable against a tag.
 
+# The axis is years of approximate body size, so 12m is 1.0 and the RANGES are the midpoints of
+# the bare points either side of them: 3-6m sits at 0.375 between 3m (0.25) and 6m (0.5).
+#
+# The bare points used to be missing for 3, 6 and 9 months, on the reasoning that infant clothing
+# is sold in ranges. Real tags and real people do not agree: found in production with four garments
+# typed "6m" and parsing to nothing, which meant `fits` could not see them at all — the silent
+# failure the whole ladder exists to prevent. 12m/18m/24m were already here, so the table was
+# inconsistent with itself as well as with the world.
 _INFANT_MONTHS: dict[str, float] = {
     "nb": 0.0,
     "0-3m": 0.125,
+    "3m": 0.25,
     "3-6m": 0.375,
+    "6m": 0.5,
     "6-9m": 0.625,
+    "9m": 0.75,
     "9-12m": 0.875,
     "12m": 1.0,
+    "15m": 1.25,
     "18m": 1.5,
     "24m": 2.0,
+    # Written on some tags instead of 3T, and it lands on the same ordinal 3T does — which is
+    # the point of one shared axis.
+    "36m": 3.0,
 }
 
 _TODDLER: dict[str, float] = {"2t": 2.0, "3t": 3.0, "4t": 4.0, "5t": 5.0}
@@ -198,9 +213,14 @@ _MONTH_ALIASES = {
     "3_6_months": "3-6m",
     "6_9_months": "6-9m",
     "9_12_months": "9-12m",
+    "3_months": "3m",
+    "6_months": "6m",
+    "9_months": "9m",
     "12_months": "12m",
+    "15_months": "15m",
     "18_months": "18m",
     "24_months": "24m",
+    "36_months": "36m",
 }
 
 # Departments that make a bare number unambiguous. See `parse_size`.

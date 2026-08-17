@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **255 server** (pytest, real Postgres) + **133 Android** (measured 2026-08-17) |
+| Tests | **311 server** (pytest, real Postgres) + **174 Android** (measured 2026-08-17) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -838,6 +838,30 @@ one destructive action here removes photographs that cannot be retaken.
 Client: `selection` is a **nullable set** — null is not-selecting, empty is selecting-with-nothing
 — so the screen cannot disagree with itself. While selecting a tap ticks rather than opens, and
 the per-row button disappears because the bar owns the verbs.
+
+
+**A bare month, and six rows called "Shirt" (#36).** Both found by reading the owner's real
+catalogue rather than by any test.
+
+**`3m`, `6m` and `9m` were missing from the infant ladder.** They were left out on the reasoning
+that infant clothing is sold in ranges — but `12M`/`18M`/`24M` were bare points from the start, so
+the table was inconsistent with itself as well as with the world. Four garments in the first real
+bin of baby clothes were typed `6m`, parsed to nothing, and were **invisible to `fits`**: the exact
+silent failure the ladder exists to prevent, and one CI could never have caught, because it needs
+somebody to type what is printed on an actual tag. The bare points are the midpoints of the ranges
+either side of them, `36m` lands where `3T` does, and two tests pin the whole twelve-rung ordering.
+
+**The bin screen showed the same six words six times.** Every row was `Shirt` with a thumbnail;
+the sentence that told them apart — "yellow and green construction digger" — was carried on the
+DTO and rendered only inside the item sheet, one tap away on each of them. The description is on
+the row now, two lines of it (twenty characters is not enough to separate "Navy blue sleeves…"
+from "Navy blue with white…"), and the **size is its own mark** rather than the first words of the
+grey caption it shared with the loan status. Which also removes the reason people were typing the
+size into the name.
+
+Measured while looking, and worth keeping: filing garments **grouped** (`Shorts ×6`) ran at
+**36 s/garment** against **60 s** one row per garment — and that understates it, because the
+grouped rows came first, against the learning curve.
 
 ---
 
