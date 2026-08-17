@@ -36,6 +36,7 @@ import com.tote.ui.items.SheetMode
 import com.tote.ui.people.PersonDetailContent
 import com.tote.ui.people.PersonDetailState
 import com.tote.ui.review.DraftEdits
+import com.tote.ui.review.DraftChooserContent
 import com.tote.ui.review.ReviewContent
 import com.tote.ui.review.ReviewUiState
 import com.tote.ui.search.SearchContent
@@ -915,6 +916,44 @@ class ScreenshotTest {
                 ),
             ),
             onAddItem = {}, onUnpackAll = {}, onRepackAll = {}, onTakeOut = {}, onPutBack = {},
+        )
+    }
+
+
+    /** Picking which draft to review, rather than being served the oldest. */
+    @Test fun review_chooser_dark() = capture("review_chooser_dark", dark = true) {
+        DraftChooserContent(
+            drafts = listOf(
+                DraftDto(id = "1", name = "Sleepsuit", photoCount = 1),
+                DraftDto(id = "2", name = "Onesie, blue", photoCount = 1),
+                DraftDto(id = "3", name = "Snow boots", photoCount = 1),
+                DraftDto(id = "4", name = "Toddler comforter", photoCount = 1),
+                DraftDto(id = "5", name = "Unidentified item", photoCount = 0),
+            ),
+            currentIndex = 1,
+            onPick = {},
+            photoUrlFor = { _, _ -> "" },
+        )
+    }
+
+    /** A bin mid-selection: the bar owns the verbs, the rows own the ticks. */
+    @Test fun tote_detail_selecting_dark() = capture("tote_detail_selecting_dark", dark = true) {
+        ToteDetailContent(
+            tote = ToteDetailDto(
+                id = "t1",
+                code = "A15",
+                label = "Baby clothes",
+                locationName = "Attic",
+                itemCount = 3,
+                containers = listOf(ContainerDto("b1", "t1", "3-6M onesies", null, 0)),
+                items = listOf(
+                    ItemDto(id = "a", name = "Onesie, blue", quantity = 1, status = "stored"),
+                    ItemDto(id = "b", name = "Onesie, white", quantity = 1, status = "stored"),
+                    ItemDto(id = "c", name = "Toddler comforter", quantity = 1, status = "stored"),
+                ),
+            ),
+            onAddItem = {}, onUnpackAll = {}, onRepackAll = {}, onTakeOut = {}, onPutBack = {},
+            selection = setOf("a", "b"),
         )
     }
 

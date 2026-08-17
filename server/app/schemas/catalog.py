@@ -351,6 +351,36 @@ class BulkMoveIn(BaseModel):
     note: str | None = None
 
 
+class BulkRelocateIn(BaseModel):
+    """Move a selection of items into one bin, or into one bag inside a bin.
+
+    Unlike [BulkMoveIn], `item_ids` is **required and non-empty**. "Everything applicable" is a
+    sensible default for unpack — the bin is right there and its contents are obvious — but there
+    is no obvious default set for "move these somewhere else", and inventing one would move things
+    nobody chose.
+    """
+
+    item_ids: list[uuid.UUID] = Field(min_length=1)
+    # Where they are going. Required: an inbound move with no destination is exactly the
+    # contradiction `record_move` refuses.
+    to_tote_id: uuid.UUID
+    # Optionally straight into a bag in that bin, which is the whole point of doing this after a
+    # batch of clothing. Validated against `to_tote_id`, never against where the items are now.
+    container_id: uuid.UUID | None = None
+    note: str | None = None
+
+
+class BulkBagIn(BaseModel):
+    """Put a selection into a bag — or take them out of one — without moving them between bins.
+
+    Not a movement: the items do not change bin, so nothing enters the ledger. `container_id` is
+    null to make them loose again.
+    """
+
+    item_ids: list[uuid.UUID] = Field(min_length=1)
+    container_id: uuid.UUID | None = None
+
+
 class MovementOut(BaseModel):
     id: uuid.UUID
     item_id: uuid.UUID

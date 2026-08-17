@@ -106,6 +106,14 @@ interface ApiService {
     @POST("items/{id}/move")
     suspend fun move(@Path("id") id: String, @Body body: MoveRequest): MovementDto
 
+    /** A selection into one bin, in one transaction — one ledger row each. */
+    @POST("items/bulk-move")
+    suspend fun bulkMove(@Body body: BulkRelocate): List<MovementDto>
+
+    /** A selection into a bag, or out of one. Writes no ledger rows: it is a label, not a move. */
+    @POST("items/bulk-bag")
+    suspend fun bulkBag(@Body body: BulkBag)
+
     @GET("items/{id}/movements")
     suspend fun movements(@Path("id") id: String): List<MovementDto>
 

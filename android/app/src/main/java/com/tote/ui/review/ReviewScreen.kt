@@ -87,6 +87,7 @@ fun ReviewScreen(
     viewModel: ReviewViewModel = hiltViewModel(),
 ) {
     var confirmingDiscard by remember { mutableStateOf(false) }
+    var choosing by remember { mutableStateOf(false) }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val queue by viewModel.queue.collectAsStateWithLifecycle()
 
@@ -114,9 +115,22 @@ fun ReviewScreen(
         onDiscard = { confirmingDiscard = true },
         onSkip = viewModel::skip,
         onPhotographSomething = onPhotographSomething,
+        onChoose = { choosing = true },
         onBack = viewModel::back,
         onRetry = viewModel::refresh,
     )
+
+    if (choosing && state.drafts.isNotEmpty()) {
+        DraftChooser(
+            drafts = state.drafts,
+            currentIndex = state.index,
+            onPick = {
+                viewModel.jumpTo(it)
+                choosing = false
+            },
+            onDismiss = { choosing = false },
+        )
+    }
 
     if (confirmingDiscard) {
         // Two steps, because this is one of the two photo-destroying actions in the app — and it
@@ -208,6 +222,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.queueStrip(
 fun ReviewContent(
     state: ReviewUiState,
     onEdit: ((DraftEdits) -> DraftEdits) -> Unit,
+    /** Open the chooser. The stack is worked one at a time, but not in a fixed order. */
+    onChoose: () -> Unit = {},
     onEditApparel: ((DraftEdits) -> DraftEdits) -> Unit = onEdit,
     onConfirm: () -> Unit,
     onDiscard: () -> Unit,
@@ -239,10 +255,14 @@ fun ReviewContent(
                             modifier = Modifier.weight(1f),
                         )
                         if (state.drafts.isNotEmpty()) {
-                            Text(
-                                "${state.position} of ${state.drafts.size}",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = Color.White.copy(alpha = 0.82f),
+                            // The counter IS the door to the chooser. It is the one thing on this
+                            // screen that already talks about the stack rather than the draft, so
+                            // it is where someone looks when they want a different one.
+                            ToteButton(
+                                text = "${state.position} of ${state.drafts.size}",
+                                onClick = onChoose,
+                                tonal = true,
+                                compact = true,
                             )
                         }
                     }

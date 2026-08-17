@@ -2,6 +2,7 @@ package com.tote.ui.totes
 
 import androidx.lifecycle.SavedStateHandle
 import com.tote.data.CatalogRepository
+import com.tote.data.local.CatalogDao
 import com.tote.data.remote.ApiService
 import com.tote.util.FeedbackBus
 import com.tote.data.remote.MoveRequest
@@ -11,6 +12,7 @@ import com.tote.data.remote.ToteDetailDto
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -62,6 +64,7 @@ class LendTest {
             api,
             FeedbackBus(),
             mock(),
+            mock<CatalogDao>().stub { on { totes() } doReturn flowOf(emptyList()) },
             SavedStateHandle(mapOf("toteId" to "t1")),
         )
     }
