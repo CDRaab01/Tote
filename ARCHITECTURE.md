@@ -733,7 +733,78 @@ than a collapsed row, so the list does not jump as images resolve.
 **The row could not hold everything.** With a thumbnail, a name, "Lend" and "Take out", the name
 truncated to "Toddler Be…" — a row that has failed at its only job. So the row carries the
 thumbnail, a two-line name and the *everyday* action; lending and deleting moved into the item
-sheet behind a tap.
+sheet behind a tap — and the sheet has since grown into the place every per-item operation lives.
+
+## The item sheet: one item, and everything that acts on it
+
+The sheet started as an alert dialog holding a photograph and a delete button, which is roughly
+what fits in a dialog. Everything else an item needs did not fit, and so did not exist — three
+capabilities the server had shipped and the client had never called:
+
+- **Editing a filed item.** `patchItem` had zero callers. A name typed wrong at review time was
+  permanent, and the sanctioned remedy was to delete the row and photograph the thing again —
+  which destroys the photographs, the only artefact here that cannot be recreated once a bin is
+  taped shut.
+- **Moving it between bins.** The core verb of a bin app had no button anywhere. `putBack`
+  hardcoded the bin it was already in, so relocating something meant delete-and-retype, taking
+  the ledger with it.
+- **Its history.** `movements()` had zero callers. The ledger has been written faithfully since
+  Phase 2 and "where was this last year" — the question it exists to answer — was answerable by
+  the database and by nothing a person could tap.
+
+It is now `ui/items/`: a `ModalBottomSheet` over whatever screen opened it, a stateless
+`ItemSheetContent` (a sheet renders in its own window and never reaches idle under Robolectric —
+the same constraint that split `PickerList` out of `PickerDialog`), and one `ItemSheetViewModel`.
+
+**It takes the `ItemDto` the caller already holds** rather than fetching by id. All three callers
+have the full row on screen, so a fetch would be a spinner over data already visible; the write
+paths return the updated item, so the sheet stays true without one.
+
+**The pickers are modes of the sheet, not dialogs over it.** A dialog inside a modal sheet is two
+scrims and two Back handlers, and the Back that cancels the picker is indistinguishable from the
+one that throws away the edit underneath.
+
+### Four rules the sheet is built on
+
+1. **The PATCH body names every field the form owns.** `encodeDefaults` is on in the Json config,
+   so a null is serialised as an explicit null, and the server's `exclude_unset=True` treats a
+   present null as *clear this*. `ItemUpdate(name = "x")` would therefore blank the description,
+   the category and the condition, and set `quantity` to null against a NOT NULL column. The
+   endpoint having had no callers is the only reason that was never discovered in production.
+2. **The clothing block is omitted unless somebody touched it** — the confirm body's rule,
+   extended to the edit path. The server skips a null `apparel` entirely, so an untouched section
+   means "leave what the label read". Most items are not garments and most edits never scroll
+   that far; clearing it would destroy the only reading of a tag now sealed in a bin.
+3. **Whereabouts never goes through PATCH.** Moving is `POST /items/{id}/move`, so every
+   relocation leaves a ledger row: `moved` for something stored, `repacked` for something out.
+   Two writers of `current_tote_id` would put holes in the one record this app promises has none.
+4. **The change is reported after the sheet closes**, because a delete and a move both close it.
+   The collector therefore lives *above* the composable's early return — one that only existed
+   while the sheet was open would be gone when the report arrived, and the screen behind would go
+   on showing a row that no longer exists.
+
+### Where it opens from
+
+The bin's contents, a **search hit**, and a person's fits and loans. All three were previously
+dead ends. A search hit's tap was guarded on `currentToteId`, so a row for anything lent out or
+unpacked — exactly the things people search for, because they cannot find them — did nothing at
+all and said nothing about why. A person's rows could not act on the item at all.
+
+One caller-supplied verb rides in as `extraActionLabel`: the person screen passes "Mark
+outgrown…", which needs a person and so has no business being knowledge the sheet holds.
+
+### Two bugs found on the way
+
+**Lending had been unreachable since the picker round.** `LendDialog` imported `PickerDialog` and
+never rendered it, so tapping "Lending to" set a flag nobody read, no person could be selected,
+and the Lend button — enabled only once one is — could never enable. Nothing failed; the screen
+simply did not respond, which is the failure mode hardest to report and easiest to blame on the
+tailnet.
+
+**Manual add collected two fields of six.** A hand-added item was permanently uncategorised with
+no edit path to fix it, so it was a strictly poorer record than a photographed one for no reason
+anyone had chosen. It now takes a description and a category; condition and the clothing block
+are a tap away in the sheet, where a filed item is edited.
 
 ## Deleting an item
 

@@ -192,6 +192,26 @@ data class ItemCreate(
     @SerialName("tote_id") val toteId: String? = null,
 )
 
+/**
+ * A hand edit of an already-filed item.
+ *
+ * **Whereabouts is deliberately absent.** There is no `tote_id` and no `status` here: moving a
+ * thing is a [MoveRequest], because every change of location has to leave a ledger row. A PATCH
+ * that could relocate an item would be a second writer of derived state, and the answer to "where
+ * was this last year" would start having holes in it.
+ *
+ * **This body is a whole replacement of the fields it names, not a sparse patch.** `encodeDefaults`
+ * is on, so every property here is serialised — a null is sent as an explicit null, and the server
+ * (`exclude_unset=True`) treats a present null as "clear this". So build it from a form that owns
+ * all of these fields and never from a one-field delta: `ItemUpdate(name = "x")` would blank the
+ * description, the category and the condition, and set `quantity` to null against a NOT NULL
+ * column. The endpoint had no callers before this, which is why the mine was never stepped on.
+ *
+ * `apparel` is the one exception and it is on purpose: the server skips the block entirely when it
+ * arrives null, so an untouched clothing section means **"leave what the label read"** rather than
+ * "clear it". Most items are not garments and most edits never open that section; wiping it would
+ * destroy the only reading of a tag now sealed inside a bin.
+ */
 @Serializable
 data class ItemUpdate(
     val name: String? = null,
@@ -199,6 +219,8 @@ data class ItemUpdate(
     val notes: String? = null,
     @SerialName("category_id") val categoryId: String? = null,
     val quantity: Int? = null,
+    val condition: String? = null,
+    val apparel: ApparelPatch? = null,
 )
 
 @Serializable
@@ -225,13 +247,24 @@ data class BulkMove(
     val note: String? = null,
 )
 
+/**
+ * One row of the ledger — the reason this app is not a spreadsheet.
+ *
+ * Both tote ids are ids, not codes: the server denormalises a code onto an item because a search
+ * hit has to answer "which bin" in one request, but a movement is read on one screen at a time and
+ * the client already holds every bin in the Room cache. Resolving them here also means a bin
+ * renamed since the move shows its *current* code, which is the one printed on the card in the
+ * attic today.
+ */
 @Serializable
 data class MovementDto(
     val id: String,
     @SerialName("item_id") val itemId: String,
     @SerialName("from_tote_id") val fromToteId: String? = null,
     @SerialName("to_tote_id") val toToteId: String? = null,
+    val quantity: Int = 1,
     val reason: String,
+    @SerialName("person_id") val personId: String? = null,
     val note: String? = null,
     @SerialName("moved_at") val movedAt: String,
 )

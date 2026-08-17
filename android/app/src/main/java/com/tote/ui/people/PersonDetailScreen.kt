@@ -46,6 +46,8 @@ import com.tote.data.remote.PersonSizeDto
 import com.tote.ui.components.HazardRule
 import com.tote.ui.components.DateField
 import com.tote.ui.components.ItemThumbnail
+import com.tote.ui.items.ItemSheet
+import com.tote.ui.items.ItemSheetViewModel
 import com.tote.ui.components.PickerDialog
 import com.tote.ui.components.PickerOption
 import com.tote.ui.components.RefreshOnResume
@@ -63,14 +65,16 @@ fun PersonDetailScreen(
     onOpenTote: (String) -> Unit,
     onGone: () -> Unit = {},
     viewModel: PersonDetailViewModel = hiltViewModel(),
+    itemSheet: ItemSheetViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var outgrowingOne by remember { mutableStateOf<ItemDto?>(null) }
 
     RefreshOnResume(viewModel::load)
 
     PersonDetailContent(
         state = state,
-        onOpenTote = onOpenTote,
+        onOpenItem = itemSheet::open,
         onGarmentType = viewModel::setGarmentType,
         onAddSize = viewModel::addSize,
         onReturned = viewModel::markReturned,
@@ -80,12 +84,42 @@ fun PersonDetailScreen(
         onDeletePerson = { viewModel.deletePerson(onGone) },
         onDeleteSize = viewModel::deleteSize,
     )
+
+    // Every row on this screen used to be either inert (a loan) or a one-way door into a bin (a
+    // fit), and neither could act on the thing itself. "Mark outgrown…" rides in as the caller's
+    // extra verb because it needs the person, which the sheet has no business knowing.
+    ItemSheet(
+        viewModel = itemSheet,
+        onChanged = viewModel::load,
+        onOpenBin = { toteId ->
+            itemSheet.close()
+            onOpenTote(toteId)
+        },
+        extraActionLabel = "Mark outgrown…",
+        onExtraAction = { item ->
+            itemSheet.close()
+            outgrowingOne = item
+        },
+    )
+
+    outgrowingOne?.let { item ->
+        PickToteDialog(
+            title = "File ${item.name} away",
+            subtitle = "Outgrown clothes still need a bin — one that has no home is one nobody can find.",
+            totes = state.totes,
+            onDismiss = { outgrowingOne = null },
+            onPick = { toteId ->
+                viewModel.markOutgrown(listOf(item.id), toteId)
+                outgrowingOne = null
+            },
+        )
+    }
 }
 
 @Composable
 fun PersonDetailContent(
     state: PersonDetailState,
-    onOpenTote: (String) -> Unit,
+    onOpenItem: (ItemDto) -> Unit,
     onGarmentType: (String?) -> Unit,
     onAddSize: (String, String) -> Unit,
     onReturned: (String, String) -> Unit,
@@ -243,13 +277,13 @@ fun PersonDetailContent(
                     }
                 }
             }
-            fitsSection(state, onOpenTote, onOutgrown = { outgrowing = it })
+            fitsSection(state, onOpenItem, onOutgrown = { outgrowing = it })
 
             // ── On loan ──────────────────────────────────────────────────────
             if (state.onLoan.isNotEmpty()) {
                 item { SectionHeader(label = "Has of ours", channel = colors.attention.base) }
                 items(state.onLoan, key = { "loan-${it.id}" }) { item ->
-                    PanelCard {
+                    PanelCard(onClick = { onOpenItem(item) }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             ItemThumbnail(item)
                             Spacer(Modifier.width(spacing.md))
@@ -438,7 +472,7 @@ fun PersonDetailContent(
  */
 private fun androidx.compose.foundation.lazy.LazyListScope.fitsSection(
     state: PersonDetailState,
-    onOpenTote: (String) -> Unit,
+    onOpenItem: (ItemDto) -> Unit,
     onOutgrown: (List<String>) -> Unit,
 ) {
     val fits = state.fits
@@ -471,7 +505,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.fitsSection(
         }
         else -> {
             items(fits.items, key = { "fit-${it.id}" }) { item ->
-                PanelCard(onClick = { item.currentToteId?.let(onOpenTote) }) {
+                PanelCard(onClick = { onOpenItem(item) }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         ItemThumbnail(item)
                         Spacer(Modifier.width(ToteTheme.spacing.md))
@@ -625,7 +659,7 @@ private fun PersonDetailPreview() {
                 onLoan = emptyList(),
                 loading = false,
             ),
-            onOpenTote = {},
+            onOpenItem = {},
             onGarmentType = {},
             onAddSize = { _, _ -> },
             onReturned = { _, _ -> },

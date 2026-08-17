@@ -37,6 +37,8 @@ import com.tote.data.remote.ItemDto
 import com.tote.ui.components.HazardRule
 import com.tote.ui.components.RefreshOnResume
 import com.tote.ui.components.ItemThumbnail
+import com.tote.ui.items.ItemSheet
+import com.tote.ui.items.ItemSheetViewModel
 import com.tote.ui.theme.ToteTheme
 import design.pulse.ui.components.Caption
 import design.pulse.ui.components.EmptyState
@@ -54,6 +56,7 @@ fun SearchScreen(
     onOpenTote: (String) -> Unit,
     onOpenSettings: () -> Unit = {},
     viewModel: SearchViewModel = hiltViewModel(),
+    itemSheet: ItemSheetViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
@@ -64,8 +67,21 @@ fun SearchScreen(
     SearchContent(
         state = state,
         onQueryChange = viewModel::onQueryChange,
-        onOpenTote = onOpenTote,
+        onOpenItem = itemSheet::open,
         onOpenSettings = onOpenSettings,
+    )
+
+    // A hit opens the item, not the bin. Tapping one used to be guarded on `currentToteId`, so a
+    // row for anything lent out or unpacked — exactly the things you search for because you
+    // cannot find them — did nothing at all, silently. The sheet answers "what is this and where
+    // is it" for every status, and offers the bin as a button when there is one.
+    ItemSheet(
+        viewModel = itemSheet,
+        onChanged = viewModel::refresh,
+        onOpenBin = { toteId ->
+            itemSheet.close()
+            onOpenTote(toteId)
+        },
     )
 }
 
@@ -74,7 +90,7 @@ fun SearchScreen(
 fun SearchContent(
     state: SearchUiState,
     onQueryChange: (String) -> Unit,
-    onOpenTote: (String) -> Unit,
+    onOpenItem: (ItemDto) -> Unit,
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -222,7 +238,7 @@ fun SearchContent(
             }
 
             items(state.results, key = { it.id }) { item ->
-                SearchHitRow(item = item, onClick = { item.currentToteId?.let(onOpenTote) })
+                SearchHitRow(item = item, onClick = { onOpenItem(item) })
             }
         }
     }
@@ -296,7 +312,7 @@ private fun SearchPreview() {
                 ),
             ),
             onQueryChange = {},
-            onOpenTote = {},
+            onOpenItem = {},
         )
     }
 }

@@ -57,7 +57,12 @@ import com.tote.data.remote.PhotoUrls
 import com.tote.ui.components.HazardRule
 import com.tote.ui.components.PickerDialog
 import com.tote.ui.components.PickerField
+import com.tote.ui.components.CONDITIONS
+import com.tote.ui.components.DEPARTMENTS
 import com.tote.ui.components.PickerOption
+import com.tote.ui.components.SlateChip
+import com.tote.ui.components.conditionLabel
+import com.tote.ui.components.departmentLabel
 import com.tote.ui.components.ToteButton
 import com.tote.ui.theme.ToteTheme
 import design.pulse.ui.components.Caption
@@ -66,18 +71,6 @@ import design.pulse.ui.components.ErrorState
 import design.pulse.ui.components.HeroPanel
 import design.pulse.ui.components.PanelCard
 import design.pulse.ui.components.SectionHeader
-
-/** The conditions the server accepts, in the order a person would rank them. */
-private val CONDITIONS = listOf("new", "like_new", "good", "fair", "poor")
-
-private fun conditionLabel(value: String) = when (value) {
-    "new" -> "New"
-    "like_new" -> "Like new"
-    "good" -> "Good"
-    "fair" -> "Fair"
-    "poor" -> "Poor"
-    else -> value
-}
 
 /**
  * The review stack — the gate between a photograph and the catalog.
@@ -553,18 +546,6 @@ private fun scanNotice(draft: DraftDto): String? = when {
     else -> null
 }
 
-/** The departments the server accepts, in the order a household picks from them. */
-private val DEPARTMENTS = listOf("girls", "boys", "womens", "mens", "unisex")
-
-private fun departmentLabel(value: String) = when (value) {
-    "girls" -> "Girls"
-    "boys" -> "Boys"
-    "womens" -> "Women's"
-    "mens" -> "Men's"
-    "unisex" -> "Unisex"
-    else -> value
-}
-
 /**
  * What to say under the size field.
  *
@@ -588,21 +569,6 @@ private fun sizeSupportingText(draft: DraftDto): String {
         else -> system
     }
     return "Kept word for word, and placed on the ladder as $ladder."
-}
-
-/** Selection in Tote's own channel — see the note in the capture screen's chip. */
-@Composable
-private fun SlateChip(selected: Boolean, label: String, onClick: () -> Unit) {
-    val slate = ToteTheme.colors.slate
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        colors = FilterChipDefaults.filterChipColors(
-            selectedContainerColor = slate.dim,
-            selectedLabelColor = slate.base,
-        ),
-    )
 }
 
 @Composable

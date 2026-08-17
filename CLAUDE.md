@@ -524,7 +524,10 @@ parse** without a department (youth 8 vs women's 8 — designed, not a gap); `si
 and `Item.apparel` is `lazy="selectin"` because a lazy load under asyncio raises MissingGreenlet
 from inside Pydantic's `from_attributes`, on paths that never mention apparel.
 The client adds the clothing section to review, the tag's words on search and tote-detail rows,
-`GET /items?size=` matching by ordinal, and Room **v3** caching `size_raw` for offline search.
+and Room **v3** caching `size_raw` for offline search. (This line used to claim the client did
+`GET /items?size=` matching by ordinal. **It does not** — the endpoint is real and tested, but
+`ApiService.items()` passes only `tote_id` and nothing has ever called it with a size. A
+size-filter bar is on the deliberately-not-doing list; the claim was just wrong.)
 Two client rules worth knowing: an **untouched** clothing section is omitted from the confirm body
 (the server reads omitted as "leave what the label read"), and only `size_raw` is cached — never
 the derived index, which the server owns.
@@ -643,6 +646,28 @@ Sizes are **deletable, never editable** — `size_raw` is a reading, and an in-p
 rewrite it while keeping its timestamp; delete and re-record re-derives honestly. Deleting a person
 keeps every movement row (the FK nulls `person_id`) and the confirm says so. `busy` is finally
 read, so a double-tapped Remove is no longer two DELETEs and a 404.
+
+**UX round PR 2 — the item sheet, extracted and grown (#26).** The biggest of the round. The
+alert dialog behind an item row could show a photograph and delete it and nothing else, so three
+things the server had supported all along had no UI at all: **editing a filed item** (a typo was
+permanent; the sanctioned fix was delete-and-rephotograph, which destroys the photographs),
+**moving it between bins** — the core verb of a bin app — and **its movement history**, which the
+ledger has been faithfully writing since Phase 2 and nobody could read. It is now a
+`ModalBottomSheet` in `ui/items/`, opened from the bin, from a **search hit** and from a person's
+fits and loans, with a stateless `ItemSheetContent` because a sheet renders in its own window and
+never idles under Robolectric.
+Four things worth knowing: `PATCH /items/{id}` needs a body naming **every field the form owns** —
+`encodeDefaults` is on and the server reads a present null as "clear this", so a one-field delta
+would blank the rest and set `quantity` null against a NOT NULL column (the endpoint had no
+callers, so the mine was never stepped on); the clothing block is **omitted unless touched**, same
+rule as the confirm body; whereabouts never goes through PATCH, only through `move`; and the sheet
+reports its change **after** closing, so the collector lives above the early return.
+Two bugs fell out along the way. **Lending had been unreachable since the picker round**: the lend
+dialog's `PickerDialog` was imported and never rendered, so the field set a flag nobody read, no
+person could be chosen, and the Lend button could never enable. And a **search hit's tap was
+guarded on `currentToteId`**, so a row for anything lent out or unpacked — exactly what you search
+for because you cannot find it — did nothing at all, silently. Manual add now takes a description
+and a category too, instead of filing a permanently uncategorised row.
 
 ---
 
