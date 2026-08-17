@@ -1583,6 +1583,20 @@ twelve infant rungs are strictly increasing and all distinct, and that `36m` and
 Unlike the bare number above, this is **not** a designed under-read. `6m` is unambiguous; there
 was simply no row for it.
 
+### A ladder change does not reach rows already written
+
+The index is derived **at write time** — `size_system`/`size_ordinal` are recomputed from
+`size_raw` on every write and are never client-settable, which is the right rule and has its own
+section below. The consequence is easy to miss and was: shipping the bare months fixed nothing for
+the garments already in the bin. They keep the null the ladder gave them the day they were stored,
+so `fits` still cannot see them, and the deploy looks successful because the code is correct.
+
+**Any change to `app/sizing/ladder.py` is therefore two jobs: the rungs, and a backfill of rows
+where `size_raw IS NOT NULL AND size_ordinal IS NULL`.** Re-derive through `parse_size` rather than
+writing values by hand, so the parser stays the one implementation; `size_raw` is never touched, and
+setting the two derived columns back to NULL undoes it. It is not a migration — the schema does not
+change, and the set to fix depends on which rungs moved.
+
 ## Name-first capture: the question you do not ask
 
 The scan makes two vision calls for a garment — the omnibus `identify_item` and the narrow
