@@ -957,6 +957,62 @@ class ScreenshotTest {
         )
     }
 
+
+    /**
+     * The bin the owner actually built: six garments honestly called "Shirt", told apart only by
+     * the sentence that was one tap away on each of them.
+     */
+    @Test fun tote_detail_same_name_dark() = capture("tote_detail_same_name_dark", dark = true) {
+        ToteDetailContent(
+            tote = sameNameBin(),
+            onAddItem = {}, onUnpackAll = {}, onRepackAll = {}, onTakeOut = {}, onPutBack = {},
+        )
+    }
+
+    /**
+     * The same bin in light.
+     *
+     * Worth its own baseline rather than trusting the dark one: the size mark is the first place
+     * the provenance violet carries *text* at data-type size, and the two themes are separate
+     * channel palettes — a ratio that holds against charcoal says nothing about one against white.
+     */
+    @Test fun tote_detail_same_name_light() = capture("tote_detail_same_name_light", dark = false) {
+        ToteDetailContent(
+            tote = sameNameBin(),
+            onAddItem = {}, onUnpackAll = {}, onRepackAll = {}, onTakeOut = {}, onPutBack = {},
+        )
+    }
+
+    private fun sameNameBin() = ToteDetailDto(
+        id = "t1",
+        code = "A15",
+        label = "Baby clothes",
+        locationName = "Attic",
+        itemCount = 4,
+        items = listOf(
+            ItemDto(
+                id = "a", name = "Shirt", quantity = 1, status = "stored",
+                description = "Yellow and green construction digger graphic",
+                apparel = ApparelDto(sizeRaw = "12m"),
+            ),
+            ItemDto(
+                id = "b", name = "Shirt", quantity = 1, status = "stored",
+                description = "Navy blue sleeves, light grey body",
+                apparel = ApparelDto(sizeRaw = "12m"),
+            ),
+            ItemDto(
+                id = "c", name = "Onesie", quantity = 1, status = "stored",
+                description = "Red, printed text reading LADIES MAN",
+                apparel = ApparelDto(sizeRaw = "12m"),
+            ),
+            ItemDto(
+                id = "d", name = "Shorts", quantity = 6, status = "stored",
+                description = "Navy blue with white stripes down the side",
+                apparel = ApparelDto(sizeRaw = "6m"),
+            ),
+        ),
+    )
+
     // LoginContent is the stateless body precisely so it can be captured here: the stateful
     // LoginScreen needs Hilt and a real AppAuth service, neither of which exists in a JVM test.
     @Test fun login_light() =

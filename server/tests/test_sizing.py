@@ -46,6 +46,15 @@ PARSES = [
     ("12M", None, SYSTEM_INFANT_MONTHS),
     ("18 mo", None, SYSTEM_INFANT_MONTHS),
     ("24M", None, SYSTEM_INFANT_MONTHS),
+    # Bare month points. These were missing while 12M/18M/24M were present, on the reasoning that
+    # infant clothing is sold in ranges — found in production with four garments typed "6m"
+    # parsing to nothing, so `fits` could not see them.
+    ("3m", None, SYSTEM_INFANT_MONTHS),
+    ("6m", None, SYSTEM_INFANT_MONTHS),
+    ("9M", None, SYSTEM_INFANT_MONTHS),
+    ("6 months", None, SYSTEM_INFANT_MONTHS),
+    ("15M", None, SYSTEM_INFANT_MONTHS),
+    ("36 mo", None, SYSTEM_INFANT_MONTHS),
     ("2T", None, SYSTEM_TODDLER),
     ("3t", None, SYSTEM_TODDLER),
     ("4T", None, SYSTEM_TODDLER),
@@ -336,3 +345,25 @@ def test_photo_role_rank_keeps_the_tag_last():
     # An unknown role sorts ahead of the tag, so pre-roles items keep their original order.
     assert photo_role_rank(None) < photo_role_rank("tag")
     assert photo_role_rank("something-new") == photo_role_rank(None)
+
+
+def test_a_bare_month_sits_between_the_ranges_either_side_of_it():
+    """The ranges were already the midpoints of points that did not exist.
+
+    3-6m is 0.375 because it sits between 3m (0.25) and 6m (0.5). Adding the bare points had to
+    preserve that or an item typed "6m" would sort on the wrong side of one typed "3-6m", which
+    is worse than not parsing at all — a wrong ordinal sends someone to the wrong bin twice.
+    """
+    order = ["NB", "0-3m", "3m", "3-6m", "6m", "6-9m", "9m", "9-12m", "12m", "15m", "18m", "24m"]
+    ordinals = [parse_size(raw).ordinal for raw in order]
+    assert ordinals == sorted(ordinals), ordinals
+    assert len(set(ordinals)) == len(ordinals), "every rung is distinct"
+
+
+def test_36_months_lands_where_3T_does():
+    """One shared axis is the whole point: the same body gets the same ordinal whichever system
+    the tag happens to use."""
+    assert parse_size("36m").ordinal == parse_size("3T").ordinal
+    # But the SYSTEM is still reported honestly — they are not the same garment vocabulary.
+    assert parse_size("36m").system == SYSTEM_INFANT_MONTHS
+    assert parse_size("3T").system == SYSTEM_TODDLER
