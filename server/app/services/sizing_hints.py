@@ -19,7 +19,24 @@ import re
 # The category names likely to be clothing in this household's vocabulary. Matched loosely
 # (substring, casefolded) because categories are user-editable seeded rows, not an enum — someone
 # renaming "Clothing" to "Kids clothes" must not silently switch the label pass off.
-_CLOTHING_CATEGORY_HINTS = ("cloth", "apparel", "garment", "wear", "shoe", "footwear", "uniform")
+#
+# "baby"/"infant" earn a place even though such a bin also holds a monitor and a bottle steriliser
+# with no label between them. The asymmetry in the module note decides it: those cost one wasted
+# call each, while a sleepsuit that misses its label pass costs a trip to the attic. Added when
+# the "Baby" seed category shipped and matched NONE of the original hints — every baby garment
+# filed under it would have skipped the size read unless its name happened to carry a listed word,
+# which is the failure this gate exists to prevent.
+_CLOTHING_CATEGORY_HINTS = (
+    "cloth",
+    "apparel",
+    "garment",
+    "wear",
+    "shoe",
+    "footwear",
+    "uniform",
+    "baby",
+    "infant",
+)
 
 # Words that make an item worth asking a label about. Deliberately broad; see the module note.
 _CLOTHING_WORDS = frozenset(
@@ -59,6 +76,17 @@ _CLOTHING_WORDS = frozenset(
         "pyjamas",
         "pjs",
         "sleeper",
+        "sleepsuit",
+        "sleepsack",
+        "sleepingbag",
+        "babygro",
+        "babygrow",
+        "swaddle",
+        "bib",
+        "jumpsuit",
+        "playsuit",
+        "dungarees",
+        "leotard",
         "nightgown",
         "robe",
         "swimsuit",
