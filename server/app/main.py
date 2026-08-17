@@ -10,7 +10,17 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.config import settings
 from app.limiter import limiter
-from app.routers import catalog, items, people, public, scan, suite_auth, totes, users
+from app.routers import (
+    catalog,
+    containers,
+    items,
+    people,
+    public,
+    scan,
+    suite_auth,
+    totes,
+    users,
+)
 
 
 def _app_version() -> str:
@@ -91,6 +101,7 @@ app.include_router(users.router)
 app.include_router(catalog.router)
 app.include_router(totes.router)
 app.include_router(items.router)
+app.include_router(containers.router)
 app.include_router(public.router)
 app.include_router(scan.router)
 app.include_router(people.router)

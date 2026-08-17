@@ -39,6 +39,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.data.remote.CategoryDto
+import com.tote.data.remote.ContainerDto
 import com.tote.data.remote.ItemDto
 import com.tote.data.remote.LocationDto
 import com.tote.data.remote.PersonDto
@@ -77,6 +78,8 @@ fun ToteDetailScreen(
     var lending by remember { mutableStateOf<String?>(null) }
     var showEdit by remember { mutableStateOf(false) }
     var confirmingDelete by remember { mutableStateOf(false) }
+    var addingBag by remember { mutableStateOf(false) }
+    var editingBag by remember { mutableStateOf<ContainerDto?>(null) }
     val people by viewModel.people.collectAsStateWithLifecycle()
     val locations by viewModel.locations.collectAsStateWithLifecycle()
     val categories by viewModel.categories.collectAsStateWithLifecycle()
@@ -122,6 +125,8 @@ fun ToteDetailScreen(
                     viewModel.loadLocations()
                     showEdit = true
                 },
+                onAddBag = { addingBag = true },
+                onEditBag = { editingBag = it },
             )
             if (showEdit) {
                 EditToteDialog(
@@ -141,6 +146,31 @@ fun ToteDetailScreen(
                         confirmingDelete = true
                     },
                     onNewLocation = viewModel::createLocation,
+                )
+            }
+            if (addingBag) {
+                BagDialog(
+                    bag = null,
+                    onDismiss = { addingBag = false },
+                    onSave = { name, notes ->
+                        viewModel.addContainer(name, notes)
+                        addingBag = false
+                    },
+                    onDelete = null,
+                )
+            }
+            editingBag?.let { bag ->
+                BagDialog(
+                    bag = bag,
+                    onDismiss = { editingBag = null },
+                    onSave = { name, notes ->
+                        viewModel.editContainer(bag.id, name, notes)
+                        editingBag = null
+                    },
+                    onDelete = {
+                        viewModel.deleteContainer(bag.id)
+                        editingBag = null
+                    },
                 )
             }
             if (confirmingDelete) {
@@ -247,6 +277,8 @@ fun ToteDetailContent(
     onPrintCard: () -> Unit = {},
     tagMismatch: Boolean = false,
     onEditBin: () -> Unit = {},
+    onAddBag: () -> Unit = {},
+    onEditBag: (ContainerDto) -> Unit = {},
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -364,7 +396,20 @@ fun ToteDetailContent(
                 )
             }
 
-            item { SectionHeader(label = "In this tote", channel = colors.stored.base) }
+            item {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SectionHeader(label = "In this tote", channel = colors.stored.base)
+                    // Only offered once there is something to group. A bin with two things in it
+                    // does not need subdividing, and the button would be clutter arguing it does.
+                    if (tote.items.isNotEmpty() || tote.containers.isNotEmpty()) {
+                        ToteButton(text = "Add bag", onClick = onAddBag, tonal = true, compact = true)
+                    }
+                }
+            }
 
             if (tote.items.isEmpty()) {
                 item {
@@ -380,13 +425,41 @@ fun ToteDetailContent(
                 }
             }
 
-            items(tote.items, key = { it.id }) { item ->
-                ItemRow(
-                    item,
-                    actionLabel = "Take out",
-                    onAction = { onTakeOut(item.id) },
-                    onOpen = { onOpenItem(item) },
-                )
+            // Grouped by bag, loose things last. A real bin of baby clothes is three zip bags
+            // and a blanket, and a flat list of forty garments is the shape that makes someone
+            // tip the whole bin out on the floor to find one.
+            tote.containers.forEach { bag ->
+                val inBag = tote.items.filter { it.containerId == bag.id }
+                item(key = "bag-${bag.id}") {
+                    BagHeader(bag = bag, count = inBag.size, onEdit = { onEditBag(bag) })
+                }
+                items(inBag, key = { it.id }) { item ->
+                    ItemRow(
+                        item,
+                        actionLabel = "Take out",
+                        onAction = { onTakeOut(item.id) },
+                        onOpen = { onOpenItem(item) },
+                    )
+                }
+            }
+
+            val loose = tote.items.filter { it.containerId == null }
+            if (loose.isNotEmpty()) {
+                if (tote.containers.isNotEmpty()) {
+                    item(key = "loose-head") {
+                        // Only when there is something to contrast with. "Loose in the bin" over
+                        // a bin with no bags describes nothing.
+                        SectionHeader(label = "Loose in the bin", channel = colors.stored.base)
+                    }
+                }
+                items(loose, key = { it.id }) { item ->
+                    ItemRow(
+                        item,
+                        actionLabel = "Take out",
+                        onAction = { onTakeOut(item.id) },
+                        onOpen = { onOpenItem(item) },
+                    )
+                }
             }
 
             // The gap, shown rather than hidden. This section is the answer to "I thought the
@@ -466,6 +539,39 @@ private fun TagAndCardRow(
                 )
                 Spacer(Modifier.height(spacing.xs))
                 ToteButton(text = "Print card", onClick = onPrintCard, tonal = true)
+            }
+        }
+    }
+}
+
+
+/**
+ * A bag's heading inside a bin.
+ *
+ * The notes line is the reason a bag is worth modelling at all: a bag is often only
+ * *approximately* catalogued — "mostly 3-6M onesies, some vests" — and knowing that is the
+ * difference between reaching for the right one and opening all three.
+ */
+@Composable
+private fun BagHeader(bag: ContainerDto, count: Int, onEdit: () -> Unit) {
+    val colors = ToteTheme.colors
+    val spacing = ToteTheme.spacing
+
+    PanelCard(onClick = onEdit, channel = colors.provenance.base) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    bag.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = colors.provenance.base,
+                )
+                Spacer(Modifier.height(spacing.xs))
+                Caption(
+                    text = listOfNotNull(
+                        "$count item${if (count == 1) "" else "s"} catalogued",
+                        bag.notes,
+                    ).joinToString(" · "),
+                )
             }
         }
     }
@@ -935,6 +1041,74 @@ private fun DeleteToteDialog(
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Keep it") } },
+    )
+}
+
+
+/**
+ * Name a bag, and say roughly what is in it.
+ *
+ * Removing one needs no confirmation, unlike almost every other delete in this app: the server
+ * clears `items.container_id` rather than cascading, so nothing is destroyed but the label and
+ * everything that was in the bag stays exactly where it is. The copy says so, because "delete"
+ * reads as "delete the contents" to everyone who has not read the schema.
+ */
+@Composable
+private fun BagDialog(
+    bag: ContainerDto?,
+    onDismiss: () -> Unit,
+    onSave: (String, String?) -> Unit,
+    onDelete: (() -> Unit)?,
+) {
+    var name by remember { mutableStateOf(bag?.name.orEmpty()) }
+    var notes by remember { mutableStateOf(bag?.notes.orEmpty()) }
+    val spacing = ToteTheme.spacing
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (bag == null) "Add a bag" else "Edit bag") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("What is it") },
+                    placeholder = { Text("3-6M onesies") },
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(spacing.md))
+                OutlinedTextField(
+                    value = notes,
+                    onValueChange = { notes = it },
+                    label = { Text("Roughly what's inside") },
+                    placeholder = { Text("mostly onesies, some vests") },
+                )
+                Spacer(Modifier.height(spacing.sm))
+                // The whole point of the notes field: a bag you never itemise is still worth
+                // describing, and this is what you read instead of opening it.
+                Caption(text = "Worth filling in even if you never catalogue the bag's contents.")
+                if (onDelete != null) {
+                    Spacer(Modifier.height(spacing.md))
+                    ToteButton(
+                        text = "Remove this bag",
+                        onClick = onDelete,
+                        tonal = true,
+                        channel = MaterialTheme.colorScheme.error,
+                        dimChannel = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(spacing.xs))
+                    Caption(text = "Everything in it stays in this bin, just loose.")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(name, notes.takeIf { it.isNotBlank() }) },
+                enabled = name.isNotBlank(),
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 

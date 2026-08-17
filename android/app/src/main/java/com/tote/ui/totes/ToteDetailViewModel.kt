@@ -366,6 +366,49 @@ class ToteDetailViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Add a bag to this bin.
+     *
+     * There is no "move a bag" here and there never will be: a container belongs to the tote it
+     * was created in, because a bag that could change bins would be a second source of truth for
+     * where a thing is. Its ITEMS move, one ledger row each, like everything else.
+     */
+    fun addContainer(name: String, notes: String?) {
+        viewModelScope.launch {
+            runCatching { repo.createContainer(toteId, name, notes?.takeIf { it.isNotBlank() }) }
+                .onSuccess { load() }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't add that bag.")) }
+        }
+    }
+
+    fun editContainer(containerId: String, name: String, notes: String?) {
+        viewModelScope.launch {
+            runCatching {
+                repo.patchContainer(toteId, containerId, name, notes?.takeIf { it.isNotBlank() })
+            }
+                .onSuccess { load() }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't save that bag.")) }
+        }
+    }
+
+    /**
+     * Undo the grouping, never the contents.
+     *
+     * `items.container_id` is `ON DELETE SET NULL` on the server, so everything that was in the
+     * bag stays exactly where it is — in this bin, loose. That is why this needs no confirmation
+     * dialog: nothing is destroyed but the label.
+     */
+    fun deleteContainer(containerId: String) {
+        viewModelScope.launch {
+            runCatching { repo.deleteContainer(toteId, containerId) }
+                .onSuccess {
+                    load()
+                    feedback.say("Bag removed. What was in it is still in this bin.")
+                }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't remove that bag.")) }
+        }
+    }
+
     fun putBack(itemId: String) {
         viewModelScope.launch {
             runCatching {

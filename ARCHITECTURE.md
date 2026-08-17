@@ -365,6 +365,58 @@ bin and never put back is in the same practical position — it exists and nothi
 is. The ledger keeps *why* they differ; this list is about what to do next. `disposed` is
 excluded because it is terminal, not a loose end.
 
+## Bags inside a bin
+
+A real bin is not a flat pile. A tote of baby clothes is three zip bags and a loose blanket, and
+"which bag is the 3-6M one" was unanswerable — the contents were forty rows in one list, which is
+the shape that makes somebody tip the whole bin out on the floor.
+
+`containers` is one level of grouping **inside** a tote: id, user_id, tote_id, name, notes.
+
+### It is a label, not a location — and that is the whole design
+
+A container belongs to exactly one tote and **carries no whereabouts**. An item's location stays
+`items.current_tote_id`, full stop; `container_id` only says which bag inside that tote it sits
+in.
+
+The alternative was tempting and was rejected on purpose. A movable bag — "take the 3-6M bag down
+from the attic" as one action — needs its own `tote_id`, which the item's `current_tote_id` can
+then contradict, and **nothing fails loudly when they drift**. Two sources of truth for where a
+thing is, in the one app whose entire promise is answering that. So a bag does not move as a unit;
+its items move, one ledger row each, through the single writer that has always owned this.
+
+Three consequences follow mechanically:
+
+- **Leaving the tote leaves the bag.** `record_move` clears `container_id` alongside
+  `current_tote_id` — in the single writer, not in each caller. A stale membership would make a
+  bin's grouping claim something the bin does not contain. Entering a tote clears it too: the
+  destination's bags are not the source's.
+- **An item cannot join a bag in another bin.** `PATCH /items/{id}` validates `container_id`
+  against the item's *current* tote and 422s otherwise. That is the only way a container could
+  ever lie, and it is closed.
+- **There is no way to move a bag.** `ContainerPatch` has no `tote_id`, and every route hangs off
+  `/totes/{tote_id}/containers` rather than a flat collection.
+
+### The two delete rules are the design, not defaults
+
+- `containers.tote_id` → **CASCADE**. A bag has no meaning outside the bin it is in.
+- `items.container_id` → **SET NULL**. Deleting a bin — or a bag — loses the grouping and never
+  the contents, the same promise `current_tote_id` already makes.
+
+Which is why removing a bag needs no confirmation dialog, unlike almost every other delete here:
+nothing is destroyed but the label. The copy says so, because "delete" reads as "delete the
+contents" to everyone who has not read the schema.
+
+### Notes earn their place
+
+A bag is often only *approximately* catalogued — "mostly 3-6M onesies, some vests". That is worth
+recording even when the individual garments are not, and it is what somebody reads **instead of**
+opening the bag. It is the single most useful field on the table and the reason a free-text
+"which bag" column on the item would not have done.
+
+`item_count` is computed per bag in one grouped query, never stored — same reason as
+`totes.item_count`, and this one is read while somebody is holding the bag open.
+
 ## The movement ledger
 
 `app/services/movement.py` is the **single writer** of `current_tote_id`, `status`,

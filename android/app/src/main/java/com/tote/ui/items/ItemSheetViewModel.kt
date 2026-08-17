@@ -8,6 +8,7 @@ import com.tote.data.local.CatalogDao
 import com.tote.data.remote.ApiService
 import com.tote.data.remote.ApparelPatch
 import com.tote.data.remote.CategoryDto
+import com.tote.data.remote.ContainerDto
 import com.tote.data.remote.ItemDto
 import com.tote.data.remote.ItemUpdate
 import com.tote.data.remote.MoveRequest
@@ -34,7 +35,7 @@ import kotlinx.coroutines.launch
  * looks identical to the one that throws away the edit underneath it. Swapping the sheet's own
  * body keeps one surface, one Back, and one thing to screenshot.
  */
-enum class SheetMode { View, Edit, History, PickBin, PickCategory }
+enum class SheetMode { View, Edit, History, PickBin, PickCategory, PickBag }
 
 /**
  * The edit form's working copy.
@@ -52,6 +53,8 @@ data class ItemEdits(
     val quantity: Int = 1,
     val condition: String? = null,
     val categoryId: String? = null,
+    /** Which bag inside the item's current bin. Null is "loose in the bin". */
+    val containerId: String? = null,
     val sizeRaw: String = "",
     val department: String? = null,
     val touchedApparel: Boolean = false,
@@ -66,6 +69,7 @@ data class ItemEdits(
             quantity = item.quantity,
             condition = item.condition,
             categoryId = item.categoryId,
+            containerId = item.containerId,
             sizeRaw = item.apparel?.sizeRaw.orEmpty(),
             department = item.apparel?.department,
         )
@@ -82,6 +86,8 @@ data class ItemSheetState(
     val pickerQuery: String = "",
     val bins: List<CachedTote> = emptyList(),
     val categories: List<CategoryDto> = emptyList(),
+    /** The bags in the bin this item is in. Empty when the bin is not subdivided. */
+    val containers: List<ContainerDto> = emptyList(),
     val movements: List<MovementDto> = emptyList(),
     val historyLoaded: Boolean = false,
     val busy: Boolean = false,
@@ -136,7 +142,13 @@ class ItemSheetViewModel @Inject constructor(
             // signal — which is where things actually get moved between bins.
             val bins = runCatching { catalogDao.totes().first() }.getOrDefault(emptyList())
             val categories = runCatching { api.categories() }.getOrDefault(emptyList())
-            _state.value = _state.value.copy(bins = bins, categories = categories)
+            // Only the bags of the bin this item is actually in: a bag belonging to any other
+            // tote is not a choice, it is the contradiction the server refuses.
+            val containers = item.currentToteId?.let { toteId ->
+                runCatching { api.tote(toteId).containers }.getOrDefault(emptyList())
+            }.orEmpty()
+            _state.value =
+                _state.value.copy(bins = bins, categories = categories, containers = containers)
         }
     }
 
@@ -151,6 +163,15 @@ class ItemSheetViewModel @Inject constructor(
 
     fun pickerQuery(query: String) {
         _state.value = _state.value.copy(pickerQuery = query)
+    }
+
+    /** Chosen from the bag picker; returns to the edit form that asked for it. */
+    fun pickBag(containerId: String?) {
+        _state.value = _state.value.copy(
+            edits = _state.value.edits.copy(containerId = containerId),
+            mode = SheetMode.Edit,
+            pickerQuery = "",
+        )
     }
 
     /** Chosen from the category picker; returns to whichever form asked for it. */
@@ -211,6 +232,9 @@ class ItemSheetViewModel @Inject constructor(
                     description = edits.description.trim().takeIf { it.isNotEmpty() },
                     notes = edits.notes.trim().takeIf { it.isNotEmpty() },
                     categoryId = edits.categoryId,
+                    // Sent on every save like the rest of the body, so clearing it is simply
+                    // choosing "loose in the bin".
+                    containerId = edits.containerId,
                     quantity = edits.quantity,
                     condition = edits.condition,
                     apparel = if (edits.touchedApparel) {

@@ -1,6 +1,7 @@
 """SQLAlchemy models. Imported wholesale by alembic/env.py for autogenerate."""
 
 from app.models.category import DEFAULT_CATEGORIES, Category
+from app.models.container import Container
 from app.models.item import (
     ITEM_CONDITIONS,
     ITEM_STATUSES,
@@ -23,6 +24,7 @@ __all__ = [
     "MOVEMENT_REASONS",
     "OUT_REASONS",
     "Category",
+    "Container",
     "Item",
     "ItemApparel",
     "ItemPhoto",

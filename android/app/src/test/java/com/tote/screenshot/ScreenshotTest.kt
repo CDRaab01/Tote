@@ -17,6 +17,7 @@ import com.tote.data.local.CachedTote
 import com.tote.data.local.CaptureQueueEntity
 import com.tote.data.remote.ApparelDto
 import com.tote.data.remote.CategoryDto
+import com.tote.data.remote.ContainerDto
 import com.tote.data.remote.DraftDto
 import com.tote.data.remote.FitsDto
 import com.tote.data.remote.ItemDto
@@ -715,7 +716,8 @@ class ScreenshotTest {
         ItemSheetContent(
             state = ItemSheetState(item = sheetItem),
             onMode = {}, onEdit = {}, onEditApparel = {}, onPickerQuery = {},
-            onPickCategory = {}, onPickBin = {}, onSave = {}, onConfirmDelete = {}, onDelete = {},
+            onPickCategory = {}, onPickBag = {}, onPickBin = {}, onSave = {},
+            onConfirmDelete = {}, onDelete = {},
             onOpenBin = {}, onLend = {},
         )
     }
@@ -730,7 +732,8 @@ class ScreenshotTest {
                 categories = listOf(CategoryDto(id = "c1", name = "Clothing")),
             ),
             onMode = {}, onEdit = {}, onEditApparel = {}, onPickerQuery = {},
-            onPickCategory = {}, onPickBin = {}, onSave = {}, onConfirmDelete = {}, onDelete = {},
+            onPickCategory = {}, onPickBag = {}, onPickBin = {}, onSave = {},
+            onConfirmDelete = {}, onDelete = {},
         )
     }
 
@@ -762,7 +765,8 @@ class ScreenshotTest {
                 ),
             ),
             onMode = {}, onEdit = {}, onEditApparel = {}, onPickerQuery = {},
-            onPickCategory = {}, onPickBin = {}, onSave = {}, onConfirmDelete = {}, onDelete = {},
+            onPickCategory = {}, onPickBag = {}, onPickBin = {}, onSave = {},
+            onConfirmDelete = {}, onDelete = {},
         )
     }
 
@@ -881,6 +885,36 @@ class ScreenshotTest {
                     isOverdue = false,
                 ),
             ),
+        )
+    }
+
+
+    /**
+     * A bin subdivided into bags.
+     *
+     * A real tote of baby clothes is three zip bags and a loose blanket. A flat list of forty
+     * garments is the shape that makes someone tip the whole bin out on the floor to find one —
+     * and the bag's notes line is what you read INSTEAD of opening it.
+     */
+    @Test fun tote_detail_bags_dark() = capture("tote_detail_bags_dark", dark = true) {
+        ToteDetailContent(
+            tote = ToteDetailDto(
+                id = "t1",
+                code = "A15",
+                label = "Baby clothes",
+                locationName = "Attic",
+                itemCount = 3,
+                containers = listOf(
+                    ContainerDto("b1", "t1", "3-6M onesies", "mostly onesies, some vests", 2),
+                    ContainerDto("b2", "t1", "Winter stuff", null, 0),
+                ),
+                items = listOf(
+                    ItemDto(id = "a", name = "Onesie, blue", quantity = 1, status = "stored", containerId = "b1"),
+                    ItemDto(id = "b", name = "Onesie, white", quantity = 1, status = "stored", containerId = "b1"),
+                    ItemDto(id = "c", name = "Toddler comforter", quantity = 1, status = "stored"),
+                ),
+            ),
+            onAddItem = {}, onUnpackAll = {}, onRepackAll = {}, onTakeOut = {}, onPutBack = {},
         )
     }
 

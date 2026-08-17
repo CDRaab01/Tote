@@ -101,6 +101,37 @@ class TotePatch(BaseModel):
     archived: bool | None = None
 
 
+class ContainerIn(BaseModel):
+    """A bag inside a tote.
+
+    No `tote_id` here — it comes from the path, because a bag cannot be created except inside
+    the bin it belongs to, and letting the body say otherwise would invite the one thing this
+    model refuses: a container whose bin disagrees with its items'.
+    """
+
+    name: str = Field(min_length=1, max_length=80)
+    notes: str | None = None
+
+
+class ContainerPatch(BaseModel):
+    """Rename a bag, or change what it says it holds. Never which bin it is in."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    notes: str | None = None
+
+
+class ContainerOut(BaseModel):
+    id: uuid.UUID
+    tote_id: uuid.UUID
+    name: str
+    notes: str | None
+    # Computed like the tote's, never stored: a denormalised count is the first thing to drift,
+    # and this one is read while someone is holding the bag.
+    item_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
 class ToteOut(BaseModel):
     id: uuid.UUID
     code: str
@@ -236,6 +267,9 @@ def _strict_enum(value: str | None, allowed: tuple[str, ...], field: str) -> str
 
 class ItemPatch(BaseModel):
     apparel: ApparelPatch | None = None
+    # Which bag inside the item's CURRENT tote. Validated against that tote, because a bag in
+    # another bin would be exactly the contradiction the container model exists to prevent.
+    container_id: uuid.UUID | None = None
     name: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = None
     notes: str | None = None
@@ -263,6 +297,8 @@ class ItemOut(BaseModel):
     condition: str | None
     status: str
     current_tote_id: uuid.UUID | None
+    # Which bag inside that tote. Null is the normal case — most bins are not subdivided.
+    container_id: uuid.UUID | None = None
     out_reason: str | None
     out_since: datetime.datetime | None
     expected_back: datetime.date | None
@@ -335,6 +371,9 @@ class SearchHit(BaseModel):
 
 
 class ToteDetail(ToteOut):
+    # The bags inside this bin, if it has any. Most do not, which is why an empty list here is
+    # the ordinary answer and not a gap.
+    containers: list[ContainerOut] = []
     items: list[ItemOut] = []
     # Items that left this tote and have not returned. Shown rather than hidden: the "it should
     # be in here" gap is the single most common reason to distrust a catalog.

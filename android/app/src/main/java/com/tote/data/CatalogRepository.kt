@@ -141,6 +141,19 @@ class CatalogRepository @Inject constructor(
 
     suspend fun deleteTote(id: String) = api.deleteTote(id).also { refresh() }
 
+    suspend fun createContainer(toteId: String, name: String, notes: String?) =
+        api.createContainer(toteId, com.tote.data.remote.ContainerIn(name.trim(), notes))
+
+    suspend fun patchContainer(toteId: String, containerId: String, name: String, notes: String?) =
+        api.patchContainer(
+            toteId,
+            containerId,
+            com.tote.data.remote.ContainerPatch(name.trim(), notes),
+        )
+
+    suspend fun deleteContainer(toteId: String, containerId: String) =
+        api.deleteContainer(toteId, containerId)
+
     suspend fun createLocation(name: String): LocationDto =
         api.createLocation(com.tote.data.remote.LocationIn(name.trim()))
 
