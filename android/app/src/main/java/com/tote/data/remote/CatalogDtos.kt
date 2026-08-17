@@ -181,12 +181,16 @@ data class DraftDto(
 )
 
 /**
- * The human's decision. `toteId` is required — confirming is what files the item, and that is
- * the moment the `initial` movement row is written.
+ * The human's decision.
+ *
+ * **`toteId` is optional, and null means "catalogued, not filed yet".** It used to be required,
+ * which asked for the destination at the moment you are least sure — the bin closed, the object
+ * already back inside it. Null produces a `catalogued` ledger row rather than an `initial` one,
+ * so "never filed" and "taken out of a bin" stay different facts a year later.
  */
 @Serializable
 data class DraftConfirm(
-    @SerialName("tote_id") val toteId: String,
+    @SerialName("tote_id") val toteId: String? = null,
     val name: String,
     val description: String? = null,
     val notes: String? = null,

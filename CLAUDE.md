@@ -774,6 +774,23 @@ with captures coming it reads "3 on the way" and drops the "Photograph something
 would otherwise invite exactly the duplicate. Same rule as the three before it, applied to a
 screen that had a second source of truth nobody had connected.
 
+
+**Confirm without a bin (#33).** Owner-requested. Filing used to be compulsory at review, which
+asks for the destination at the moment you are least sure — bin closed, object already back
+inside. `DraftConfirm.tote_id` is optional now and null means *catalogued, not filed yet*.
+The state is not new (deleting a tote already leaves its contents there, and every screen renders
+it correctly); what is new is a deliberate way to arrive at it. The ledger gains a **third kind of
+reason**: `_UNFILED = {"catalogued"}`, which refuses a destination like an outbound reason but
+means something different — the item entered the *catalogue* without entering a *bin*. Kept
+separate on purpose, because "never filed" and "came out of A14" are different facts a year later.
+`out_reason` is `unfiled`; the invariant `current_tote_id IS NOT NULL <=> status == 'stored'` is
+untouched; filing later is an ordinary inbound `moved`. **No migration** — reasons and statuses
+are `String(16)` validated in Python, not DB enums.
+Client: the confirm button reads "Save without a bin" (a verb, not the old disabled "Choose a bin
+to file it"), and the Totes tab carries a collapsed **"Not in a bin (N)"** line in the attention
+channel, absent at zero. Filing from there needs no new screen — the rows open the item sheet,
+whose move button already reads "Put it away" for an item that is out.
+
 ---
 
 ## 9. Testing & CI

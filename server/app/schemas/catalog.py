@@ -380,12 +380,19 @@ class DraftOut(ItemOut):
 class DraftConfirm(BaseModel):
     """The human's decision. Everything is editable — the model's answer is a suggestion.
 
-    `tote_id` is required: confirming a draft is what files it, and that is the moment the
-    `initial` movement row is written. A confirmation with nowhere to go would leave an item in
-    the catalog that is in no bin and never was, which is indistinguishable from a bug.
+    **`tote_id` is optional, and null means "catalogued, not filed yet".** It used to be
+    required, on the reasoning that an item in no bin is indistinguishable from a bug. That was
+    wrong about the workflow: reviewing a batch and deciding destinations afterwards is a real
+    way to work, and forcing the choice at review time asks for it at the moment you are least
+    sure — the bin closed, the object already back inside it.
+
+    The state is not new and not a hole. An item with no bin already exists (deleting a tote
+    leaves its contents unfiled) and already renders correctly everywhere. What null produces
+    here is a `catalogued` ledger row rather than an `initial` one, so the difference between
+    "never filed" and "taken out of a bin" stays recoverable a year later.
     """
 
-    tote_id: uuid.UUID
+    tote_id: uuid.UUID | None = None
     name: str = Field(min_length=1, max_length=160)
     description: str | None = None
     notes: str | None = None

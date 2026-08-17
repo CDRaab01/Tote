@@ -36,6 +36,16 @@ from app.models.tote import Tote
 _INBOUND = {"initial", "moved", "repacked", "returned", "corrected"}
 _OUTBOUND = {"unpacked", "outgrown", "loaned", "disposed"}
 
+# The third kind, and the only one that puts an item nowhere: it entered the CATALOGUE without
+# entering a bin. Reviewing a batch and deciding where things go afterwards is a real workflow —
+# the alternative is choosing a destination for every draft at the one moment you are least sure,
+# with the bin closed and the object already back in it.
+#
+# Deliberately its own set rather than an outbound reason with a friendly label. "It was never
+# filed" and "it came out of a bin" are different facts about an object's history, and the ledger
+# is the one place that difference is recoverable a year later.
+_UNFILED = {"catalogued"}
+
 # The status an outbound reason produces. `disposed` is terminal; the rest are recoverable.
 _OUT_STATUS = {
     "unpacked": "out",
@@ -52,6 +62,10 @@ _OUT_REASON = {
     "outgrown": "outgrown",
     "loaned": "loaned",
     "disposed": "other",
+    # Never in a bin, as opposed to taken out of one. The invariant below forces SOME non-stored
+    # status on an item with no tote, and "unfiled" is the honest one — anything else would claim
+    # a history the object does not have.
+    "catalogued": "unfiled",
 }
 
 
@@ -94,6 +108,21 @@ async def record_move(
         new_status = "stored"
         new_out_reason = None
         new_out_since = None
+        new_expected_back = None
+    elif reason in _UNFILED:
+        if to_tote_id is not None:
+            raise HTTPException(
+                http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"reason '{reason}' files an item nowhere, so to_tote_id must be null",
+            )
+        new_tote_id = None
+        # `out`, because the invariant is `current_tote_id IS NOT NULL <=> status == 'stored'`
+        # and this item is in no tote. It reads correctly everywhere that already handles a
+        # tote-less item — search says "Not in a tote", bin contents exclude it — and filing it
+        # later is an ordinary inbound `moved`.
+        new_status = "out"
+        new_out_reason = _OUT_REASON[reason]
+        new_out_since = moved_at or datetime.datetime.now(datetime.UTC)
         new_expected_back = None
     elif reason in _OUTBOUND:
         if to_tote_id is not None:

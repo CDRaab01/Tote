@@ -218,9 +218,16 @@ async def confirm(draft_id: uuid.UUID, body: DraftConfirm, user: CurrentUser, db
     if body.apparel is not None:
         await apply_apparel(db, item, body.apparel.model_dump(exclude_unset=True))
 
-    # Filing is a movement like any other, so it leaves an `initial` ledger row. An item that
-    # appeared in a bin with no history would be the first hole in the ledger.
-    await record_move(db, item=item, reason="initial", to_tote_id=body.tote_id)
+    # Confirming is a movement either way, so it always leaves a ledger row — an item that
+    # appeared with no history would be the first hole in it. Which reason depends on whether a
+    # bin was chosen: `initial` puts it in one, `catalogued` records that it exists and is not in
+    # one yet. Both are honest; neither is a placeholder.
+    await record_move(
+        db,
+        item=item,
+        reason="initial" if body.tote_id is not None else "catalogued",
+        to_tote_id=body.tote_id,
+    )
     await db.commit()
 
     row = (await db.execute(item_query(user.id).where(Item.id == item.id))).one()
