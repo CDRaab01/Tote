@@ -669,6 +669,31 @@ guarded on `currentToteId`**, so a row for anything lent out or unpacked — exa
 for because you cannot find it — did nothing at all, silently. Manual add now takes a description
 and a category too, instead of filing a permanently uncategorised row.
 
+
+**UX round PR 3 — bins editable, placeable, archivable (#27).** Everything about a bin was fixed
+at creation: the dialog took a code and a label and nothing could change either afterwards. No
+notes, no category, and — the one that mattered — **no way to say where the bin physically is**.
+`PATCH /totes/{id}` and the whole `/locations` CRUD shipped in Phase 2 with **no caller anywhere
+in the client**, so every row read "A14" with nothing after it and the browse-by-location entry
+point in §1 did not exist.
+The round's **only server change**: `ToteOut.location_name`, denormalised like `ItemOut`'s and
+populated from one `location_names()` map per request (no N+1, no migration). Client side: an
+edit-bin sheet with a location picker and an inline "New location…", archive/unarchive, delete,
+the tote list grouped by place with the placeless bins last under their own heading, and archived
+collapsed behind a count.
+Three things worth knowing. **`TotePatch` has no default values**, deliberately: `encodeDefaults`
+plus `exclude_unset` means a sparse body clears what it omits, and a defaults-built patch would
+set `code` null against a NOT NULL column — so archiving carries the code, label, location and
+notes, and editing carries `archived` through unchanged. **Changing a code is a change to a
+physical object** — the tag's URI is `/t/A14` and the server resolves it by code, so a rename
+makes the tag stop resolving; the warning fires as soon as the field diverges, before the save.
+And **delete says what it does**: `ON DELETE SET NULL` leaves the items catalogued and unfiled, so
+the confirm counts them and offers archiving instead.
+Three smaller gaps closed: the tag's text record finally carries the location (the spec always
+said it did; the call passed a hardcoded null), `nfc_written_at` reaches the UI, and creating a
+bin navigates to it — the tag and the card live on the detail screen, and closing onto the list is
+how a bin ends up catalogued and unlabelled.
+
 ---
 
 ## 9. Testing & CI

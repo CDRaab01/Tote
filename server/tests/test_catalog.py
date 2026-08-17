@@ -256,6 +256,29 @@ async def test_partial_unpack_leaves_the_rest_alone(auth_client):
     assert [i["id"] for i in detail["items"]] == [keep["id"]]
 
 
+async def test_a_tote_carries_the_name_of_the_place_it_is_in(auth_client):
+    """ "A14" is half an answer. The place it is in is the other half, and it comes on every
+    read path — list, detail and patch — so no screen has to hold a locations table alongside
+    the bins just to render one line."""
+    loc = (await auth_client.post("/locations", json={"name": "Attic"})).json()
+    t = await _tote(auth_client, "A14", location_id=loc["id"])
+    assert t["location_name"] == "Attic"
+
+    listed = (await auth_client.get("/totes")).json()
+    assert listed[0]["location_name"] == "Attic"
+    assert (await auth_client.get(f"/totes/{t['id']}")).json()["location_name"] == "Attic"
+
+    moved = (await auth_client.patch(f"/totes/{t['id']}", json={"location_id": None})).json()
+    # A bin with no place says so with a null rather than a stale name — "Attic" left behind
+    # on a bin that moved to the garage is worse than no answer at all.
+    assert moved["location_name"] is None
+
+
+async def test_a_bin_with_no_location_is_not_an_error(auth_client):
+    t = await _tote(auth_client, "B02")
+    assert t["location_name"] is None
+
+
 # ── Search ───────────────────────────────────────────────────────────────────
 
 

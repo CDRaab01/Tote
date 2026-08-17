@@ -25,17 +25,35 @@ interface ApiService {
     @GET("locations")
     suspend fun locations(): List<LocationDto>
 
+    /** Created inline from the bin editor — a place is a thing you discover you need mid-task. */
+    @POST("locations")
+    suspend fun createLocation(@Body body: LocationIn): LocationDto
+
     @GET("categories")
     suspend fun categories(): List<CategoryDto>
 
+    /**
+     * Every bin, archived ones included when asked.
+     *
+     * The cache pulls them all: an archived bin is still a physical box that might turn up, and a
+     * snapshot that silently drops them makes "where did A14 go" unanswerable offline. The screens
+     * filter — the cache does not.
+     */
     @GET("totes")
-    suspend fun totes(@Query("location_id") locationId: String? = null): List<ToteDto>
+    suspend fun totes(
+        @Query("location_id") locationId: String? = null,
+        @Query("include_archived") includeArchived: Boolean = false,
+    ): List<ToteDto>
 
     @GET("totes/{id}")
     suspend fun tote(@Path("id") id: String): ToteDetailDto
 
     @POST("totes")
     suspend fun createTote(@Body body: ToteCreate): ToteDto
+
+    /** See [TotePatch]: the body names every field, because a sparse one clears the rest. */
+    @PATCH("totes/{id}")
+    suspend fun patchTote(@Path("id") id: String, @Body body: TotePatch): ToteDto
 
     @DELETE("totes/{id}")
     suspend fun deleteTote(@Path("id") id: String)

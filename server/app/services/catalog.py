@@ -203,12 +203,34 @@ async def out_counts(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, in
     return {tote_id: n for tote_id, n in rows}
 
 
+async def location_names(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, str]:
+    """Every location this user has, by id.
+
+    Fetched whole rather than joined per tote for the same reason the counts are: the list
+    endpoint backs the browse-by-location screen, and a household has a handful of locations
+    against however many bins. One small query beats a join repeated per row.
+    """
+    rows = (
+        await db.execute(select(Location.id, Location.name).where(Location.user_id == user_id))
+    ).all()
+    return {location_id: name for location_id, name in rows}
+
+
 async def to_tote_out(
-    db: AsyncSession, tote: Tote, counts: dict | None = None, outs: dict | None = None
+    db: AsyncSession,
+    tote: Tote,
+    counts: dict | None = None,
+    outs: dict | None = None,
+    locations: dict | None = None,
 ) -> ToteOut:
     counts = counts if counts is not None else await tote_counts(db, tote.user_id)
     outs = outs if outs is not None else await out_counts(db, tote.user_id)
+    locations = locations if locations is not None else await location_names(db, tote.user_id)
     out = ToteOut.model_validate(tote)
     out.item_count = counts.get(tote.id, 0)
     out.out_count = outs.get(tote.id, 0)
+    # Denormalised for the same reason `ItemOut.location_name` is: "A14" alone does not answer
+    # "where do I go", and every screen that shows a bin wants the place it is in. Sent here so
+    # the client never has to hold a locations table alongside the bins to read one line.
+    out.location_name = locations.get(tote.location_id) if tote.location_id else None
     return out

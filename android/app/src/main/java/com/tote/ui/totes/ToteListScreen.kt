@@ -1,5 +1,6 @@
 package com.tote.ui.totes
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,6 +38,10 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.data.local.CachedTote
+import com.tote.data.remote.LocationDto
+import com.tote.ui.components.PickerDialog
+import com.tote.ui.components.PickerField
+import com.tote.ui.components.PickerOption
 import com.tote.ui.components.RefreshOnResume
 import com.tote.ui.components.ToteButton
 import com.tote.ui.theme.ToteTheme
@@ -46,12 +52,17 @@ import design.pulse.ui.components.ErrorState
 import design.pulse.ui.components.PanelCard
 import design.pulse.ui.components.SectionHeader
 
+/** The heading a bin with nowhere recorded sits under. Last, always — see [byLocation]. */
+internal const val NO_LOCATION = "No location yet"
+
 @Composable
 fun ToteListScreen(
     onOpenTote: (String) -> Unit,
     viewModel: ToteListViewModel = hiltViewModel(),
 ) {
     val totes by viewModel.totes.collectAsStateWithLifecycle()
+    val archived by viewModel.archived.collectAsStateWithLifecycle()
+    val locations by viewModel.locations.collectAsStateWithLifecycle()
     val createState by viewModel.create.collectAsStateWithLifecycle()
     val unreachable by viewModel.unreachable.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
@@ -63,7 +74,11 @@ fun ToteListScreen(
     ToteListContent(
         totes = totes,
         onOpenTote = onOpenTote,
-        onNewTote = { showCreate = true },
+        onNewTote = {
+            viewModel.loadLocations()
+            showCreate = true
+        },
+        archived = archived,
         unreachable = unreachable,
         loading = loading,
         refreshing = refreshing,
@@ -74,16 +89,24 @@ fun ToteListScreen(
     if (showCreate) {
         NewToteDialog(
             state = createState,
+            locations = locations,
             onDismiss = {
                 showCreate = false
                 viewModel.clearCreateState()
             },
             onCreate = viewModel::createTote,
+            onNewLocation = viewModel::createLocation,
         )
     }
-    if (createState is UiState.Success) {
-        showCreate = false
-        viewModel.clearCreateState()
+    // Straight to the new bin, because creating one is never the point — labelling it is, and the
+    // tag and the card live on its detail screen. Closing onto the list left the screen that
+    // finishes the job a scroll and a tap away, which is how a bin ends up catalogued and unlabelled.
+    LaunchedEffect(createState) {
+        (createState as? UiState.Success)?.let { created ->
+            showCreate = false
+            viewModel.clearCreateState()
+            onOpenTote(created.data)
+        }
     }
 }
 
@@ -94,13 +117,18 @@ fun ToteListContent(
     onOpenTote: (String) -> Unit,
     onNewTote: () -> Unit,
     modifier: Modifier = Modifier,
+    archived: List<CachedTote> = emptyList(),
     unreachable: Boolean = false,
     loading: Boolean = false,
     refreshing: Boolean = false,
     onRefresh: () -> Unit = {},
     onRetry: () -> Unit = {},
 ) {
+    val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
+    var showArchived by remember { mutableStateOf(false) }
+    val groups = remember(totes) { byLocation(totes) }
+
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh) {
         LazyColumn(
@@ -113,7 +141,7 @@ fun ToteListContent(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    SectionHeader(label = "Totes", channel = ToteTheme.colors.slate.base)
+                    SectionHeader(label = "Totes", channel = colors.slate.base)
                     ToteButton(text = "New tote", onClick = onNewTote, tonal = true)
                 }
             }
@@ -146,11 +174,61 @@ fun ToteListContent(
                 }
             }
 
-            items(totes, key = { it.id }) { tote -> ToteRow(tote, onClick = { onOpenTote(tote.id) }) }
+            // Grouped by where the bins physically are, because "everything in the attic" is a
+            // browse entry point and one flat alphabetical run of A14, A15, B02, G01 is not a
+            // list of places — it is a list of codes, which is the thing you are trying to avoid
+            // having to remember.
+            groups.forEach { (place, bins) ->
+                item(key = "head-$place") {
+                    SectionHeader(
+                        label = place,
+                        channel = if (place == NO_LOCATION) colors.attention.base else colors.slate.base,
+                    )
+                }
+                items(bins, key = { it.id }) { tote ->
+                    ToteRow(tote, onClick = { onOpenTote(tote.id) })
+                }
+            }
+
+            if (archived.isNotEmpty()) {
+                item(key = "archived-head") {
+                    // Collapsed, not hidden. An archived bin is a physical box that still exists
+                    // somewhere; it is off the daily list, not out of the catalog.
+                    Row(
+                        Modifier.fillMaxWidth().clickable { showArchived = !showArchived },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SectionHeader(
+                            label = "Archived (${archived.size})",
+                            channel = colors.provenance.base,
+                        )
+                        Spacer(Modifier.width(spacing.sm))
+                        Caption(text = if (showArchived) "Hide" else "Show")
+                    }
+                }
+                if (showArchived) {
+                    items(archived, key = { "arch-${it.id}" }) { tote ->
+                        ToteRow(tote, onClick = { onOpenTote(tote.id) })
+                    }
+                }
+            }
         }
         }
     }
 }
+
+/**
+ * Bins by the place they are in, alphabetically, with the placeless ones last.
+ *
+ * Last rather than first on purpose: a bin with no location is a loose end, and a loose end at the
+ * top of the list is in the way of every browse. It still gets a heading of its own — silently
+ * mixing them into the first real place would be a lie about where they are.
+ */
+internal fun byLocation(totes: List<CachedTote>): List<Pair<String, List<CachedTote>>> =
+    totes.groupBy { it.locationName ?: NO_LOCATION }
+        .toList()
+        .sortedWith(compareBy({ it.first == NO_LOCATION }, { it.first.lowercase() }))
+        .map { (place, bins) -> place to bins.sortedBy { it.code.lowercase() } }
 
 @Composable
 private fun ToteRow(tote: CachedTote, onClick: () -> Unit) {
@@ -180,7 +258,7 @@ private fun ToteRow(tote: CachedTote, onClick: () -> Unit) {
                     // Only shown when non-zero: a permanent "0 out" would train people to ignore
                     // the field that matters when it is not zero.
                     if (tote.outCount > 0) append(" · ${tote.outCount} out")
-                    tote.locationName?.let { append(" · $it") }
+                    // The location is the section heading now, so it is not repeated on the row.
                 }
                 Caption(text = counts)
             }
@@ -190,12 +268,17 @@ private fun ToteRow(tote: CachedTote, onClick: () -> Unit) {
 
 @Composable
 private fun NewToteDialog(
-    state: UiState<Unit>,
+    state: UiState<String>,
+    locations: List<LocationDto>,
     onDismiss: () -> Unit,
-    onCreate: (String, String?) -> Unit,
+    onCreate: (String, String?, String?) -> Unit,
+    onNewLocation: (String, (String) -> Unit) -> Unit,
 ) {
     var code by remember { mutableStateOf("") }
     var label by remember { mutableStateOf("") }
+    var locationId by remember { mutableStateOf<String?>(null) }
+    var showLocationPicker by remember { mutableStateOf(false) }
+    var newLocationName by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -221,6 +304,16 @@ private fun NewToteDialog(
                     placeholder = { Text("Christmas decor") },
                     singleLine = true,
                 )
+                Spacer(Modifier.height(ToteTheme.spacing.md))
+                // Asked here rather than left for later, because "where is it" is the question the
+                // app exists to answer and a bin created without one starts life in the loose-ends
+                // section — which nobody goes back to.
+                PickerField(
+                    label = "Where it lives",
+                    selected = locations.firstOrNull { it.id == locationId }?.name,
+                    placeholder = "No location yet",
+                    onClick = { showLocationPicker = true },
+                )
                 if (state is UiState.Error) {
                     Spacer(Modifier.height(ToteTheme.spacing.sm))
                     Text(
@@ -233,9 +326,97 @@ private fun NewToteDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onCreate(code, label) },
+                onClick = { onCreate(code, label, locationId) },
                 enabled = code.isNotBlank() && state !is UiState.Loading,
             ) { Text(if (state is UiState.Loading) "Creating…" else "Create") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+
+    if (showLocationPicker) {
+        LocationPicker(
+            locations = locations,
+            selectedId = locationId,
+            onPick = {
+                locationId = it
+                showLocationPicker = false
+            },
+            onNew = {
+                showLocationPicker = false
+                newLocationName = ""
+            },
+            onDismiss = { showLocationPicker = false },
+        )
+    }
+    newLocationName?.let { typed ->
+        NewLocationDialog(
+            value = typed,
+            onValueChange = { newLocationName = it },
+            onDismiss = { newLocationName = null },
+            onCreate = {
+                onNewLocation(typed) { created -> locationId = created }
+                newLocationName = null
+            },
+        )
+    }
+}
+
+/**
+ * Pick a place, or make one.
+ *
+ * "New location…" is a row in the list rather than a separate button, because the moment you
+ * discover you need "Basement closet" is the moment you are looking for it and not finding it.
+ * Locations CRUD existed on the server from Phase 2 and had no caller anywhere in the app, which
+ * is why every bin in the catalog reads "A14" with no place after it.
+ */
+@Composable
+internal fun LocationPicker(
+    locations: List<LocationDto>,
+    selectedId: String?,
+    onPick: (String?) -> Unit,
+    onNew: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val newId = "__new__"
+    PickerDialog(
+        title = "Where it lives",
+        options = locations.map { PickerOption(id = it.id, label = it.name) } +
+            PickerOption(id = newId, label = "New location…", detail = "Attic, Garage rack B…"),
+        selectedId = selectedId,
+        onPick = { if (it == newId) onNew() else onPick(it) },
+        onDismiss = onDismiss,
+        noneLabel = "No location yet",
+        emptyMessage = "No places recorded yet.",
+    )
+}
+
+@Composable
+private fun NewLocationDialog(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onCreate: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("New location") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    label = { Text("Name") },
+                    placeholder = { Text("Basement closet") },
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(ToteTheme.spacing.sm))
+                // Said because free text is exactly what a locations table exists to prevent:
+                // "attic", "Attic" and "the attic" are three places to browse instead of one.
+                Caption(text = "Name it the way you'd say it out loud. Bins group under it.")
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onCreate, enabled = value.isNotBlank()) { Text("Add") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )

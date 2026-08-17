@@ -40,6 +40,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.ItemDto
+import com.tote.data.remote.LocationDto
 import com.tote.data.remote.PersonDto
 import com.tote.data.remote.ToteDetailDto
 import com.tote.nfc.NfcWriteSession
@@ -65,6 +66,7 @@ import design.pulse.ui.components.SectionHeader
 
 @Composable
 fun ToteDetailScreen(
+    onGone: () -> Unit = {},
     viewModel: ToteDetailViewModel = hiltViewModel(),
     itemSheet: ItemSheetViewModel = hiltViewModel(),
 ) {
@@ -73,7 +75,10 @@ fun ToteDetailScreen(
     var showAdd by remember { mutableStateOf(false) }
     var confirmingUnpack by remember { mutableStateOf(false) }
     var lending by remember { mutableStateOf<String?>(null) }
+    var showEdit by remember { mutableStateOf(false) }
+    var confirmingDelete by remember { mutableStateOf(false) }
     val people by viewModel.people.collectAsStateWithLifecycle()
+    val locations by viewModel.locations.collectAsStateWithLifecycle()
     val categories by viewModel.categories.collectAsStateWithLifecycle()
     val cardIntent by viewModel.cardIntent.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -113,7 +118,41 @@ fun ToteDetailScreen(
                 onPrintCard = { viewModel.printCard(s.data.code) },
                 tagMismatch = viewModel.tagMismatch,
                 onOpenItem = itemSheet::open,
+                onEditBin = {
+                    viewModel.loadLocations()
+                    showEdit = true
+                },
             )
+            if (showEdit) {
+                EditToteDialog(
+                    tote = s.data,
+                    locations = locations,
+                    onDismiss = { showEdit = false },
+                    onSave = { code, label, locationId, notes ->
+                        viewModel.editTote(code, label, locationId, notes)
+                        showEdit = false
+                    },
+                    onArchive = {
+                        showEdit = false
+                        viewModel.setArchived(!s.data.archived)
+                    },
+                    onDelete = {
+                        showEdit = false
+                        confirmingDelete = true
+                    },
+                    onNewLocation = viewModel::createLocation,
+                )
+            }
+            if (confirmingDelete) {
+                DeleteToteDialog(
+                    tote = s.data,
+                    onDismiss = { confirmingDelete = false },
+                    onConfirm = {
+                        confirmingDelete = false
+                        viewModel.deleteTote(onGone)
+                    },
+                )
+            }
             // No `onOpenBin`: the bin is the screen behind the sheet.
             ItemSheet(
                 viewModel = itemSheet,
@@ -207,6 +246,7 @@ fun ToteDetailContent(
     hasNfc: Boolean = true,
     onPrintCard: () -> Unit = {},
     tagMismatch: Boolean = false,
+    onEditBin: () -> Unit = {},
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -221,40 +261,71 @@ fun ToteDetailContent(
                     Text(tote.code, style = MaterialTheme.typography.headlineMedium, color = Color.White)
                     Spacer(Modifier.height(spacing.xs))
                     Text(
-                        tote.label ?: "Unlabelled",
+                        // The place, on the hero, because "A14" is half an answer: this screen is
+                        // read while deciding whether to climb a ladder.
+                        listOfNotNull(tote.label ?: "Unlabelled", tote.locationName)
+                            .joinToString(" · "),
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.82f),
                     )
+                    if (tote.archived) {
+                        Spacer(Modifier.height(spacing.xs))
+                        Text(
+                            "Archived — off the daily list, still in the catalogue",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.7f),
+                        )
+                    }
                     Spacer(Modifier.height(spacing.md))
                     HazardRule()
                 }
             }
 
+            // Two rows, split by what they act on: the bin itself, then everything in it. One
+            // row could not hold four buttons — "Unpack all" wrapped to two lines the moment
+            // "Edit bin" joined it, and a half-unpacked January bin needs all four.
             item {
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(spacing.sm),
                 ) {
                     ToteButton(text = "Add item", onClick = onAddItem, modifier = Modifier.weight(1f))
-                    // Both operations whenever each has something to act on. The old either/or
-                    // hid Repack on any bin with items still inside — so a half-unpacked
-                    // Christmas bin (3 in, 2 out: the normal January state) could only be
-                    // repacked one row at a time.
-                    if (tote.itemCount > 0) {
-                        ToteButton(
-                            text = "Unpack all",
-                            onClick = onUnpackAll,
-                            tonal = true,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                    if (tote.outCount > 0) {
-                        ToteButton(
-                            text = "Repack all",
-                            onClick = onRepackAll,
-                            tonal = true,
-                            modifier = Modifier.weight(1f),
-                        )
+                    // Nothing about a bin was editable after creation: no label, no notes, and —
+                    // the one that matters — no way to say where it physically is.
+                    ToteButton(
+                        text = "Edit bin",
+                        onClick = onEditBin,
+                        tonal = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+
+            // Both operations whenever each has something to act on. The old either/or hid
+            // Repack on any bin with items still inside — so a half-unpacked Christmas bin
+            // (3 in, 2 out: the normal January state) could only be repacked one row at a time.
+            if (tote.itemCount > 0 || tote.outCount > 0) {
+                item {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+                    ) {
+                        if (tote.itemCount > 0) {
+                            ToteButton(
+                                text = "Unpack all",
+                                onClick = onUnpackAll,
+                                tonal = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        if (tote.outCount > 0) {
+                            ToteButton(
+                                text = "Repack all",
+                                onClick = onRepackAll,
+                                tonal = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                 }
             }
@@ -285,6 +356,7 @@ fun ToteDetailContent(
             item {
                 TagAndCardRow(
                     hasTag = tote.nfcTagUid != null,
+                    writtenAt = tote.nfcWrittenAt,
                     cardPrinted = tote.cardPrintedAt != null,
                     hasNfc = hasNfc,
                     onWriteTag = onWriteTag,
@@ -348,6 +420,7 @@ fun ToteDetailContent(
 @Composable
 private fun TagAndCardRow(
     hasTag: Boolean,
+    writtenAt: String?,
     cardPrinted: Boolean,
     hasNfc: Boolean,
     onWriteTag: () -> Unit,
@@ -376,6 +449,9 @@ private fun TagAndCardRow(
                         // NFC check hidden in the click handler — tapping it on a phone without
                         // NFC was indistinguishable from a frozen app.
                         !hasNfc -> "This phone has no NFC — print a card instead"
+                        // Dated, because a tag written before the bin was renamed carries the old
+                        // text — and the date is the only way to know that from the app.
+                        hasTag && writtenAt != null -> "Tag written ${writtenAt.take(10)}"
                         hasTag || cardPrinted -> "Tap the tag or scan the card to open this bin"
                         else -> "Write a tag or print a card so this bin can be found"
                     },
@@ -675,6 +751,192 @@ private fun LendDialog(
     }
 }
 
+
+
+/**
+ * Edit the bin itself — and the one screen in the app that carries a warning about the physical
+ * world.
+ *
+ * Changing the **code** is not like changing a label. The code is written on an index card in
+ * permanent marker, encoded in the QR on that card, and written into the NFC tag's URI as
+ * `/t/A14`. The server resolves that path by code, so renaming the bin does not update the tag —
+ * it makes the tag stop resolving, and a tap in an attic lands on "no such bin" over a box that
+ * is sitting right there. So it is said before the edit, not after.
+ */
+@Composable
+private fun EditToteDialog(
+    tote: ToteDetailDto,
+    locations: List<LocationDto>,
+    onDismiss: () -> Unit,
+    onSave: (String, String?, String?, String?) -> Unit,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit,
+    onNewLocation: (String, (String) -> Unit) -> Unit,
+) {
+    var code by remember { mutableStateOf(tote.code) }
+    var label by remember { mutableStateOf(tote.label.orEmpty()) }
+    var notes by remember { mutableStateOf(tote.notes.orEmpty()) }
+    var locationId by remember { mutableStateOf(tote.locationId) }
+    var showLocationPicker by remember { mutableStateOf(false) }
+    var newLocationName by remember { mutableStateOf<String?>(null) }
+    val spacing = ToteTheme.spacing
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit bin") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it },
+                    label = { Text("Code") },
+                    singleLine = true,
+                )
+                if (code.trim() != tote.code && tote.nfcTagUid != null) {
+                    Spacer(Modifier.height(spacing.xs))
+                    Text(
+                        "The tag on this bin still says ${tote.code} and will stop opening it. " +
+                            "Rewrite the tag and reprint the card after saving.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ToteTheme.colors.attention.base,
+                    )
+                }
+                Spacer(Modifier.height(spacing.md))
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it },
+                    label = { Text("Label") },
+                    placeholder = { Text("Christmas decor") },
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(spacing.md))
+                PickerField(
+                    label = "Where it lives",
+                    selected = locations.firstOrNull { it.id == locationId }?.name
+                        ?: tote.locationName,
+                    placeholder = "No location yet",
+                    onClick = { showLocationPicker = true },
+                )
+                Spacer(Modifier.height(spacing.md))
+                OutlinedTextField(
+                    value = notes,
+                    onValueChange = { notes = it },
+                    label = { Text("Notes") },
+                    placeholder = { Text("Second shelf, behind the tree box") },
+                )
+                Spacer(Modifier.height(spacing.md))
+                // The reversible half of the pair, offered first and deliberately louder than
+                // delete: a bin you have stopped using is almost never a bin you want erased.
+                ToteButton(
+                    text = if (tote.archived) "Put it back on the list" else "Archive this bin",
+                    onClick = onArchive,
+                    tonal = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(spacing.sm))
+                ToteButton(
+                    text = "Delete this bin",
+                    onClick = onDelete,
+                    tonal = true,
+                    channel = MaterialTheme.colorScheme.error,
+                    dimChannel = MaterialTheme.colorScheme.errorContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(code, label, locationId, notes) },
+                enabled = code.isNotBlank(),
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+
+    if (showLocationPicker) {
+        LocationPicker(
+            locations = locations,
+            selectedId = locationId,
+            onPick = {
+                locationId = it
+                showLocationPicker = false
+            },
+            onNew = {
+                showLocationPicker = false
+                newLocationName = ""
+            },
+            onDismiss = { showLocationPicker = false },
+        )
+    }
+    newLocationName?.let { typed ->
+        AlertDialog(
+            onDismissRequest = { newLocationName = null },
+            title = { Text("New location") },
+            text = {
+                OutlinedTextField(
+                    value = typed,
+                    onValueChange = { newLocationName = it },
+                    label = { Text("Name") },
+                    placeholder = { Text("Basement closet") },
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onNewLocation(typed) { created -> locationId = created }
+                        newLocationName = null
+                    },
+                    enabled = typed.isNotBlank(),
+                ) { Text("Add") }
+            },
+            dismissButton = {
+                TextButton(onClick = { newLocationName = null }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+/**
+ * Deleting a bin, and saying what that actually does.
+ *
+ * "Delete the bin" reads as "delete everything in it" to anyone who has not read the schema. It
+ * does not: `ON DELETE SET NULL` leaves every item catalogued and in no bin, because throwing a
+ * box away must never erase the record of what was in it. Archiving is offered alongside, because
+ * it is almost always the operation actually wanted.
+ */
+@Composable
+private fun DeleteToteDialog(
+    tote: ToteDetailDto,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete ${tote.code}?") },
+        text = {
+            Column {
+                Text(
+                    if (tote.itemCount > 0) {
+                        "Its ${tote.itemCount} item${if (tote.itemCount == 1) "" else "s"} stay " +
+                            "in the catalogue, in no bin — you would file them again one by one."
+                    } else {
+                        "The bin goes. It holds nothing, so nothing else changes."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(ToteTheme.spacing.sm))
+                Caption(text = "Still own the box? Archive it instead — it comes back whenever you want.")
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Delete", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Keep it") } },
+    )
+}
 
 @Preview(name = "Tote detail — dark")
 @Composable

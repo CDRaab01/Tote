@@ -28,7 +28,14 @@ from app.schemas.catalog import (
 )
 from app.security import CurrentUser
 from app.services.card import render_card
-from app.services.catalog import item_query, items_for, out_counts, to_tote_out, tote_counts
+from app.services.catalog import (
+    item_query,
+    items_for,
+    location_names,
+    out_counts,
+    to_tote_out,
+    tote_counts,
+)
 from app.services.movement import repack_tote, unpack_tote
 
 router = APIRouter(prefix="/totes", tags=["totes"])
@@ -79,7 +86,8 @@ async def list_totes(
     # browse-by-location screen, and a per-tote count query would be a clean N+1.
     counts = await tote_counts(db, user.id)
     outs = await out_counts(db, user.id)
-    return [await to_tote_out(db, t, counts, outs) for t in rows]
+    locations = await location_names(db, user.id)
+    return [await to_tote_out(db, t, counts, outs, locations) for t in rows]
 
 
 @router.post("", response_model=ToteOut, status_code=status.HTTP_201_CREATED)

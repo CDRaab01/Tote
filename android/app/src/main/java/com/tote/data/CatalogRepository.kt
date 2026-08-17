@@ -37,6 +37,9 @@ class CatalogRepository @Inject constructor(
 ) {
     val cachedTotes: Flow<List<CachedTote>> = dao.totes()
 
+    /** Bins put away rather than thrown away — shown collapsed, never mixed in with the live ones. */
+    val cachedArchivedTotes: Flow<List<CachedTote>> = dao.archivedTotes()
+
     fun cachedItemsIn(toteId: String): Flow<List<CachedItem>> = dao.itemsInTote(toteId)
 
     suspend fun locations(): List<LocationDto> = api.locations()
@@ -45,7 +48,10 @@ class CatalogRepository @Inject constructor(
 
     /** Pull the whole catalog and replace the snapshot. Small data; one round trip each. */
     suspend fun refresh() {
-        val totes = api.totes()
+        // Archived included: an archived bin is still a physical box that can turn up in an attic,
+        // and a snapshot that drops it makes "where did A14 go" unanswerable offline. The screens
+        // filter; the cache holds everything.
+        val totes = api.totes(includeArchived = true)
         val items = api.items()
         val locationsByTote = totes.associate { it.id to it.locationId }
         val locationNames = runCatching { api.locations().associate { it.id to it.name } }
@@ -58,7 +64,9 @@ class CatalogRepository @Inject constructor(
                     code = it.code,
                     label = it.label,
                     locationId = it.locationId,
-                    locationName = it.locationId?.let(locationNames::get),
+                    // The server denormalises this now; the map is the fallback for a client
+                    // running against an older server than itself.
+                    locationName = it.locationName ?: it.locationId?.let(locationNames::get),
                     itemCount = it.itemCount,
                     outCount = it.outCount,
                     archived = it.archived,
@@ -125,7 +133,13 @@ class CatalogRepository @Inject constructor(
 
     suspend fun createTote(body: ToteCreate) = api.createTote(body).also { refresh() }
 
+    suspend fun patchTote(id: String, body: com.tote.data.remote.TotePatch) =
+        api.patchTote(id, body).also { refresh() }
+
     suspend fun deleteTote(id: String) = api.deleteTote(id).also { refresh() }
+
+    suspend fun createLocation(name: String): LocationDto =
+        api.createLocation(com.tote.data.remote.LocationIn(name.trim()))
 
     suspend fun createItem(body: ItemCreate) = api.createItem(body).also { refresh() }
 
