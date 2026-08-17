@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **311 server** (pytest, real Postgres) + **174 Android** (measured 2026-08-17) |
+| Tests | **311 server** (pytest, real Postgres) + **177 Android** (measured 2026-08-17) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -863,6 +863,25 @@ size into the name.
 Measured while looking, and worth keeping: filing garments **grouped** (`Shorts ×6`) ran at
 **36 s/garment** against **60 s** one row per garment — and that understates it, because the
 grouped rows came first, against the learning curve.
+
+
+**Tapping an item in a bin did nothing (#38).** Owner-reported. The row had **two** click handlers
+stacked: `PanelCard(onClick = …)` for the tap and a `combinedClickable` on the inner `Row` for the
+long-press that starts a selection. `PanelCard` renders its own clickable `Surface` with the
+content inside it, so the inner modifier lies on top and takes the pointer first — every tap went
+to its `onClick = {}` and stopped. Long-press still worked, which is what made only half the screen
+look broken. Introduced by the bulk-select round (#35), which added the long press.
+
+**Rule: if a row needs a long press, the tap goes on the same modifier** — never on a clickable
+container underneath it, which cannot be reached and only re-creates the trap.
+
+**And the reason it shipped at all: this app had no interaction tests.** A ViewModel test proves a
+handler does the right thing *when called*; a Roborazzi baseline proves a row is *drawn*. Both stay
+green while the gesture never reaches the handler — which is also how the `currentToteId` dead tap
+got through in #26, so this is twice. `ItemRowTapTest` is the first test here that presses the
+pixels, and it was **checked against the broken code before being kept** (two of three cases fail
+there). Its `@Config(qualifiers = Pixel5)` is load-bearing: on Robolectric's default window the
+lazy-list rows are never composed, and "no such node" reads exactly like the bug.
 
 ---
 

@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.data.remote.CategoryDto
@@ -748,10 +749,26 @@ private fun ItemRow(
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
 
-    PanelCard(
+    // ONE clickable, on the Row, carrying both gestures.
+    //
+    // It was two: `PanelCard(onClick = …)` for the tap and a `combinedClickable` on the Row for
+    // the long press. The inner one wins — it lies on top of the Surface's content and consumes
+    // the pointer — so with `onClick = {}` every tap was swallowed and **nothing opened the item
+    // sheet from a bin**, while long-press still worked, which is what made it look like only
+    // half the screen was broken. Reported from use.
+    //
+    // Hence `onClick = null` on the PanelCard: a second clickable Surface underneath cannot be
+    // reached and would only re-create the same trap. The card's own padding moves inside the
+    // Row so the whole panel stays tappable rather than just the content within it.
+    val tap: (() -> Unit)? = when {
         // While selecting, a tap ticks rather than opens. Two meanings for one gesture on the
         // same screen would make every tap a gamble.
-        onClick = if (selected != null) onToggle else onOpen,
+        selected != null -> onToggle
+        else -> onOpen
+    }
+    PanelCard(
+        onClick = null,
+        contentPadding = 0.dp,
         channel = when {
             selected == true -> colors.slate.base
             item.isOverdue -> colors.attention.base
@@ -759,7 +776,16 @@ private fun ItemRow(
         },
     ) {
         Row(
-            Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress),
+            Modifier
+                .fillMaxWidth()
+                .then(
+                    if (tap != null) {
+                        Modifier.combinedClickable(onClick = tap, onLongClick = onLongPress)
+                    } else {
+                        Modifier
+                    }
+                )
+                .padding(spacing.lg),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selected != null) {
