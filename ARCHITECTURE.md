@@ -1140,6 +1140,31 @@ the queue exists for — shooting a bin's worth in a garage with the app backgro
 to "Decide later". The cost surfaced at review as one picker tap per item: precisely what choosing
 it up front was meant to avoid.
 
+### Review has to know about the queue, not just the drafts
+
+The rule above has one more instance, and it is the one that cost real data. Review knew only
+about drafts, so with uploads in flight it said **"Nothing waiting"** — over a queue that was
+about to produce exactly what the person was standing there waiting for. A scan takes ~35 s, so
+that window is wide and completely ordinary.
+
+The consequence is worse than confusion: not seeing that a capture had sent, the owner
+photographed the object again and filed a duplicate. In a storage catalogue two rows for one
+comforter are indistinguishable from two comforters.
+
+So the queue is now on this screen too:
+
+- **A strip above the stack**, counting *uploading*, *waiting for signal* and *needs you*
+  separately — three counts, not one total, because the right next action differs for each and a
+  single "3 pending" flattens them into a number nobody can act on. Rose when something has
+  stopped, violet when it is merely in flight.
+- **The empty state distinguishes empty from EARLY.** With captures coming it reads "3 on the
+  way" and drops the "Photograph something" button, which would otherwise be an invitation to
+  shoot the thing that is already uploading.
+
+The queue is merged into the state **at the screen**, not inside `ReviewUiState`'s own flow:
+combining them in the ViewModel would make every upload tick re-emit the draft somebody is
+mid-edit on.
+
 ## An empty screen must say WHY it is empty
 
 Three times in this app a screen has confidently reported nothing when the truth was "I could not

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -53,6 +55,7 @@ import coil.compose.AsyncImage
 import com.tote.data.local.CachedTote
 import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.DraftDto
+import com.tote.data.local.CaptureQueueEntity
 import com.tote.data.remote.PhotoUrls
 import com.tote.ui.components.HazardRule
 import com.tote.ui.components.PickerDialog
@@ -85,6 +88,7 @@ fun ReviewScreen(
 ) {
     var confirmingDiscard by remember { mutableStateOf(false) }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val queue by viewModel.queue.collectAsStateWithLifecycle()
 
     // Re-read on every resume, not just on first composition. This ViewModel survives a tab
     // switch, so without this a draft that finished uploading while the app was open stayed
@@ -99,8 +103,11 @@ fun ReviewScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // Merged at the screen rather than inside ReviewUiState's own flow: the queue is a
+    // different source with a different lifetime, and combining them in the ViewModel
+    // would make every upload tick re-emit the draft the person is mid-edit on.
     ReviewContent(
-        state = state,
+        state = state.copy(queue = queue),
         onEdit = viewModel::edit,
         onEditApparel = viewModel::editApparel,
         onConfirm = { viewModel.confirm() },
@@ -137,6 +144,62 @@ fun ReviewScreen(
                 TextButton(onClick = { confirmingDiscard = false }) { Text("Keep it") }
             },
         )
+    }
+}
+
+
+/** Queue states that mean "this is still coming to you". */
+private val COMING = setOf(
+    CaptureQueueEntity.STATE_PENDING,
+    CaptureQueueEntity.STATE_UPLOADING,
+)
+
+/**
+ * A line saying what is still on its way, and what has stopped.
+ *
+ * Three counts rather than one total, because the right next action differs for each: an upload
+ * in flight needs nothing, one waiting for signal needs a network, and one that stopped needs a
+ * person on the Catalogue tab. A single "3 pending" would flatten all three into a number nobody
+ * can act on.
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.queueStrip(
+    queue: List<CaptureQueueEntity>,
+) {
+    if (queue.isEmpty()) return
+    item(key = "queue-strip") {
+        val colors = ToteTheme.colors
+        val uploading = queue.count { it.state == CaptureQueueEntity.STATE_UPLOADING }
+        val waiting = queue.count { it.state == CaptureQueueEntity.STATE_PENDING }
+        val stuck = queue.size - uploading - waiting
+        val parts = listOfNotNull(
+            if (uploading > 0) "$uploading uploading" else null,
+            if (waiting > 0) "$waiting waiting for signal" else null,
+            if (stuck > 0) "$stuck needs you" else null,
+        )
+        PanelCard(channel = if (stuck > 0) colors.attention.base else colors.provenance.base) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Outlined.CloudUpload,
+                    contentDescription = null,
+                    tint = if (stuck > 0) colors.attention.base else colors.provenance.base,
+                )
+                Spacer(Modifier.width(ToteTheme.spacing.md))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        parts.joinToString(" · "),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Spacer(Modifier.height(ToteTheme.spacing.xs))
+                    Caption(
+                        text = if (stuck > 0) {
+                            "Sort the stopped ones out on Catalogue"
+                        } else {
+                            "About half a minute each — no need to shoot anything twice"
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -194,6 +257,11 @@ fun ReviewContent(
                 }
             }
 
+            // What is still coming, before anything that might look like "that's everything".
+            // Placed above the stack rather than below it because the whole point is to be seen
+            // by someone deciding whether to photograph the object again.
+            queueStrip(state.queue)
+
             if (state.error != null && draft == null) {
                 item {
                     ErrorState(
@@ -214,20 +282,34 @@ fun ReviewContent(
             } else if (draft == null) {
                 item {
                     Column {
-                        EmptyState(
-                            icon = Icons.Outlined.CheckCircle,
-                            title = "Nothing waiting",
-                            subtitle = "Drafts land here once a capture has uploaded and been " +
-                                "identified.",
-                        )
-                        Spacer(Modifier.height(spacing.md))
-                        // A button, not prose naming a tab. The empty review stack is the
-                        // natural end of one batch and the natural start of the next.
-                        ToteButton(
-                            text = "Photograph something",
-                            onClick = onPhotographSomething,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        // Two different empty screens, because they mean opposite things. With
+                        // captures in flight this stack is not empty, it is EARLY — and telling
+                        // someone "nothing waiting" there is what makes them shoot the object
+                        // again and file it twice.
+                        val coming = state.queue.count { it.state in COMING }
+                        if (coming > 0) {
+                            EmptyState(
+                                icon = Icons.Outlined.CloudUpload,
+                                title = "$coming on the way",
+                                subtitle = "They take about half a minute each. This fills in on " +
+                                    "its own — there is no need to photograph anything twice.",
+                            )
+                        } else {
+                            EmptyState(
+                                icon = Icons.Outlined.CheckCircle,
+                                title = "Nothing waiting",
+                                subtitle = "Drafts land here once a capture has uploaded and been " +
+                                    "identified.",
+                            )
+                            Spacer(Modifier.height(spacing.md))
+                            // A button, not prose naming a tab. The empty review stack is the
+                            // natural end of one batch and the natural start of the next.
+                            ToteButton(
+                                text = "Photograph something",
+                                onClick = onPhotographSomething,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
                 }
             } else if (draft != null) {

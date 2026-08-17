@@ -761,6 +761,19 @@ blank becomes null rather than `""` — which would reach the server as "the per
 file an item named by nobody.
 Also corrected here: §4 claimed `search_vector` covers category and tags. It is name, description
 and notes — checked against migration 0001, not the docs.
+
+**Review shows the upload queue (#32).** Owner-reported, and it had already cost a duplicate:
+Review knew only about drafts, so with captures in flight it said **"Nothing waiting"** over a
+queue about to produce exactly what the person was waiting for. A scan takes ~35 s, so that window
+is ordinary — and not seeing that a capture had sent is what makes someone photograph the object
+again and file it twice, which in a storage catalogue is indistinguishable from owning two.
+A strip above the stack counts **uploading / waiting for signal / needs you** separately (three
+counts, not one total — the right next action differs for each), rose when something has stopped
+and violet when it is merely in flight. The empty state now distinguishes *empty* from *early*:
+with captures coming it reads "3 on the way" and drops the "Photograph something" button, which
+would otherwise invite exactly the duplicate. Same rule as the three before it, applied to a
+screen that had a second source of truth nobody had connected.
+
 ---
 
 ## 9. Testing & CI

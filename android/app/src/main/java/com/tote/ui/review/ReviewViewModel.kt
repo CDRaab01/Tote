@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tote.data.local.CachedTote
 import com.tote.data.CatalogRepository
+import com.tote.data.CaptureQueueRepository
+import com.tote.data.local.CaptureQueueEntity
 import com.tote.data.local.CatalogDao
 import com.tote.data.remote.ApiService
 import com.tote.data.remote.ApparelPatch
@@ -15,7 +17,9 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -71,6 +75,8 @@ data class DraftEdits(
 
 data class ReviewUiState(
     val drafts: List<DraftDto> = emptyList(),
+    /** Captures still on their way. Merged in by the screen — see [ReviewViewModel.queue]. */
+    val queue: List<CaptureQueueEntity> = emptyList(),
     val index: Int = 0,
     val edits: DraftEdits = DraftEdits(),
     val totes: List<CachedTote> = emptyList(),
@@ -100,7 +106,23 @@ class ReviewViewModel @Inject constructor(
     private val catalogDao: CatalogDao,
     private val repo: CatalogRepository,
     private val feedback: FeedbackBus,
+    captureQueue: CaptureQueueRepository,
 ) : ViewModel() {
+
+    /**
+     * What is still on its way here.
+     *
+     * Review used to know only about drafts, which meant it could say "Nothing waiting" over a
+     * queue of uploads in flight — the same lie the empty-state rule exists to prevent, and one
+     * that costs more than confusion: not seeing that a capture had sent, the owner photographed
+     * the object a second time and filed a duplicate. A scan takes ~35 s, so the window where
+     * this screen knows nothing is wide and completely ordinary.
+     *
+     * Collected here rather than passed in, because it is the *screen's* truth, not a decision:
+     * nothing on review acts on the queue.
+     */
+    val queue: StateFlow<List<CaptureQueueEntity>> = captureQueue.queue
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _state = MutableStateFlow(ReviewUiState())
     val state: StateFlow<ReviewUiState> = _state.asStateFlow()

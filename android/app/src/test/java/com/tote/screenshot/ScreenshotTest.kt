@@ -817,6 +817,44 @@ class ScreenshotTest {
         )
     }
 
+
+    /**
+     * Review while captures are still on their way.
+     *
+     * The reason this exists: with uploads in flight the old screen said "Nothing waiting", and
+     * not seeing that a capture had sent is what makes someone photograph the object again and
+     * file it twice. Three counts, not one, because the right next action differs for each.
+     */
+    @Test fun review_queue_coming_dark() = capture("review_queue_coming_dark", dark = true) {
+        ReviewContent(
+            state = ReviewUiState(
+                loading = false,
+                queue = listOf(
+                    queued("q1", 2, CaptureQueueEntity.STATE_UPLOADING),
+                    queued("q2", 1, CaptureQueueEntity.STATE_PENDING),
+                    queued("q3", 3, CaptureQueueEntity.STATE_PENDING),
+                ),
+            ),
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
+        )
+    }
+
+    /** And the same screen when something has stopped and needs a person. */
+    @Test fun review_queue_stuck_dark() = capture("review_queue_stuck_dark", dark = true) {
+        ReviewContent(
+            state = ReviewUiState(
+                loading = false,
+                queue = listOf(
+                    queued("q1", 2, CaptureQueueEntity.STATE_UPLOADING),
+                    queued("q2", 1, CaptureQueueEntity.STATE_UNCERTAIN),
+                ),
+            ),
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
+        )
+    }
+
     // LoginContent is the stateless body precisely so it can be captured here: the stateful
     // LoginScreen needs Hilt and a real AppAuth service, neither of which exists in a JVM test.
     @Test fun login_light() =
