@@ -633,6 +633,17 @@ cannot proceed — both halves could stall, only one was visible). `DateField` r
 dates; quantity gets a numeric keyboard; search gets ImeAction.Search, a clear-X and a visible
 in-flight indicator. The capture destination survives process death via `SavedStateHandle`.
 
+**UX round PR 6 — people maintenance (#25).** A wearer profile was write-once: no rename, no
+delete, and — the one that actually bit — **no way to remove a mistyped size**. `"5TT"` does not
+parse, so `fits` answers `answered:false` forever while the bad reading sits on the same screen
+looking recorded, and the "We can't say yet" copy pointed at nothing. Person edit/delete
+(`PATCH /people/{id}`, first caller) plus a **size history** sheet (first caller of
+`GET /people/{id}/sizes`) with per-row removal; the can't-say copy now names History as the fix.
+Sizes are **deletable, never editable** — `size_raw` is a reading, and an in-place edit would
+rewrite it while keeping its timestamp; delete and re-record re-derives honestly. Deleting a person
+keeps every movement row (the FK nulls `person_id`) and the confirm says so. `busy` is finally
+read, so a double-tapped Remove is no longer two DELETEs and a 404.
+
 ---
 
 ## 9. Testing & CI

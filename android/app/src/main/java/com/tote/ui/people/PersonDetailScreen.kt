@@ -44,6 +44,7 @@ import com.tote.data.remote.ItemDto
 import com.tote.data.remote.PersonDto
 import com.tote.data.remote.PersonSizeDto
 import com.tote.ui.components.HazardRule
+import com.tote.ui.components.DateField
 import com.tote.ui.components.ItemThumbnail
 import com.tote.ui.components.PickerDialog
 import com.tote.ui.components.PickerOption
@@ -60,6 +61,7 @@ import design.pulse.ui.components.SectionHeader
 @Composable
 fun PersonDetailScreen(
     onOpenTote: (String) -> Unit,
+    onGone: () -> Unit = {},
     viewModel: PersonDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -74,6 +76,9 @@ fun PersonDetailScreen(
         onReturned = viewModel::markReturned,
         onOutgrown = viewModel::markOutgrown,
         onRetry = viewModel::load,
+        onEditPerson = viewModel::editPerson,
+        onDeletePerson = { viewModel.deletePerson(onGone) },
+        onDeleteSize = viewModel::deleteSize,
     )
 }
 
@@ -87,10 +92,16 @@ fun PersonDetailContent(
     onOutgrown: (List<String>, String) -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    onEditPerson: (String, String?) -> Unit = { _, _ -> },
+    onDeletePerson: () -> Unit = {},
+    onDeleteSize: (String) -> Unit = {},
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
     var showAddSize by remember { mutableStateOf(false) }
+    var showEdit by remember { mutableStateOf(false) }
+    var confirmingDelete by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(false) }
     var returning by remember { mutableStateOf<ItemDto?>(null) }
     var outgrowing by remember { mutableStateOf<List<String>?>(null) }
 
@@ -114,6 +125,30 @@ fun PersonDetailContent(
                     )
                     Spacer(Modifier.height(spacing.md))
                     HazardRule()
+                }
+            }
+
+            item {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+                ) {
+                    ToteButton(
+                        text = "Edit",
+                        onClick = { showEdit = true },
+                        tonal = true,
+                        enabled = state.person != null && !state.busy,
+                        modifier = Modifier.weight(1f),
+                    )
+                    ToteButton(
+                        text = "Remove",
+                        onClick = { confirmingDelete = true },
+                        tonal = true,
+                        enabled = state.person != null && !state.busy,
+                        channel = MaterialTheme.colorScheme.error,
+                        dimChannel = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
 
@@ -146,12 +181,24 @@ fun PersonDetailContent(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     SectionHeader(label = "Sizes now", channel = colors.slate.base)
-                    ToteButton(
-                        text = "Record size",
-                        onClick = { showAddSize = true },
-                        tonal = true,
-                        compact = true,
-                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
+                        if (state.sizeHistory.isNotEmpty()) {
+                            ToteButton(
+                                text = "History",
+                                onClick = { showHistory = true },
+                                tonal = true,
+                                compact = true,
+                                enabled = !state.busy,
+                            )
+                        }
+                        ToteButton(
+                            text = "Record size",
+                            onClick = { showAddSize = true },
+                            tonal = true,
+                            compact = true,
+                            enabled = !state.busy,
+                        )
+                    }
                 }
             }
             item {
@@ -229,6 +276,122 @@ fun PersonDetailContent(
         }
     }
 
+
+    if (showEdit) {
+        var name by remember { mutableStateOf(state.person?.name.orEmpty()) }
+        var birthdate by remember { mutableStateOf(state.person?.birthdate.orEmpty()) }
+        AlertDialog(
+            onDismissRequest = { showEdit = false },
+            title = { Text("Edit person") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Name") },
+                        singleLine = true,
+                    )
+                    Spacer(Modifier.height(ToteTheme.spacing.md))
+                    DateField(
+                        value = birthdate,
+                        onValueChange = { birthdate = it },
+                        label = "Birthdate (optional)",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onEditPerson(name, birthdate)
+                        showEdit = false
+                    },
+                    enabled = name.isNotBlank(),
+                ) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { showEdit = false }) { Text("Cancel") } },
+        )
+    }
+
+    if (confirmingDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmingDelete = false },
+            title = { Text("Remove ${state.person?.name ?: "this person"}?") },
+            text = {
+                Column {
+                    Text(
+                        "Their recorded sizes go with them.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(ToteTheme.spacing.sm))
+                    // The ledger keeps every loan; only the name attached to it is lost. Said
+                    // plainly because "who has the drill" is one of the two questions this
+                    // table exists to answer, and this is the tap that gives it up.
+                    Caption(
+                        text = "Loans they were part of stay in each item's history, but those " +
+                            "rows will no longer name anyone."
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeletePerson()
+                        confirmingDelete = false
+                    },
+                ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingDelete = false }) { Text("Keep") }
+            },
+        )
+    }
+
+    if (showHistory) {
+        AlertDialog(
+            onDismissRequest = { showHistory = false },
+            title = { Text("Size history") },
+            text = {
+                Column {
+                    Caption(
+                        text = "Newest first. A size can be removed but never edited — the tag's " +
+                            "words are kept verbatim, and the index is derived from them."
+                    )
+                    Spacer(Modifier.height(ToteTheme.spacing.sm))
+                    state.sizeHistory.forEach { size ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = ToteTheme.spacing.xs),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "${size.sizeRaw} · ${garmentLabel(size.garmentType)}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Caption(
+                                    text = buildString {
+                                        append("from ${size.effectiveFrom}")
+                                        // An unplaceable reading is exactly what makes `fits`
+                                        // say "we can't say", so it is named here.
+                                        if (size.sizeSystem == null) append(" · not on the ladder")
+                                    }
+                                )
+                            }
+                            TextButton(
+                                onClick = { onDeleteSize(size.id) },
+                                enabled = !state.busy,
+                            ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showHistory = false }) { Text("Close") }
+            },
+        )
+    }
+
     if (showAddSize) {
         RecordSizeDialog(
             onDismiss = { showAddSize = false },
@@ -293,9 +456,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.fitsSection(
                         "No size is recorded for her, so there is nothing to match against. " +
                             "Record one above and this fills in."
                     else ->
-                        "Her recorded size couldn't be placed on the ladder, so matching would " +
-                            "be a guess. Tote would rather say nothing than send you to the " +
-                            "wrong bin twice."
+                        "A recorded size couldn't be placed on the ladder, so matching would " +
+                            "be a guess. Check History above — a mistyped reading (“5TT”) " +
+                            "reads exactly like this, and deleting it fixes it."
                 },
             )
         }

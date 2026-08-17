@@ -655,6 +655,24 @@ class ScreenshotTest {
         )
     }
 
+
+    /** A person with edit/remove reachable and a size history to correct from. */
+    @Test fun person_maintenance_dark() = capture("person_maintenance_dark", dark = true) {
+        PersonDetailContent(
+            state = PersonDetailState(
+                person = emma,
+                fits = FitsDto(answered = true, items = fittingItems),
+                sizeHistory = listOf(
+                    PersonSizeDto("s1", "p1", "tops", "5T", "toddler", 5.0, "2026-08-01"),
+                    PersonSizeDto("s0", "p1", "tops", "4T", "toddler", 4.0, "2025-11-14"),
+                ),
+                loading = false,
+            ),
+            onOpenTote = {}, onGarmentType = {}, onAddSize = { _, _ -> },
+            onReturned = { _, _ -> }, onOutgrown = { _, _ -> }, onRetry = {},
+        )
+    }
+
     // LoginContent is the stateless body precisely so it can be captured here: the stateful
     // LoginScreen needs Hilt and a real AppAuth service, neither of which exists in a JVM test.
     @Test fun login_light() =

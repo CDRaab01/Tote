@@ -10,8 +10,11 @@ import com.tote.data.remote.FitsDto
 import com.tote.data.remote.ItemDto
 import com.tote.data.remote.OutgrownIn
 import com.tote.data.remote.PersonDto
+import com.tote.data.remote.PersonPatch
+import com.tote.data.remote.PersonSizeDto
 import com.tote.data.remote.PersonSizeIn
 import com.tote.util.ApiErrors
+import com.tote.util.FeedbackBus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,6 +28,15 @@ val GARMENT_TYPES = listOf("tops", "bottoms", "shoes", "outerwear")
 
 data class PersonDetailState(
     val person: PersonDto? = null,
+    /**
+     * Every recorded size, newest first — not just what is current.
+     *
+     * `person.currentSizes` answers "what size is she now"; this answers "what size was she last
+     * winter", which is what tells you which bin to open. It is also the ONLY way to correct a
+     * fat-fingered reading: an unparseable "5TT" sits in current sizes forever and makes every
+     * `fits` query answer "we can't say", with no path from the symptom to the cause.
+     */
+    val sizeHistory: List<PersonSizeDto> = emptyList(),
     val fits: FitsDto? = null,
     val onLoan: List<ItemDto> = emptyList(),
     val totes: List<CachedTote> = emptyList(),
@@ -46,6 +58,7 @@ data class PersonDetailState(
 class PersonDetailViewModel @Inject constructor(
     private val api: ApiService,
     private val catalogDao: CatalogDao,
+    private val feedback: FeedbackBus,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -68,10 +81,12 @@ class PersonDetailViewModel @Inject constructor(
                 val person = api.person(personId)
                 val fits = runCatching { api.fits(personId, _state.value.garmentType) }.getOrNull()
                 val onLoan = runCatching { api.onLoan(personId) }.getOrDefault(emptyList())
+                val history = runCatching { api.personSizes(personId) }.getOrDefault(emptyList())
                 _state.value = _state.value.copy(
                     person = person,
                     fits = fits,
                     onLoan = onLoan,
+                    sizeHistory = history,
                     totes = totes,
                     loading = false,
                 )
@@ -169,6 +184,71 @@ class PersonDetailViewModel @Inject constructor(
                         busy = false,
                         error = ApiErrors.message(it, "Couldn't mark that returned."),
                     )
+                }
+        }
+    }
+
+    /** Correct a name or a birthdate. Sizes are not editable here — see [deleteSize]. */
+    fun editPerson(name: String, birthdate: String?) {
+        if (name.isBlank()) return
+        write("Couldn't save that change.") {
+            api.patchPerson(
+                personId,
+                PersonPatch(name = name.trim(), birthdate = birthdate?.takeIf { it.isNotBlank() }),
+            )
+        }
+    }
+
+    /**
+     * Remove a person.
+     *
+     * The server keeps every `movements` row they appear on and nulls `person_id` — a loan that
+     * happened still happened, and erasing it to tidy a contact list would put a hole in the one
+     * record this app promises never to have holes in. What IS lost is the answer to "who has
+     * this", so the confirmation says so.
+     */
+    fun deletePerson(onGone: () -> Unit) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(busy = true, error = null)
+            runCatching { api.deletePerson(personId) }
+                .onSuccess {
+                    feedback.say("Removed ${_state.value.person?.name ?: "that person"}")
+                    onGone()
+                }
+                .onFailure {
+                    _state.value = _state.value.copy(
+                        busy = false,
+                        error = ApiErrors.message(it, "Couldn't remove them."),
+                    )
+                }
+        }
+    }
+
+    /**
+     * Delete a recorded size.
+     *
+     * Sizes are deletable, never editable: `size_raw` is sacred and the system/ordinal index is
+     * derived from it server-side on every write. The sanctioned fix for a fat-fingered "5TT" is
+     * therefore delete-and-re-add, which re-derives cleanly — editing in place would mean either
+     * a client-set index (which could file a 4T as an adult L) or a silent re-parse that changes
+     * what the tag said.
+     */
+    fun deleteSize(sizeId: String) {
+        write("Couldn't remove that size.") { api.deletePersonSize(personId, sizeId) }
+    }
+
+    /** One write shape: busy on, call, reload on success, speak on failure. */
+    private fun write(failure: String, block: suspend () -> Unit) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(busy = true, error = null)
+            runCatching { block() }
+                .onSuccess {
+                    _state.value = _state.value.copy(busy = false)
+                    load()
+                }
+                .onFailure {
+                    _state.value = _state.value.copy(busy = false)
+                    feedback.say(ApiErrors.message(it, failure))
                 }
         }
     }

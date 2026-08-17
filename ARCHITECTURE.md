@@ -1376,6 +1376,31 @@ server-side on every write, and a client that could set them could file a 4T ind
 — which would then match on every fits query forever, silently. The screen shows the tag's own
 words everywhere and never the ordinal: the index exists to be queried, not read.
 
+### A person is editable; a size is deletable but never editable
+
+A wearer profile is typed by hand, and everything downstream of it is silent when it is wrong. A
+mistyped size is the worst case in the app: `"5TT"` does not parse, so `size_system`/`size_ordinal`
+stay null, so `fits` answers `answered: false` **forever** — the screen keeps saying "We can't say
+yet" while the size sits right there on the same screen looking recorded. Until this round there
+was no way to remove it, and the profile carrying it could not be renamed or deleted either.
+
+So: `PATCH /people/{id}` for the name and birthdate, delete for the profile, and a **size history**
+sheet (the first caller of `GET /people/{id}/sizes`) where any recorded size can be removed.
+
+Sizes are **deletable, not editable**, and that is the same rule as everywhere else in this app:
+`size_raw` is what somebody read off a tag, and an in-place edit would quietly rewrite the reading
+while keeping its timestamp. Delete and re-record instead — the new row re-derives its index from
+scratch and dates itself honestly. The "We can't say yet" copy now names History as the fix path,
+so the symptom points at its own cure rather than at a dead end.
+
+Deleting a person does not delete history. Movement rows survive with a null `person_id`, so
+"this went out in November" stays true and only the name goes — the confirm copy says exactly that,
+because a delete that silently shortened the ledger would be the one destructive act in the app
+nobody had been warned about.
+
+`busy` disables every write button while one is in flight. It had been tracked and never read since
+Phase 6, which is how a double-tapped Remove became two DELETEs and a 404 in the snackbar.
+
 ### Lending
 
 From the bin the thing is in, because that is where someone is standing when they hand it over.
