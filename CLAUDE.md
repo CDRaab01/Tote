@@ -83,6 +83,7 @@ cd android && ./gradlew :app:assembleDebug :app:testDebugUnitTest
 | **ntfy topic** `tote-alerts` | Referenced by `notify.yml`; confirm it exists on the self-hosted ntfy (`:8095`). |
 | **Backups** | Phase 7. **Nothing backs up `/data/photos` yet.** Once real photos exist they are the artifact — the rows are just paths pointing at them. |
 | **The physical bootstrap** | Printing the first index cards and writing the first tags — the moment the design either works in an attic or does not. |
+| **Size backfill after #36** | Three garments stored as `6m` still carry a null `size_ordinal` and are invisible to `fits`. The ladder is derived **at write time**, so adding rungs does not reach rows already written — see ARCHITECTURE.md, "A ladder change does not reach rows already written". Script ready at `%TEMP%\claude\C--Code\d25fdf3f-f44f-4c2e-8fcd-5ddc6ad36372\scratchpad\backfill-sizes.ps1`; the write is blocked by the tooling classifier, so a human runs it. |
 
 ### Deliberately not done
 
