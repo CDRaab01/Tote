@@ -974,6 +974,38 @@ all and said nothing about why. A person's rows could not act on the item at all
 One caller-supplied verb rides in as `extraActionLabel`: the person screen passes "Mark
 outgrown…", which needs a person and so has no business being knowledge the sheet holds.
 
+### A row gets exactly one clickable
+
+Owner-reported: tapping an item in a bin did nothing. The row had **two** click handlers stacked —
+`PanelCard(onClick = …)` for the tap and a `combinedClickable` on the inner `Row` for the
+long-press that starts a selection. `PanelCard` renders its own clickable `Surface` and puts the
+content inside it, so the inner modifier lies on top and consumes the pointer first: every tap went
+to its `onClick = {}` and stopped there. Long-press still worked, because the inner one owned it,
+which is what made only half the screen look broken.
+
+Both gestures now live on **one** `combinedClickable` on the Row, with `PanelCard(onClick = null,
+contentPadding = 0.dp)` and the card's padding moved inside the Row — so the whole panel stays
+tappable rather than only the content within its padding. The rule: **if a row needs a long press,
+the tap belongs on the same modifier**, never on a clickable container underneath it, which cannot
+be reached and only re-creates the trap.
+
+### Gestures need a test that presses the pixels
+
+This class of bug has now shipped twice — the `currentToteId` guard above, and this one — and
+neither was catchable by the tests this app had. A ViewModel test proves a handler does the right
+thing *when called*; a Roborazzi baseline proves the row is *drawn*. Both pass at full green while
+the gesture never reaches the handler at all, and the only symptom is a person tapping a thing and
+nothing happening.
+
+`ItemRowTapTest` is the first interaction test here and asserts the gesture rather than the layout:
+a tap opens, a long press selects **and does not also open**, and while selecting a tap ticks
+instead of opening. It was verified against the broken code before being kept — two of its three
+cases fail there, which is the only evidence that a regression test is worth its runtime.
+
+Its `@Config(qualifiers = Pixel5)` is load-bearing, not decoration: the rows sit in a lazy list and
+on Robolectric's default tiny window they are never composed, which fails as "no such node" and
+reads exactly like the bug the file exists to catch.
+
 ### Two bugs found on the way
 
 **Lending had been unreachable since the picker round.** `LendDialog` imported `PickerDialog` and
