@@ -39,6 +39,8 @@ import androidx.compose.foundation.layout.Column
 import com.tote.ui.components.PickerList
 import com.tote.ui.components.PickerField
 import com.tote.ui.components.PickerOption
+import com.tote.ui.settings.SettingsContent
+import com.tote.ui.settings.SettingsState
 import com.tote.ui.theme.ToteTheme
 import com.tote.util.UiState
 import org.junit.Rule
@@ -582,6 +584,53 @@ class ScreenshotTest {
         "Blankets", "Christmas decor", "Winter 5T", "Power tools", "Vintage games",
         "Kitchen spares", "Documents",
     )
+
+
+    /** The tag-mismatch warning — the app's highest-consequence signal, dropped until now. */
+    @Test fun tote_detail_mismatch_dark() = capture("tote_detail_mismatch_dark", dark = true) {
+        ToteDetailContent(
+            tote = ToteDetailDto(
+                id = "t1",
+                code = "A14",
+                label = "Christmas decor",
+                nfcTagUid = "04:1a:2b",
+                items = listOf(ItemDto(id = "i1", name = "Pre-lit tree, 7ft", status = "stored")),
+            ),
+            onAddItem = {}, onUnpackAll = {}, onRepackAll = {}, onTakeOut = {}, onPutBack = {},
+            tagMismatch = true,
+        )
+    }
+
+    /** A phone with no NFC: the write button says why instead of doing nothing. */
+    @Test fun tote_detail_no_nfc_dark() = capture("tote_detail_no_nfc_dark", dark = true) {
+        ToteDetailContent(
+            tote = ToteDetailDto(id = "t1", code = "A14", label = "Christmas decor"),
+            onAddItem = {}, onUnpackAll = {}, onRepackAll = {}, onTakeOut = {}, onPutBack = {},
+            hasNfc = false,
+        )
+    }
+
+    @Test fun settings_dark() = capture("settings_dark", dark = true) {
+        SettingsContent(
+            state = SettingsState(
+                email = "cdraab01@gmail.com",
+                version = "1.0.26",
+                serverUrl = "https://dragonfly.tail2ce561.ts.net:8448",
+            ),
+            onSignOut = {},
+        )
+    }
+
+    @Test fun settings_light() = capture("settings_light", dark = false) {
+        SettingsContent(
+            state = SettingsState(
+                email = "cdraab01@gmail.com",
+                version = "1.0.26",
+                serverUrl = "https://dragonfly.tail2ce561.ts.net:8448",
+            ),
+            onSignOut = {},
+        )
+    }
 
     // LoginContent is the stateless body precisely so it can be captured here: the stateful
     // LoginScreen needs Hilt and a real AppAuth service, neither of which exists in a JVM test.

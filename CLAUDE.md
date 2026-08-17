@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **255 server** (pytest, real Postgres) + **127 Android** (measured 2026-08-16) |
+| Tests | **255 server** (pytest, real Postgres) + **130 Android** (measured 2026-08-17) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -612,6 +612,16 @@ a 401 as a session problem; both photo-destroying discards got the confirm that 
 delete already had; Skip wraps past the last draft; mixed bins show both bulk buttons; Unpack-all
 asks first; queueing a capture acknowledges. Rule recorded in ARCHITECTURE.md: only
 user-initiated writes speak.
+
+**UX round PR 4 — chrome, NFC trust, the card, a way out (#23).** One `TopAppBar` with a back
+arrow on every non-tab route (detail screens had NO on-screen way back, worst on the NFC
+cold-launch); the **tag-mismatch warning** finally reaches the UI as a nav arg + attention card
+(the server always computed it, the client always dropped it — a label on the wrong box opened
+the wrong bin with total confidence); an unresolvable tag pre-fills search with the code instead
+of discarding it; `CardDownloader` fetches the card PDF with the authenticated client and shares
+a `content://` URI (the old `ACTION_VIEW` of the raw URL could only ever 401); write-tag is
+disabled with a reason on phones without NFC; and a **Settings** screen finally exposes
+`signOut()`, which had been unreachable since Phase 1.
 
 ---
 

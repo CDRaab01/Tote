@@ -836,6 +836,50 @@ something" button — the natural start of the next batch, not prose naming a ta
 show both Unpack all and Repack all; the old either/or hid Repack whenever anything was still
 inside, which is the normal January state of a Christmas bin.
 
+## Chrome, and the way back
+
+One `TopAppBar` on the single `ToteNav` Scaffold, shown on every non-tab route. Detail screens
+had no on-screen way back at all — no bar, no arrow, and the bottom bar deliberately hidden —
+which was worst on the flagship path: an NFC tap from a locked phone launches straight into a bin,
+chrome-less, with nothing indicating the rest of the app exists. No title, because each screen's
+hero already carries its identity.
+
+**Settings** is reached from a gear on the home hero rather than a sixth tab (a bottom bar carries
+five, and this screen is an escape hatch, not a destination). Three rows: signed-in email (the
+first caller `users/me` has ever had), version, server URL — and **Sign out**, which had been
+written, tested, and reachable from nowhere since Phase 1. Given this app's own token-wedge
+history, "sign out and back in" has to be something a person can do without clearing app data,
+which would also destroy the capture queue. The screen must render during an outage, so the email
+is the only remote fact on it and stays honestly null when unreachable.
+
+### The tag-mismatch warning finally arrives
+
+The server has always compared the tapped tag's hardware UID against the one recorded for the bin,
+and the client always threw the answer away — so the exact scenario the UID column exists for,
+"this tag belongs to A14 but is stuck on a different box", opened the wrong contents with total
+confidence, in an attic, where the whole point is not having to open the box. It now travels as a
+**nav argument** (`totes/{id}?mismatch=true`) because it is a fact about *this opening*, not about
+the bin, and surfaces as an attention card above the contents.
+
+An unresolvable tag no longer dumps you on an empty search box with the code discarded. It
+pre-fills search with the code and says which one failed — previously there was no way to tell a
+deleted bin from being off the tailnet from a tap that never registered, and the one piece of
+information the person had was thrown away.
+
+### The index card is downloaded, not linked
+
+`CardDownloader` fetches the PDF with the app's **authenticated** OkHttp client, writes it to
+`cacheDir/cards/<code>.pdf`, and hands the system a `content://` URI through the camera's existing
+FileProvider. The old path `ACTION_VIEW`-ed the card URL directly, which could never have worked:
+the endpoint requires a bearer token and an external browser has none, so the tap opened a 401
+while the bin screen went on saying "no card printed" (the server only stamps `card_printed_at` on
+a successful render). Photos were routed through the authenticated client for exactly this reason;
+the PDF was not. Naming the file by bin code matters — that string is what the print dialog shows.
+
+Write-tag is **disabled with a reason** on a phone without NFC. The check used to live in the click
+handler while the button stayed drawn and enabled, so tapping it was indistinguishable from a
+frozen app.
+
 ## An empty screen must say WHY it is empty
 
 Three times in this app a screen has confidently reported nothing when the truth was "I could not

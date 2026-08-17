@@ -6,4 +6,6 @@
 <paths>
     <cache-path name="captures" path="captures/" />
     <files-path name="capture_queue" path="capture_queue/" />
+    <!-- Index-card PDFs, handed to the system print/share sheet. -->
+    <cache-path name="cards" path="cards/" />
 </paths>

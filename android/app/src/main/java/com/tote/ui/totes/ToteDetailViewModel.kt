@@ -3,6 +3,7 @@ package com.tote.ui.totes
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tote.data.CardDownloader
 import com.tote.data.CatalogRepository
 import com.tote.data.remote.ApiService
 import com.tote.data.remote.ItemCreate
@@ -26,10 +27,21 @@ class ToteDetailViewModel @Inject constructor(
     private val repo: CatalogRepository,
     private val api: ApiService,
     private val feedback: FeedbackBus,
+    private val cards: CardDownloader,
     savedState: SavedStateHandle,
 ) : ViewModel() {
 
     private val toteId: String = checkNotNull(savedState["toteId"])
+
+    /**
+     * True when the tapped tag's UID is not the one recorded for this bin.
+     *
+     * A fact about THIS opening, not about the bin — which is why it arrives as a nav argument
+     * rather than living in state. The server has always computed it and the client always threw
+     * it away, so the one scenario the stored UID exists for ("this tag belongs to A14 but is
+     * stuck on a different box") opened the wrong contents with total confidence.
+     */
+    val tagMismatch: Boolean = savedState["mismatch"] ?: false
 
     private val _state = MutableStateFlow<UiState<ToteDetailDto>>(UiState.Loading)
     val state: StateFlow<UiState<ToteDetailDto>> = _state.asStateFlow()
@@ -152,9 +164,28 @@ class ToteDetailViewModel @Inject constructor(
     private val _write = MutableStateFlow<WriteState>(WriteState.Idle)
     val write: StateFlow<WriteState> = _write.asStateFlow()
 
-    /** The URL of this tote's printable card, for handing to a browser or a print service. */
-    fun cardUrl(): String =
-        com.tote.BuildConfig.SERVER_URL.trimEnd('/') + "/totes/" + toteId + "/card"
+    private val _cardIntent = MutableStateFlow<android.content.Intent?>(null)
+    val cardIntent: StateFlow<android.content.Intent?> = _cardIntent.asStateFlow()
+
+    /**
+     * Fetch the printable card and hand it to the phone's PDF viewer.
+     *
+     * Was a bare `ACTION_VIEW` of the card URL, which could never have worked: the endpoint
+     * needs a bearer token and an external browser has none, so the tap opened a 401 while this
+     * screen kept saying "no card printed". Downloaded with the app's own authenticated client
+     * instead — see CardDownloader.
+     */
+    fun printCard(code: String) {
+        viewModelScope.launch {
+            val intent = cards.open(toteId, code)
+            if (intent != null) _cardIntent.value = intent
+            else feedback.say("Couldn't fetch the card. Check you're on the tailnet.")
+        }
+    }
+
+    fun cardIntentConsumed() {
+        _cardIntent.value = null
+    }
 
     fun beginWrite() {
         _write.value = WriteState.Waiting

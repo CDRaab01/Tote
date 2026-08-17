@@ -59,7 +59,13 @@ class DeleteItemTest {
                 items = listOf(ItemDto(id = "i1", name = "Toddler Bed Comforter", status = "stored")),
             )
         }
-        return ToteDetailViewModel(repo, api, FeedbackBus(), SavedStateHandle(mapOf("toteId" to "t1")))
+        return ToteDetailViewModel(
+            repo,
+            api,
+            FeedbackBus(),
+            mock(),
+            SavedStateHandle(mapOf("toteId" to "t1")),
+        )
     }
 
     @Test

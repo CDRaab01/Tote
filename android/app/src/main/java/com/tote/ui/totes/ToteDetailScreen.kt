@@ -75,16 +75,18 @@ fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
     var confirmingUnpack by remember { mutableStateOf(false) }
     var lending by remember { mutableStateOf<String?>(null) }
     var openItem by remember { mutableStateOf<ItemDto?>(null) }
-    var cardUrl by remember { mutableStateOf<String?>(null) }
     val people by viewModel.people.collectAsStateWithLifecycle()
+    val cardIntent by viewModel.cardIntent.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     // The PDF is handed to the system rather than rendered in-app: printing is the whole point,
-    // and every phone already has a print/share path for a PDF URL.
-    LaunchedEffect(cardUrl) {
-        cardUrl?.let { url ->
-            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }
-            cardUrl = null
+    // and every phone already has a print/share sheet for a PDF. It arrives as a content:// URI
+    // from the app's own authenticated download — handing the raw URL to a browser (as this
+    // did) could only ever produce a 401, because the endpoint needs a bearer token.
+    LaunchedEffect(cardIntent) {
+        cardIntent?.let { intent ->
+            runCatching { context.startActivity(intent) }
+            viewModel.cardIntentConsumed()
         }
     }
 
@@ -104,8 +106,10 @@ fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
                 onRepackAll = viewModel::repackAll,
                 onTakeOut = viewModel::moveOut,
                 onPutBack = viewModel::putBack,
-                onWriteTag = { if (hasNfc(context)) viewModel.beginWrite() },
-                onPrintCard = { cardUrl = viewModel.cardUrl() },
+                onWriteTag = viewModel::beginWrite,
+                hasNfc = hasNfc(context),
+                onPrintCard = { viewModel.printCard(s.data.code) },
+                tagMismatch = viewModel.tagMismatch,
                 onOpenItem = { openItem = it },
             )
             openItem?.let { item ->
@@ -209,7 +213,9 @@ fun ToteDetailContent(
     onOpenItem: (ItemDto) -> Unit = {},
     modifier: Modifier = Modifier,
     onWriteTag: () -> Unit = {},
+    hasNfc: Boolean = true,
     onPrintCard: () -> Unit = {},
+    tagMismatch: Boolean = false,
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -262,10 +268,34 @@ fun ToteDetailContent(
                 }
             }
 
+            if (tagMismatch) {
+                item {
+                    // The highest-consequence signal in the app: the server compares the tapped
+                    // tag's hardware UID against the one recorded for this bin, and it has always
+                    // computed this while the client threw it away — so a label stuck on the
+                    // wrong box opened the wrong contents with total confidence, in an attic,
+                    // where the whole point is not having to open the box.
+                    PanelCard(channel = colors.attention.base) {
+                        Text(
+                            "This isn't the tag recorded for this bin",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = colors.attention.base,
+                        )
+                        Spacer(Modifier.height(spacing.xs))
+                        Caption(
+                            text = "The label may be on the wrong box, or this tag was rewritten " +
+                                "for another bin. Check the code on the card before you trust " +
+                                "what's below.",
+                        )
+                    }
+                }
+            }
+
             item {
                 TagAndCardRow(
                     hasTag = tote.nfcTagUid != null,
                     cardPrinted = tote.cardPrintedAt != null,
+                    hasNfc = hasNfc,
                     onWriteTag = onWriteTag,
                     onPrintCard = onPrintCard,
                 )
@@ -328,6 +358,7 @@ fun ToteDetailContent(
 private fun TagAndCardRow(
     hasTag: Boolean,
     cardPrinted: Boolean,
+    hasNfc: Boolean,
     onWriteTag: () -> Unit,
     onPrintCard: () -> Unit,
 ) {
@@ -348,15 +379,24 @@ private fun TagAndCardRow(
                 )
                 Spacer(Modifier.height(spacing.xs))
                 Caption(
-                    text = if (hasTag || cardPrinted) {
-                        "Tap the tag or scan the card to open this bin"
-                    } else {
-                        "Write a tag or print a card so this bin can be found"
+                    text = when {
+                        // Said, rather than left to a button that silently does nothing. The
+                        // write button used to be drawn and enabled on every phone, with the
+                        // NFC check hidden in the click handler — tapping it on a phone without
+                        // NFC was indistinguishable from a frozen app.
+                        !hasNfc -> "This phone has no NFC — print a card instead"
+                        hasTag || cardPrinted -> "Tap the tag or scan the card to open this bin"
+                        else -> "Write a tag or print a card so this bin can be found"
                     },
                 )
             }
             Column {
-                ToteButton(text = if (hasTag) "Rewrite" else "Write tag", onClick = onWriteTag, tonal = true)
+                ToteButton(
+                    text = if (hasTag) "Rewrite" else "Write tag",
+                    onClick = onWriteTag,
+                    tonal = true,
+                    enabled = hasNfc,
+                )
                 Spacer(Modifier.height(spacing.xs))
                 ToteButton(text = "Print card", onClick = onPrintCard, tonal = true)
             }

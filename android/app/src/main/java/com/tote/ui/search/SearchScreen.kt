@@ -13,7 +13,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -45,6 +47,7 @@ private const val OVERDUE_SHOWN = 3
 @Composable
 fun SearchScreen(
     onOpenTote: (String) -> Unit,
+    onOpenSettings: () -> Unit = {},
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -52,6 +55,7 @@ fun SearchScreen(
         state = state,
         onQueryChange = viewModel::onQueryChange,
         onOpenTote = onOpenTote,
+        onOpenSettings = onOpenSettings,
     )
 }
 
@@ -61,6 +65,7 @@ fun SearchContent(
     state: SearchUiState,
     onQueryChange: (String) -> Unit,
     onOpenTote: (String) -> Unit,
+    onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val colors = ToteTheme.colors
@@ -73,11 +78,25 @@ fun SearchContent(
         ) {
             item {
                 HeroPanel {
-                    Text(
-                        "Tote",
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = androidx.compose.ui.graphics.Color.White,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Tote",
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = androidx.compose.ui.graphics.Color.White,
+                            modifier = Modifier.weight(1f),
+                        )
+                        // The only door to Settings. It lives on the home hero rather than a
+                        // sixth tab because a bottom bar carries five, and because the screen
+                        // behind it is an escape hatch — reached when something is wrong, not
+                        // in the course of using the app.
+                        IconButton(onClick = onOpenSettings) {
+                            Icon(
+                                Icons.Filled.Settings,
+                                contentDescription = "Settings",
+                                tint = androidx.compose.ui.graphics.Color.White,
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(spacing.xs))
                     Text(
                         "What's in the bins, and which bin it's in.",
