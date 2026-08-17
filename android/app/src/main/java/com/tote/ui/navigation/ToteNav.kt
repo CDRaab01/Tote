@@ -3,6 +3,7 @@ package com.tote.ui.navigation
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -10,12 +11,14 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -43,6 +46,7 @@ import com.tote.ui.review.DraftBadgeViewModel
 import com.tote.ui.search.SearchScreen
 import com.tote.ui.totes.ToteDetailScreen
 import com.tote.util.FeedbackViewModel
+import com.tote.ui.settings.SettingsScreen
 import com.tote.ui.theme.ToteTheme
 import com.tote.ui.totes.ToteListScreen
 
@@ -59,23 +63,28 @@ import com.tote.ui.totes.ToteListScreen
  * bottom bar can carry, so this is the last tab this app gets.
  */
 object Routes {
-    const val SEARCH = "search"
+    const val SEARCH = "search?q={q}"
     const val TOTES = "totes"
     const val PEOPLE = "people"
     const val CAPTURE = "capture"
     const val REVIEW = "review"
-    const val TOTE_DETAIL = "totes/{toteId}"
+    const val SETTINGS = "settings"
+    const val TOTE_DETAIL = "totes/{toteId}?mismatch={mismatch}"
     const val PERSON_DETAIL = "people/{personId}"
 
-    fun toteDetail(id: String) = "totes/$id"
+    fun toteDetail(id: String, mismatch: Boolean = false) = "totes/$id?mismatch=$mismatch"
 
     fun personDetail(id: String) = "people/$id"
+
+    /** Search, optionally pre-filled — used when a tag resolves to nothing. */
+    fun search(query: String = "") = "search?q=$query"
 }
 
 /** The tab routes, which is also the set on which the bottom bar is shown. */
 private val TAB_ROUTES =
     setOf(Routes.SEARCH, Routes.TOTES, Routes.PEOPLE, Routes.CAPTURE, Routes.REVIEW)
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ToteNavHost(
     launchIntent: Intent? = null,
@@ -114,13 +123,25 @@ fun ToteNavHost(
             // source of truth, so a tag written a year ago still opens a bin that has since been
             // renamed, moved and refilled.
             is TapTarget.Tote -> {
-                nav.navigate(Routes.toteDetail(t.id)) { launchSingleTop = true }
+                // The mismatch travels with the opening rather than living in global state: it
+                // is a fact about THIS tap, not about the bin. Dropping it (as this did) meant
+                // the one scenario the stored tag UID exists for — "this tag belongs to A14 but
+                // is stuck on a different bin" — opened the wrong contents with total confidence.
+                nav.navigate(Routes.toteDetail(t.id, t.tagMismatch)) { launchSingleTop = true }
                 tapRouter.consumed()
             }
             // A tag whose code resolves to nothing (deleted bin, or offline). Not a dead end:
             // drop the person on search rather than an error screen.
             is TapTarget.Unknown -> {
-                nav.navigate(Routes.SEARCH) { launchSingleTop = true }
+                // Say WHICH code failed and hand it to search. Landing on an empty search box
+                // with the code discarded left no way to tell a deleted bin from being off the
+                // tailnet from a tap that never registered — and threw away the one piece of
+                // information the person had.
+                nav.tabTo(Routes.search(t.code))
+                feedback.bus.say(
+                    "Nothing answers to “${t.code}” — it may have been deleted, or you may be " +
+                        "off the tailnet."
+                )
                 tapRouter.consumed()
             }
             null -> Unit
@@ -131,6 +152,26 @@ fun ToteNavHost(
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHost) },
+        topBar = {
+            // Detail screens had NO on-screen way back: no bar, no arrow, and the bottom bar
+            // hidden. Worst on the flagship path — an NFC tap from a locked phone launches
+            // straight into a bin, chrome-less, with nothing saying the rest of the app exists.
+            // One bar here covers every pushed screen; no title, because each screen's hero
+            // already carries its identity.
+            if (route != null && route !in TAB_ROUTES) {
+                TopAppBar(
+                    title = {},
+                    navigationIcon = {
+                        IconButton(onClick = { nav.navigateUp() }) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                            )
+                        }
+                    },
+                )
+            }
+        },
         bottomBar = {
             // Hidden on detail, which is a pushed screen rather than a tab.
             if (route in TAB_ROUTES) {
@@ -189,8 +230,16 @@ fun ToteNavHost(
             startDestination = Routes.SEARCH,
             modifier = Modifier.padding(padding),
         ) {
-            composable(Routes.SEARCH) {
-                SearchScreen(onOpenTote = { nav.navigate(Routes.toteDetail(it)) })
+            composable(
+                Routes.SEARCH,
+                arguments = listOf(
+                    navArgument("q") { type = NavType.StringType; defaultValue = "" },
+                ),
+            ) {
+                SearchScreen(
+                    onOpenTote = { nav.navigate(Routes.toteDetail(it)) },
+                    onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+                )
             }
             composable(Routes.TOTES) {
                 ToteListScreen(onOpenTote = { nav.navigate(Routes.toteDetail(it)) })
@@ -204,8 +253,15 @@ fun ToteNavHost(
             }
             composable(
                 Routes.TOTE_DETAIL,
-                arguments = listOf(navArgument("toteId") { type = NavType.StringType }),
+                arguments = listOf(
+                    navArgument("toteId") { type = NavType.StringType },
+                    navArgument("mismatch") {
+                        type = NavType.BoolType
+                        defaultValue = false
+                    },
+                ),
             ) { ToteDetailScreen() }
+            composable(Routes.SETTINGS) { SettingsScreen() }
             composable(
                 Routes.PERSON_DETAIL,
                 arguments = listOf(navArgument("personId") { type = NavType.StringType }),

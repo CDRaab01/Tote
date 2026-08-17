@@ -57,7 +57,13 @@ class LendTest {
             onBlocking { move(any(), any()) } doReturn
                 MovementDto(id = "m1", itemId = "i1", reason = "loaned", movedAt = "2026-08-16T00:00:00Z")
         }
-        return ToteDetailViewModel(repo, api, FeedbackBus(), SavedStateHandle(mapOf("toteId" to "t1")))
+        return ToteDetailViewModel(
+            repo,
+            api,
+            FeedbackBus(),
+            mock(),
+            SavedStateHandle(mapOf("toteId" to "t1")),
+        )
     }
 
     @Test
