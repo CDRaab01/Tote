@@ -108,6 +108,7 @@ fun ToteNavHost(
         }
     }
     val pendingDrafts by draftBadge.pending.collectAsStateWithLifecycle()
+    val stuckCaptures by draftBadge.stuck.collectAsStateWithLifecycle()
     val tapTarget by tapRouter.target.collectAsStateWithLifecycle()
 
     LaunchedEffect(launchIntent) {
@@ -197,7 +198,19 @@ fun ToteNavHost(
                     NavigationBarItem(
                         selected = route == Routes.CAPTURE,
                         onClick = { nav.tabTo(Routes.CAPTURE) },
-                        icon = { Icon(Icons.Filled.PhotoCamera, contentDescription = null) },
+                        icon = {
+                            // A capture that cannot upload is work the person believes is done.
+                            BadgedBox(
+                                badge = {
+                                    if (stuckCaptures > 0) {
+                                        Badge(
+                                            containerColor = ToteTheme.colors.attention.base,
+                                            contentColor = ToteTheme.colors.attention.on,
+                                        ) { Text(stuckCaptures.toString()) }
+                                    }
+                                }
+                            ) { Icon(Icons.Filled.PhotoCamera, contentDescription = null) }
+                        },
                         label = { Text("Catalogue") },
                     )
                     NavigationBarItem(

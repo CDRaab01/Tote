@@ -632,6 +632,29 @@ class ScreenshotTest {
         )
     }
 
+
+    /**
+     * A cold start with nothing cached yet — the third state, and the reason it exists.
+     *
+     * "No totes yet" was shown during the first load as well as on failure, because only failure
+     * was guarded. Over a household with fourteen bins that is the lie that invites someone to
+     * create A14 for the second time.
+     */
+    @Test fun totes_loading_dark() = capture("totes_loading_dark", dark = true) {
+        ToteListContent(totes = emptyList(), onOpenTote = {}, onNewTote = {}, loading = true)
+    }
+
+    @Test fun people_loading_dark() = capture("people_loading_dark", dark = true) {
+        PeopleContent(UiState.Loading, {}, {}, {})
+    }
+
+    @Test fun search_searching_dark() = capture("search_searching_dark", dark = true) {
+        SearchContent(
+            SearchUiState(query = "ratchet", searching = true, searched = true, results = hits),
+            {}, {},
+        )
+    }
+
     // LoginContent is the stateless body precisely so it can be captured here: the stateful
     // LoginScreen needs Hilt and a real AppAuth service, neither of which exists in a JVM test.
     @Test fun login_light() =

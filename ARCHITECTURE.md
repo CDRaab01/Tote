@@ -880,6 +880,54 @@ Write-tag is **disabled with a reason** on a phone without NFC. The check used t
 handler while the button stayed drawn and enabled, so tapping it was indistinguishable from a
 frozen app.
 
+## Screens re-read themselves, and say when they are working
+
+Every tab ViewModel refreshed only in `init`, and `tabTo` deliberately preserves them
+(`saveState`/`restoreState`) — so Find's counters, the overdue card, the people list and the tote
+list were frozen at whatever they said the first time that tab was opened, for the life of the
+process. There was no pull-to-refresh either, and `ToteListViewModel.refreshing` had existed
+unused since it was written.
+
+Two mechanisms, one contract: `RefreshOnResume` (`ui/components/`) fires the same idempotent
+`refresh()` on every `ON_RESUME`, and `PullToRefreshBox` gives the manual pull. Both funnel into
+the identical call, so there is one code path to reason about. The refresh must be quiet — it runs
+on every tab switch, so a screen that announced or reset scroll position on resume would be worse
+than the staleness it cures. A failed re-poll keeps what is already on screen rather than
+replacing a readable list with an error.
+
+**Loading is a third state, distinct from empty and from unreachable.** The tote list previously
+showed "No totes yet" during the *first* load as well as on failure, because only failure was
+guarded — the same lie the empty-state rule above exists to prevent, arriving through the one door
+that rule had left open. People and Person detail rendered literally nothing while loading;
+Review's three branches all missed, leaving a hero over blank space; Search tracked `searching` and
+never rendered it, so a slow attic query was indistinguishable from a frozen screen still showing
+the last results.
+
+### Two badges, two meanings
+
+Review counts server-side drafts waiting on a decision. **Catalogue** now counts local queue rows
+that are `failed` or `uncertain` — captures that cannot proceed without a human. Both halves of
+the loop can stall silently, and only one of them was ever visible: someone photographs a bin in
+the garage, one upload is rejected, and nothing anywhere said so.
+
+### Dates are picked, not typed
+
+`DateField` wraps an M3 date picker and holds an ISO string the server accepts. The loan "back by"
+and person birthdate fields were free text expecting `2026-09-30` on a QWERTY keyboard with no
+validation — and in the lend dialog the resulting rejection was swallowed, so a malformed date
+closed the dialog looking exactly like a successful loan. The field is read-only with an explicit
+Clear, because both dates are genuinely optional. Quantity fields get a numeric keyboard (they
+filtered non-digits silently, which reads as a broken keyboard), and search gets `ImeAction.Search`
+and a clear-X.
+
+### The capture destination survives process death
+
+Held in `SavedStateHandle` keyed by tote **id**, restored against the cached bins. The situation
+the queue exists for — shooting a bin's worth in a garage with the app backgrounded between shots
+— is exactly when Android kills the process, and losing the destination there silently reset it
+to "Decide later". The cost surfaced at review as one picker tap per item: precisely what choosing
+it up front was meant to avoid.
+
 ## An empty screen must say WHY it is empty
 
 Three times in this app a screen has confidently reported nothing when the truth was "I could not

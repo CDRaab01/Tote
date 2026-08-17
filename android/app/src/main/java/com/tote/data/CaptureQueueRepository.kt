@@ -12,6 +12,7 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -66,6 +67,21 @@ class CaptureQueueRepository @Inject constructor(
 ) {
     val queue: Flow<List<CaptureQueueEntity>> = dao.observeAll()
     val pendingCount: Flow<Int> = dao.observeCount()
+
+    /**
+     * Rows that cannot move without a decision — rejected outright, or of unknown fate.
+     *
+     * The Review badge counts server-side drafts, so the LOCAL half of the pipeline had no
+     * signal anywhere outside the Catalogue tab's bottom section. Someone photographs a bin in
+     * the garage, one upload is rejected, and nothing ever says so — which is exactly the
+     * "work the person believes is finished and is not" the draft badge was built to prevent.
+     */
+    val stuckCount: Flow<Int> = dao.observeAll().map { rows ->
+        rows.count {
+            it.state == CaptureQueueEntity.STATE_FAILED ||
+                it.state == CaptureQueueEntity.STATE_UNCERTAIN
+        }
+    }
 
     /** Persist a shot set as one queued item. The files are already in app storage. */
     suspend fun enqueue(

@@ -1,6 +1,7 @@
 package com.tote.ui.totes
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +17,8 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -33,6 +36,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.data.local.CachedTote
+import com.tote.ui.components.RefreshOnResume
 import com.tote.ui.components.ToteButton
 import com.tote.ui.theme.ToteTheme
 import com.tote.util.UiState
@@ -50,13 +54,20 @@ fun ToteListScreen(
     val totes by viewModel.totes.collectAsStateWithLifecycle()
     val createState by viewModel.create.collectAsStateWithLifecycle()
     val unreachable by viewModel.unreachable.collectAsStateWithLifecycle()
+    val loading by viewModel.loading.collectAsStateWithLifecycle()
+    val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
+
+    RefreshOnResume(viewModel::refresh)
 
     ToteListContent(
         totes = totes,
         onOpenTote = onOpenTote,
         onNewTote = { showCreate = true },
         unreachable = unreachable,
+        loading = loading,
+        refreshing = refreshing,
+        onRefresh = viewModel::refresh,
         onRetry = viewModel::refresh,
     )
 
@@ -76,6 +87,7 @@ fun ToteListScreen(
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ToteListContent(
     totes: List<CachedTote>,
@@ -83,10 +95,14 @@ fun ToteListContent(
     onNewTote: () -> Unit,
     modifier: Modifier = Modifier,
     unreachable: Boolean = false,
+    loading: Boolean = false,
+    refreshing: Boolean = false,
+    onRefresh: () -> Unit = {},
     onRetry: () -> Unit = {},
 ) {
     val spacing = ToteTheme.spacing
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh) {
         LazyColumn(
             Modifier.fillMaxSize().padding(spacing.lg),
             verticalArrangement = Arrangement.spacedBy(spacing.md),
@@ -104,9 +120,15 @@ fun ToteListContent(
 
             if (totes.isEmpty()) {
                 item {
-                    // An empty cache means one of two very different things, and saying the
-                    // wrong one invites someone to create A14 for the second time.
-                    if (unreachable) {
+                    // Three states, not two. "No totes yet" over a household with fourteen bins
+                    // is the lie that invites someone to create A14 twice — and it used to be
+                    // shown during the FIRST load as well as on failure, because only failure
+                    // was guarded.
+                    if (loading) {
+                        Box(Modifier.fillMaxWidth().padding(spacing.xl), Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    } else if (unreachable) {
                         ErrorState(
                             icon = Icons.Outlined.CloudOff,
                             title = "Can't reach Tote",
@@ -125,6 +147,7 @@ fun ToteListContent(
             }
 
             items(totes, key = { it.id }) { tote -> ToteRow(tote, onClick = { onOpenTote(tote.id) }) }
+        }
         }
     }
 }

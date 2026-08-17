@@ -1,6 +1,7 @@
 package com.tote.ui.people
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,6 +15,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -32,6 +35,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.data.remote.PersonDto
 import com.tote.data.remote.PersonSizeDto
+import com.tote.ui.components.RefreshOnResume
+import com.tote.ui.components.DateField
 import com.tote.ui.components.ToteButton
 import com.tote.ui.theme.ToteTheme
 import com.tote.util.UiState
@@ -48,13 +53,18 @@ fun PeopleScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val createState by viewModel.create.collectAsStateWithLifecycle()
+    val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
+
+    RefreshOnResume(viewModel::refresh)
 
     PeopleContent(
         state = state,
         onOpenPerson = onOpenPerson,
         onAddPerson = { showAdd = true },
         onRetry = viewModel::refresh,
+        refreshing = refreshing,
+        onRefresh = viewModel::refresh,
     )
 
     if (showAdd) {
@@ -73,6 +83,7 @@ fun PeopleScreen(
     }
 }
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun PeopleContent(
     state: UiState<List<PersonDto>>,
@@ -80,9 +91,12 @@ fun PeopleContent(
     onAddPerson: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    refreshing: Boolean = false,
+    onRefresh: () -> Unit = {},
 ) {
     val spacing = ToteTheme.spacing
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        PullToRefreshBox(isRefreshing = refreshing, onRefresh = onRefresh) {
         LazyColumn(
             Modifier.fillMaxSize().padding(spacing.lg),
             verticalArrangement = Arrangement.spacedBy(spacing.md),
@@ -123,8 +137,16 @@ fun PeopleContent(
                         PersonRow(person, onClick = { onOpenPerson(person.id) })
                     }
                 }
+                // Loading rendered literally nothing under the header — indistinguishable
+                // from an empty household on a slow connection.
+                UiState.Loading -> item {
+                    Box(Modifier.fillMaxWidth().padding(spacing.xl), Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                }
                 else -> Unit
             }
+        }
         }
     }
 }
@@ -200,12 +222,11 @@ private fun AddPersonDialog(
                     singleLine = true,
                 )
                 Spacer(Modifier.height(ToteTheme.spacing.md))
-                OutlinedTextField(
+                DateField(
                     value = birthdate,
                     onValueChange = { birthdate = it },
-                    label = { Text("Birthdate (optional)") },
-                    placeholder = { Text("2021-04-09") },
-                    singleLine = true,
+                    label = "Birthdate (optional)",
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(ToteTheme.spacing.sm))
                 // Said plainly, because a birthdate looks like the app might guess a size from

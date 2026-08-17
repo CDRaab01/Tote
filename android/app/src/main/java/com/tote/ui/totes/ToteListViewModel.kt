@@ -43,6 +43,18 @@ class ToteListViewModel @Inject constructor(
     private val _unreachable = MutableStateFlow(false)
     val unreachable: StateFlow<Boolean> = _unreachable.asStateFlow()
 
+    /**
+     * True until the first sync settles, so a cold start does not accuse an empty cache of being
+     * an empty catalog.
+     *
+     * The unreachable flag above only covers FAILURE; while the first request is still in flight
+     * the list was empty, `unreachable` was false, and the screen confidently said "No totes yet"
+     * — the exact lie that invites someone to create A14 for the second time. Loading is the
+     * third state, and it is not the same as either neighbour.
+     */
+    private val _loading = MutableStateFlow(true)
+    val loading: StateFlow<Boolean> = _loading.asStateFlow()
+
     init {
         refresh()
     }
@@ -52,6 +64,7 @@ class ToteListViewModel @Inject constructor(
             _refreshing.value = true
             _unreachable.value = runCatching { repo.refresh() }.isFailure
             _refreshing.value = false
+            _loading.value = false
         }
     }
 

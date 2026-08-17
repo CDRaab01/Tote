@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **255 server** (pytest, real Postgres) + **130 Android** (measured 2026-08-17) |
+| Tests | **255 server** (pytest, real Postgres) + **133 Android** (measured 2026-08-17) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -622,6 +622,16 @@ of discarding it; `CardDownloader` fetches the card PDF with the authenticated c
 a `content://` URI (the old `ACTION_VIEW` of the raw URL could only ever 401); write-tag is
 disabled with a reason on phones without NFC; and a **Settings** screen finally exposes
 `signOut()`, which had been unreachable since Phase 1.
+
+**UX round PR 5 — screens tell the truth (#24).** Three tabs never refreshed after their first
+composition (VMs refresh in `init`; `tabTo` preserves them) and there was no pull-to-refresh
+anywhere: `RefreshOnResume` + `PullToRefreshBox` now feed the same idempotent `refresh()`.
+**Loading is a third state** distinct from empty and unreachable — the tote list showed
+"No totes yet" during the first load, the same lie the empty-state rule exists to prevent.
+Catalogue gains a badge for stuck captures (Review counts drafts; Catalogue counts uploads that
+cannot proceed — both halves could stall, only one was visible). `DateField` replaces free-text
+dates; quantity gets a numeric keyboard; search gets ImeAction.Search, a clear-X and a visible
+in-flight indicator. The capture destination survives process death via `SavedStateHandle`.
 
 ---
 
