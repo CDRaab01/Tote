@@ -127,6 +127,15 @@ interface ApiService {
         @Part photos: List<MultipartBody.Part>,
         @Part("tote_id") toteId: RequestBody? = null,
         @Part("capture_id") captureId: RequestBody? = null,
+        /**
+         * What the person said it is. **Present switches the server's identify call off** — the
+         * omnibus one, which is both the slow half of a scan and the thing whose answer gates
+         * the size read. Absent keeps the original behaviour.
+         */
+        @Part("name") name: RequestBody? = null,
+        @Part("category_id") categoryId: RequestBody? = null,
+        /** Spend a narrow extra call on a description. Only meaningful alongside [name]. */
+        @Part("describe") describe: RequestBody? = null,
     ): DraftDto
 
     /** The review stack, oldest first — the order they were shot in, which is the order the

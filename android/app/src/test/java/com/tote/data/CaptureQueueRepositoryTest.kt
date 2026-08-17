@@ -66,7 +66,7 @@ class CaptureQueueRepositoryTest {
 
     @Test
     fun `a successful drain deletes the row and the local photos`() = runTest {
-        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
         val files = photoFiles()
 
         val repository = repo()
@@ -81,7 +81,7 @@ class CaptureQueueRepositoryTest {
 
     @Test
     fun `offline keeps the row pending and asks WorkManager to come back`() = runTest {
-        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer { throw IOException("offline") } }
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer { throw IOException("offline") } }
         val repository = repo()
         repository.enqueue(photoFiles())
 
@@ -95,7 +95,7 @@ class CaptureQueueRepositoryTest {
     fun `a rejection marks the row failed, and the drain keeps going`() = runTest {
         var calls = 0
         api.stub {
-            onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer {
+            onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer {
                 calls++
                 if (calls == 1) throw httpError(422) else draft()
             }
@@ -117,7 +117,7 @@ class CaptureQueueRepositoryTest {
     @Test
     fun `a timeout is uncertain, not failed, and never retried automatically`() = runTest {
         api.stub {
-            onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer {
+            onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer {
                 throw SocketTimeoutException("timeout")
             }
         }
@@ -137,7 +137,7 @@ class CaptureQueueRepositoryTest {
     fun `a subsequent drain leaves uncertain and failed rows alone`() = runTest {
         var calls = 0
         api.stub {
-            onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer {
+            onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer {
                 calls++
                 throw SocketTimeoutException("timeout")
             }
@@ -153,7 +153,7 @@ class CaptureQueueRepositoryTest {
 
     @Test
     fun `a row stranded mid-upload by process death is released`() = runTest {
-        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
         val repository = repo()
         val id = repository.enqueue(photoFiles())
         // What the process leaves behind if it dies during the ~35 s upload.
@@ -165,7 +165,7 @@ class CaptureQueueRepositoryTest {
 
     @Test
     fun `retry puts a decided row back in line`() = runTest {
-        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
         val repository = repo()
         val id = repository.enqueue(photoFiles())
         dao.setState(id, CaptureQueueEntity.STATE_FAILED, 1, "HTTP 500")
@@ -188,8 +188,25 @@ class CaptureQueueRepositoryTest {
     }
 
     @Test
+    fun `what the person named it rides along, and a blank is stored as nothing`() = runTest {
+        val repository = repo()
+        repository.enqueue(photoFiles(), name = "  Sleepsuit  ", categoryId = "cat-1", describe = true)
+        repository.enqueue(photoFiles(), name = "   ")
+
+        val named = dao.rows.value.first()
+        assertEquals("Sleepsuit", named.name)
+        assertEquals("cat-1", named.categoryId)
+        assertTrue(named.describe)
+
+        // Blank is not an answer. Stored as "", the server would read it as a name the person
+        // gave and file an item called nothing at all — with identification skipped, so nobody
+        // and nothing would ever have named it.
+        assertNull(dao.rows.value[1].name)
+    }
+
+    @Test
     fun `the destination bin rides along with the capture`() = runTest {
-        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
         val repository = repo()
         repository.enqueue(photoFiles(), toteId = "tote-1", toteCode = "A14")
 
@@ -226,7 +243,7 @@ class CaptureQueueRepositoryTest {
         // which is exactly as bad as having none — and would look like it was working.
         val keys = mutableListOf<String?>()
         api.stub {
-            onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer {
+            onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer {
                 keys += capturedKey(it)
                 throw IOException("connection reset after the server committed")
             }
@@ -249,7 +266,7 @@ class CaptureQueueRepositoryTest {
         // re-send is fine now — but only because it carries the key the first attempt used.
         val keys = mutableListOf<String?>()
         api.stub {
-            onBlocking { scanItem(any(), anyOrNull(), anyOrNull()) } doAnswer {
+            onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer {
                 keys += capturedKey(it)
                 draft()
             }

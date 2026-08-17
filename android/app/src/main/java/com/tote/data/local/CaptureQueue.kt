@@ -38,6 +38,27 @@ data class CaptureQueueEntity(
     val toteId: String?,
     /** Denormalised so the queue can say "→ A14" without a lookup it may be offline for. */
     val toteCode: String?,
+    /**
+     * What the person said this is, when they said it.
+     *
+     * Non-null switches the server's omnibus identify call **off** — see `POST /items/scan`.
+     * That is not only faster (identify is the slow half of a scan measured at 35.5 s for one
+     * photo): identify's answer gates the size-reading pass, so a wrong guess can silently
+     * suppress the one vision output measured to work well. A name the person typed makes that
+     * gate trustworthy. Null keeps the original behaviour exactly.
+     */
+    val name: String? = null,
+    /** Chosen at capture, so the clothing gate reads the person's own vocabulary. */
+    val categoryId: String? = null,
+    /**
+     * Whether to spend a narrow vision call on a description.
+     *
+     * Off by default because it is the one thing here that costs time without being needed to
+     * file the item. On, it is worth real money: `items.search_vector` is generated over name,
+     * description and notes, so "the one with the ducks on it" finds nothing unless something
+     * wrote "ducks".
+     */
+    val describe: Boolean = false,
     /** pending | uploading | uncertain | failed (uploaded rows are deleted). */
     val state: String,
     val attempts: Int = 0,

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
+from app.models.category import Category
 from app.models.item import Item, ItemPhoto
 from app.models.tote import Tote
 from app.schemas.catalog import DraftConfirm, DraftOut, ItemOut
@@ -65,6 +66,9 @@ async def scan(
     photos: Annotated[list[UploadFile], File()],
     tote_id: Annotated[uuid.UUID | None, Form()] = None,
     capture_id: Annotated[uuid.UUID | None, Form()] = None,
+    name: Annotated[str | None, Form(max_length=160)] = None,
+    category_id: Annotated[uuid.UUID | None, Form()] = None,
+    describe: Annotated[bool, Form()] = False,
 ):
     """One item, 1-8 photos, one draft.
 
@@ -78,6 +82,14 @@ async def scan(
     queue's stranded-row recovery re-sends. Without a key, that re-send filed the object again:
     one photograph became four drafts in production on 2026-08-16, and two drafts of one cap are
     indistinguishable from two real caps. A repeat now returns the draft the first attempt made.
+
+    **`name` switches identification off.** When it is present the omnibus vision call is
+    skipped and the photos go straight to the label pass. That is faster (identify is the slow
+    half of a scan measured at 35.5 s for one photo), it removes a correction chore, and — the
+    part that is not obvious — it makes the *size* read more reliable, because the clothing gate
+    stops depending on a guess it would otherwise have to trust. `category_id` rides along for
+    the same reason: the gate reads the person's own vocabulary instead of the model's guess at
+    it. Leave both out and the endpoint behaves exactly as it always has.
     """
     if capture_id is not None:
         existing = (
@@ -123,8 +135,24 @@ async def scan(
             )
         payload.append((data, content_type))
 
+    if category_id is not None:
+        owned = (
+            await db.execute(
+                select(Category).where(Category.id == category_id, Category.user_id == user.id)
+            )
+        ).scalar_one_or_none()
+        if owned is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found")
+
     item = await scan_photos(
-        db, user_id=user.id, photos=payload, tote_id=tote_id, capture_id=capture_id
+        db,
+        user_id=user.id,
+        photos=payload,
+        tote_id=tote_id,
+        capture_id=capture_id,
+        name=name,
+        category_id=category_id,
+        describe=describe,
     )
     try:
         await db.commit()

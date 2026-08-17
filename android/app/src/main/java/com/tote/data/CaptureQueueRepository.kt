@@ -88,6 +88,9 @@ class CaptureQueueRepository @Inject constructor(
         photoFiles: List<File>,
         toteId: String? = null,
         toteCode: String? = null,
+        name: String? = null,
+        categoryId: String? = null,
+        describe: Boolean = false,
     ): String {
         require(photoFiles.isNotEmpty()) { "a capture needs at least one photo" }
         val id = UUID.randomUUID().toString()
@@ -97,6 +100,11 @@ class CaptureQueueRepository @Inject constructor(
                 photoPaths = photoFiles.joinToString("\n") { it.absolutePath },
                 toteId = toteId,
                 toteCode = toteCode,
+                // Blank is not an answer: the server falls back to identifying on a blank name,
+                // and storing "" here would read downstream as "the person named it".
+                name = name?.trim()?.takeIf { it.isNotEmpty() },
+                categoryId = categoryId,
+                describe = describe,
                 state = CaptureQueueEntity.STATE_PENDING,
                 createdAtMs = System.currentTimeMillis(),
             )
@@ -139,7 +147,17 @@ class CaptureQueueRepository @Inject constructor(
                 // the only thing that lets the server recognise a re-send as the same photograph
                 // rather than a second object. See the `uncertain` note above — this is what
                 // makes a re-send safe at all.
-                api.scanItem(parts, toteId, entry.id.toRequestBody(TEXT.toMediaType()))
+                api.scanItem(
+                    photos = parts,
+                    toteId = toteId,
+                    captureId = entry.id.toRequestBody(TEXT.toMediaType()),
+                    // Sent only when the person actually answered. An empty part is not the same
+                    // as an absent one to a form parser, and the server reads absent as "identify
+                    // this for me".
+                    name = entry.name?.toRequestBody(TEXT.toMediaType()),
+                    categoryId = entry.categoryId?.toRequestBody(TEXT.toMediaType()),
+                    describe = entry.describe.toString().toRequestBody(TEXT.toMediaType()),
+                )
                 // The server owns it now: drop the row and the local copies. Keeping them would
                 // accumulate a second, invisible photo library on the phone.
                 deleteFiles(entry)

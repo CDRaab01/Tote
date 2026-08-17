@@ -140,7 +140,7 @@ interface CatalogDao {
  */
 @Database(
     entities = [CachedItem::class, CachedTote::class, CaptureQueueEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class ToteDatabase : RoomDatabase() {

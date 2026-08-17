@@ -10,6 +10,8 @@ import androidx.work.WorkManager
 import com.tote.data.CaptureQueueRepository
 import com.tote.data.local.CachedTote
 import com.tote.data.local.CatalogDao
+import com.tote.data.remote.ApiService
+import com.tote.data.remote.CategoryDto
 import com.tote.data.local.CaptureQueueEntity
 import com.tote.util.FeedbackBus
 import com.tote.work.UploadWorker
@@ -34,6 +36,7 @@ class CaptureViewModel @Inject constructor(
     private val feedback: FeedbackBus,
     private val savedState: SavedStateHandle,
     private val catalogDao: CatalogDao,
+    private val api: ApiService,
 ) : ViewModel() {
 
     /**
@@ -101,6 +104,51 @@ class CaptureViewModel @Inject constructor(
     private val _destination = MutableStateFlow<CachedTote?>(null)
     val destination: StateFlow<CachedTote?> = _destination
 
+    /**
+     * What the next shot is, until it is something else.
+     *
+     * The whole point is that it is **sticky**. Photographing twenty sleepsuits should be twenty
+     * shutter presses; typing "sleepsuit" twenty times is the per-item work this feature exists
+     * to remove. It survives process death for the same reason the destination does — the batch
+     * this is for happens in a garage with the app backgrounded between shots.
+     *
+     * Blank is a real choice, not an empty field waiting to be filled: it means "let the model
+     * identify this one", which is what the app has always done and still does.
+     */
+    private val _itemName = MutableStateFlow(savedState[NAME_KEY] ?: "")
+    val itemName: StateFlow<String> = _itemName
+
+    private val _categoryId = MutableStateFlow<String?>(savedState[CATEGORY_KEY])
+    val categoryId: StateFlow<String?> = _categoryId
+
+    private val _describe = MutableStateFlow(savedState[DESCRIBE_KEY] ?: false)
+    val describe: StateFlow<Boolean> = _describe
+
+    /** The category vocabulary, read once and held for the run. */
+    private val _categories = MutableStateFlow<List<CategoryDto>>(emptyList())
+    val categories: StateFlow<List<CategoryDto>> = _categories
+
+    fun setItemName(value: String) {
+        _itemName.value = value
+        savedState[NAME_KEY] = value
+    }
+
+    fun chooseCategory(id: String?) {
+        _categoryId.value = id
+        savedState[CATEGORY_KEY] = id
+    }
+
+    fun setDescribe(value: Boolean) {
+        _describe.value = value
+        savedState[DESCRIBE_KEY] = value
+    }
+
+    fun loadCategories() {
+        viewModelScope.launch {
+            runCatching { api.categories() }.onSuccess { _categories.value = it }
+        }
+    }
+
     private var pendingCameraTarget: File? = null
 
     init {
@@ -114,6 +162,7 @@ class CaptureViewModel @Inject constructor(
             }
         }
         sweepOrphans()
+        loadCategories()
     }
 
     /**
@@ -207,16 +256,27 @@ class CaptureViewModel @Inject constructor(
                 return@launch
             }
 
-            repository.enqueue(moved, toteId = tote?.id, toteCode = tote?.code)
+            repository.enqueue(
+                moved,
+                toteId = tote?.id,
+                toteCode = tote?.code,
+                name = _itemName.value,
+                categoryId = _categoryId.value,
+                describe = _describe.value,
+            )
             UploadWorker.kick(WorkManager.getInstance(app))
             // Say it landed. The only signal used to be the thumbnail strip vanishing and a
             // counter incrementing further down the scroll — likely off-screen mid-batch, on
             // the one screen used with a bin open and hands full.
             val lost = shots.size - moved.size
             val photos = "${moved.size} photo${if (moved.size == 1) "" else "s"}"
-            val queued =
-                if (tote != null) "Queued — $photos for ${tote.code}"
-                else "Queued — $photos, bin decided at review"
+            val what = _itemName.value.trim().ifEmpty { null }
+            val queued = when {
+                what != null && tote != null -> "Queued $what — $photos for ${tote.code}"
+                what != null -> "Queued $what — $photos, bin decided at review"
+                tote != null -> "Queued — $photos for ${tote.code}"
+                else -> "Queued — $photos, bin decided at review"
+            }
             // Counted out loud rather than swallowed: a batch that quietly queues 3 of 5 leaves
             // two holes in the catalogue that nobody knows to go back and fill.
             feedback.say(
@@ -245,5 +305,8 @@ class CaptureViewModel @Inject constructor(
     private companion object {
         const val DESTINATION_KEY = "capture_destination_id"
         const val SHOTS_KEY = "capture_shot_paths"
+        const val NAME_KEY = "capture_item_name"
+        const val CATEGORY_KEY = "capture_category_id"
+        const val DESCRIBE_KEY = "capture_describe"
     }
 }
