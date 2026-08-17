@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.tote.data.CardDownloader
 import com.tote.data.CatalogRepository
 import com.tote.data.remote.ApiService
+import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.ItemCreate
 import com.tote.data.remote.PersonDto
 import com.tote.data.remote.ToteDetailDto
@@ -63,14 +64,37 @@ class ToteDetailViewModel @Inject constructor(
         }
     }
 
-    fun addItem(name: String, quantity: Int) {
+    /**
+     * The vocabulary the add dialog picks from.
+     *
+     * Loaded when the dialog opens rather than with the screen, for the same reason as people: a
+     * bin is opened to look at, not to add to, and this tab is used in a garage.
+     */
+    private val _categories = MutableStateFlow<List<CategoryDto>>(emptyList())
+    val categories: StateFlow<List<CategoryDto>> = _categories.asStateFlow()
+
+    fun loadCategories() {
+        viewModelScope.launch {
+            runCatching { repo.categories() }.onSuccess { _categories.value = it }
+        }
+    }
+
+    fun addItem(name: String, description: String?, categoryId: String?, quantity: Int) {
         viewModelScope.launch {
             // Every write on this screen used to swallow failure whole — offline in the
             // attic (the documented normal condition) the buttons simply looked broken. The
             // failures speak through the app-wide snackbar because the outcome may land after
             // the screen has moved on.
             runCatching {
-                repo.createItem(ItemCreate(name = name.trim(), quantity = quantity, toteId = toteId))
+                repo.createItem(
+                    ItemCreate(
+                        name = name.trim(),
+                        description = description,
+                        categoryId = categoryId,
+                        quantity = quantity,
+                        toteId = toteId,
+                    )
+                )
             }
                 .onSuccess { load() }
                 .onFailure { feedback.say(ApiErrors.message(it, "Couldn't add that item.")) }
@@ -133,21 +157,6 @@ class ToteDetailViewModel @Inject constructor(
             }
                 .onSuccess { load() }
                 .onFailure { feedback.say(ApiErrors.message(it, "Couldn't lend that out.")) }
-        }
-    }
-
-    /**
-     * Delete an item outright — the row, its ledger, and its photographs.
-     *
-     * NOT the same operation as disposing of something. "We no longer own this" is a `disposed`
-     * movement and keeps the history; this is for a row that should never have existed, which in
-     * practice means a duplicate or a typo. The server takes the photo files with it.
-     */
-    fun deleteItem(itemId: String) {
-        viewModelScope.launch {
-            runCatching { repo.deleteItem(itemId) }
-                .onSuccess { load() }
-                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't delete that item.")) }
         }
     }
 

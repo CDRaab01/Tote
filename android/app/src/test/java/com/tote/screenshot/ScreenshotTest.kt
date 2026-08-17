@@ -26,6 +26,11 @@ import com.tote.ui.auth.LoginContent
 import com.tote.ui.capture.CaptureContent
 import com.tote.ui.capture.CaptureUiState
 import com.tote.ui.people.PeopleContent
+import com.tote.data.remote.MovementDto
+import com.tote.ui.items.ItemEdits
+import com.tote.ui.items.ItemSheetContent
+import com.tote.ui.items.ItemSheetState
+import com.tote.ui.items.SheetMode
 import com.tote.ui.people.PersonDetailContent
 import com.tote.ui.people.PersonDetailState
 import com.tote.ui.review.DraftEdits
@@ -668,10 +673,86 @@ class ScreenshotTest {
                 ),
                 loading = false,
             ),
-            onOpenTote = {}, onGarmentType = {}, onAddSize = { _, _ -> },
+            onOpenItem = {}, onGarmentType = {}, onAddSize = { _, _ -> },
             onReturned = { _, _ -> }, onOutgrown = { _, _ -> }, onRetry = {},
         )
     }
+
+
+    /**
+     * The item sheet — every operation that acts on one thing, in one surface.
+     *
+     * Captured as the stateless body: a ModalBottomSheet renders in its own window and never
+     * reaches idle under Robolectric, exactly like the picker's AlertDialog before it.
+     */
+    @Test fun item_sheet_dark() = capture("item_sheet_dark", dark = true) {
+        ItemSheetContent(
+            state = ItemSheetState(item = sheetItem),
+            onMode = {}, onEdit = {}, onEditApparel = {}, onPickerQuery = {},
+            onPickCategory = {}, onPickBin = {}, onSave = {}, onConfirmDelete = {}, onDelete = {},
+            onOpenBin = {}, onLend = {},
+        )
+    }
+
+    /** The edit face — the first time a filed item's own words could be corrected. */
+    @Test fun item_sheet_edit_dark() = capture("item_sheet_edit_dark", dark = true) {
+        ItemSheetContent(
+            state = ItemSheetState(
+                item = sheetItem,
+                mode = SheetMode.Edit,
+                edits = ItemEdits.from(sheetItem),
+                categories = listOf(CategoryDto(id = "c1", name = "Clothing")),
+            ),
+            onMode = {}, onEdit = {}, onEditApparel = {}, onPickerQuery = {},
+            onPickCategory = {}, onPickBin = {}, onSave = {}, onConfirmDelete = {}, onDelete = {},
+        )
+    }
+
+    /** The ledger, read back — write-only since Phase 2 until this round. */
+    @Test fun item_sheet_history_dark() = capture("item_sheet_history_dark", dark = true) {
+        ItemSheetContent(
+            state = ItemSheetState(
+                item = sheetItem,
+                mode = SheetMode.History,
+                historyLoaded = true,
+                bins = listOf(
+                    CachedTote("t1", "A14", "Christmas", null, "Attic", 12, 0, false),
+                    CachedTote("t2", "B02", "Winter clothes", null, "Basement", 8, 0, false),
+                ),
+                movements = listOf(
+                    MovementDto(
+                        id = "m3", itemId = "i1", fromToteId = "t2", toToteId = "t1",
+                        reason = "moved", movedAt = "2026-08-14T09:12:00Z",
+                    ),
+                    MovementDto(
+                        id = "m2", itemId = "i1", fromToteId = "t2",
+                        reason = "unpacked", movedAt = "2026-01-06T18:40:00Z",
+                        note = "Taking the tree down",
+                    ),
+                    MovementDto(
+                        id = "m1", itemId = "i1", toToteId = "t2",
+                        reason = "initial", movedAt = "2025-11-14T11:02:00Z",
+                    ),
+                ),
+            ),
+            onMode = {}, onEdit = {}, onEditApparel = {}, onPickerQuery = {},
+            onPickCategory = {}, onPickBin = {}, onSave = {}, onConfirmDelete = {}, onDelete = {},
+        )
+    }
+
+    private val sheetItem = ItemDto(
+        id = "i1",
+        name = "Toddler bed comforter",
+        description = "Grey, with the star pattern",
+        notes = "Washed before it went in",
+        quantity = 1,
+        condition = "good",
+        status = "stored",
+        currentToteId = "t1",
+        toteCode = "A14",
+        locationName = "Attic",
+        photoCount = 0,
+    )
 
     // LoginContent is the stateless body precisely so it can be captured here: the stateful
     // LoginScreen needs Hilt and a real AppAuth service, neither of which exists in a JVM test.

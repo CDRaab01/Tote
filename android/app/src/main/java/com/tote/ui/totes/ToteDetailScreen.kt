@@ -3,7 +3,6 @@ package com.tote.ui.totes
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,15 +12,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -35,21 +31,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
+import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.ItemDto
 import com.tote.data.remote.PersonDto
-import com.tote.data.remote.PhotoUrls
 import com.tote.data.remote.ToteDetailDto
 import com.tote.nfc.NfcWriteSession
 import com.tote.nfc.WriteState
@@ -61,6 +52,8 @@ import com.tote.ui.components.PickerDialog
 import com.tote.ui.components.PickerField
 import com.tote.ui.components.PickerOption
 import com.tote.ui.components.ToteButton
+import com.tote.ui.items.ItemSheet
+import com.tote.ui.items.ItemSheetViewModel
 import com.tote.ui.theme.ToteTheme
 import com.tote.util.UiState
 import design.pulse.ui.components.Caption
@@ -71,14 +64,17 @@ import design.pulse.ui.components.PanelCard
 import design.pulse.ui.components.SectionHeader
 
 @Composable
-fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
+fun ToteDetailScreen(
+    viewModel: ToteDetailViewModel = hiltViewModel(),
+    itemSheet: ItemSheetViewModel = hiltViewModel(),
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val writeState by viewModel.write.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
     var confirmingUnpack by remember { mutableStateOf(false) }
     var lending by remember { mutableStateOf<String?>(null) }
-    var openItem by remember { mutableStateOf<ItemDto?>(null) }
     val people by viewModel.people.collectAsStateWithLifecycle()
+    val categories by viewModel.categories.collectAsStateWithLifecycle()
     val cardIntent by viewModel.cardIntent.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
@@ -104,7 +100,10 @@ fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
         is UiState.Success -> {
             ToteDetailContent(
                 tote = s.data,
-                onAddItem = { showAdd = true },
+                onAddItem = {
+                    viewModel.loadCategories()
+                    showAdd = true
+                },
                 onUnpackAll = { confirmingUnpack = true },
                 onRepackAll = viewModel::repackAll,
                 onTakeOut = viewModel::moveOut,
@@ -113,30 +112,18 @@ fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
                 hasNfc = hasNfc(context),
                 onPrintCard = { viewModel.printCard(s.data.code) },
                 tagMismatch = viewModel.tagMismatch,
-                onOpenItem = { openItem = it },
+                onOpenItem = itemSheet::open,
             )
-            openItem?.let { item ->
-                ItemSheet(
-                    item = item,
-                    onDismiss = { openItem = null },
-                    onDelete = {
-                        viewModel.deleteItem(item.id)
-                        openItem = null
-                    },
-                    // Only offered for something that is actually in the bin: you cannot lend
-                    // out what is already lent out, and offering it would be a 422 dressed as
-                    // a button.
-                    onLend = if (item.status == "stored") {
-                        {
-                            viewModel.loadPeople()
-                            openItem = null
-                            lending = item.id
-                        }
-                    } else {
-                        null
-                    },
-                )
-            }
+            // No `onOpenBin`: the bin is the screen behind the sheet.
+            ItemSheet(
+                viewModel = itemSheet,
+                onChanged = viewModel::load,
+                onLend = { item ->
+                    viewModel.loadPeople()
+                    itemSheet.close()
+                    lending = item.id
+                },
+            )
             lending?.let { itemId ->
                 LendDialog(
                     people = people,
@@ -179,9 +166,10 @@ fun ToteDetailScreen(viewModel: ToteDetailViewModel = hiltViewModel()) {
             }
             if (showAdd) {
                 AddItemDialog(
+                    categories = categories,
                     onDismiss = { showAdd = false },
-                    onAdd = { name, qty ->
-                        viewModel.addItem(name, qty)
+                    onAdd = { name, description, categoryId, qty ->
+                        viewModel.addItem(name, description, categoryId, qty)
                         showAdd = false
                     },
                 )
@@ -516,10 +504,25 @@ private fun WriteTagDialog(state: WriteState, onDismiss: () -> Unit) {
     )
 }
 
+/**
+ * Add something by hand.
+ *
+ * It used to collect a name and a quantity, full stop — so anything typed in here was
+ * permanently uncategorised, and a hand-added item was a poorer record than a photographed one
+ * for no reason anybody had chosen. Category and description are here now; everything else
+ * (condition, the clothing block) is a tap away in the item sheet, where a filed item is edited.
+ */
 @Composable
-private fun AddItemDialog(onDismiss: () -> Unit, onAdd: (String, Int) -> Unit) {
+private fun AddItemDialog(
+    categories: List<CategoryDto>,
+    onDismiss: () -> Unit,
+    onAdd: (String, String?, String?, Int) -> Unit,
+) {
     var name by remember { mutableStateOf("") }
+    var description by remember { mutableStateOf("") }
+    var categoryId by remember { mutableStateOf<String?>(null) }
     var qty by remember { mutableStateOf("1") }
+    var showCategoryPicker by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -533,7 +536,22 @@ private fun AddItemDialog(onDismiss: () -> Unit, onAdd: (String, Int) -> Unit) {
                     placeholder = { Text("Pre-lit tree, 7ft") },
                     singleLine = true,
                 )
-                Spacer(Modifier.height(ToteTheme.spacing.md))
+                Spacer(Modifier.height(ToteTheme.spacing.sm))
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Description") },
+                    placeholder = { Text("Green, pre-lit, in the original box") },
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(ToteTheme.spacing.sm))
+                PickerField(
+                    label = "Category",
+                    selected = categories.firstOrNull { it.id == categoryId }?.name,
+                    placeholder = "No category",
+                    onClick = { showCategoryPicker = true },
+                )
+                Spacer(Modifier.height(ToteTheme.spacing.sm))
                 OutlinedTextField(
                     value = qty,
                     onValueChange = { qty = it.filter(Char::isDigit).take(3) },
@@ -551,12 +569,34 @@ private fun AddItemDialog(onDismiss: () -> Unit, onAdd: (String, Int) -> Unit) {
         },
         confirmButton = {
             TextButton(
-                onClick = { onAdd(name, qty.toIntOrNull() ?: 1) },
+                onClick = {
+                    onAdd(
+                        name,
+                        description.trim().takeIf { it.isNotEmpty() },
+                        categoryId,
+                        qty.toIntOrNull() ?: 1,
+                    )
+                },
                 enabled = name.isNotBlank(),
             ) { Text("Add") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+
+    if (showCategoryPicker) {
+        PickerDialog(
+            title = "Category",
+            options = categories.map { PickerOption(id = it.id, label = it.name) },
+            selectedId = categoryId,
+            onPick = {
+                categoryId = it
+                showCategoryPicker = false
+            },
+            onDismiss = { showCategoryPicker = false },
+            noneLabel = "No category",
+            emptyMessage = "No categories yet.",
+        )
+    }
 }
 
 
@@ -615,112 +655,26 @@ private fun LendDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+
+    // The picker itself, which was never rendered: the field set `showPeoplePicker` and nothing
+    // read it, so tapping "Lending to" did nothing at all and the Lend button — enabled only
+    // once a person is chosen — could never become enabled. Lending was unreachable from the
+    // day the chip strip was replaced.
+    if (showPeoplePicker) {
+        PickerDialog(
+            title = "Lending to",
+            options = people.map { PickerOption(id = it.id, label = it.name) },
+            selectedId = personId,
+            onPick = {
+                personId = it
+                showPeoplePicker = false
+            },
+            onDismiss = { showPeoplePicker = false },
+            emptyMessage = "Nobody on the People tab yet.",
+        )
+    }
 }
 
-
-/**
- * One item, up close — and the only place it can be deleted.
- *
- * Deleting exists because the catalog gets things wrong in exactly one recoverable way: a row
- * that should never have existed. A duplicate, a typo, a photograph of the wrong thing. Without
- * it the only fix is to live with a bin that claims two comforters when it holds one, which is
- * how a catalog stops being believed.
- *
- * It is deliberately NOT on the row. "Take out" and "Lend" are everyday taps and a destructive
- * action sitting beside them is a mis-tap away from taking the photographs with it — and they
- * are the one artefact here that cannot be recreated once the bin is taped shut. It lives one
- * tap deeper, behind its own confirmation, in the app's error voice rather than its accent.
- *
- * Disposing of something is a different operation and stays a `disposed` movement: "we no longer
- * own this" is history worth keeping, and this is not that.
- */
-@Composable
-private fun ItemSheet(
-    item: ItemDto,
-    onDismiss: () -> Unit,
-    onDelete: () -> Unit,
-    onLend: (() -> Unit)? = null,
-) {
-    var confirming by remember { mutableStateOf(false) }
-    val spacing = ToteTheme.spacing
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (confirming) "Delete this item?" else item.name) },
-        text = {
-            Column {
-                if (item.photoCount > 0) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(200.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(ToteTheme.colors.panelHigh),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        AsyncImage(
-                            model = PhotoUrls.item(item.id, 0),
-                            contentDescription = "Photo of ${item.name}",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxWidth().height(200.dp),
-                        )
-                    }
-                    Spacer(Modifier.height(spacing.md))
-                }
-                if (confirming) {
-                    Text(
-                        if (item.photoCount > 0) {
-                            "This removes the item, its history, and its photograph. There is no undo."
-                        } else {
-                            "This removes the item and its history. There is no undo."
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Spacer(Modifier.height(spacing.sm))
-                    // Said plainly, because the two are easy to confuse and only one is
-                    // recoverable.
-                    Caption(text = "If you still own it and it is just not here, take it out instead.")
-                } else {
-                    if (onLend != null) {
-                        ToteButton(
-                            text = "Lend it out",
-                            onClick = onLend,
-                            tonal = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Spacer(Modifier.height(spacing.md))
-                    }
-                    val facts = listOfNotNull(
-                        if (item.quantity > 1) "${item.quantity} of them" else null,
-                        item.apparel?.sizeRaw?.let { "Size $it" },
-                        item.toteCode?.let { code -> listOfNotNull(code, item.locationName).joinToString(" · ") },
-                        item.description,
-                    )
-                    facts.forEach {
-                        Text(it, style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.height(spacing.xs))
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            if (confirming) {
-                TextButton(onClick = onDelete) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
-                }
-            } else {
-                TextButton(onClick = { confirming = true }) {
-                    Text("Delete item", color = MaterialTheme.colorScheme.error)
-                }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = { if (confirming) confirming = false else onDismiss() }) {
-                Text(if (confirming) "Keep it" else "Close")
-            }
-        },
-    )
-}
 
 @Preview(name = "Tote detail — dark")
 @Composable
