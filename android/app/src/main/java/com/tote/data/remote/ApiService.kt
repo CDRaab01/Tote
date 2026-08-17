@@ -141,6 +141,9 @@ interface ApiService {
     @GET("people/{id}")
     suspend fun person(@Path("id") id: String): PersonDto
 
+    @PATCH("people/{id}")
+    suspend fun patchPerson(@Path("id") id: String, @Body body: PersonPatch): PersonDto
+
     @DELETE("people/{id}")
     suspend fun deletePerson(@Path("id") id: String)
 

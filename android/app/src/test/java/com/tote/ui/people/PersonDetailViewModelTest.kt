@@ -50,6 +50,7 @@ class PersonDetailViewModelTest {
     private val dispatcher = StandardTestDispatcher()
     private lateinit var api: ApiService
     private lateinit var dao: CatalogDao
+    private val feedback = com.tote.util.FeedbackBus()
 
     private val bins = listOf(CachedTote("t1", "A14", "Winter 5T", null, "Attic", 12, 0, false))
 
@@ -81,8 +82,12 @@ class PersonDetailViewModelTest {
             onBlocking { person(any()) } doReturn person
             onBlocking { fits(any(), anyOrNull(), anyOrNull()) } doReturn fits
             onBlocking { onLoan(any()) } doReturn onLoan
+            // Stubbed by default: an unstubbed suspend returning a non-null List hands back a
+            // null that trips Kotlin's intrinsic check OUTSIDE the runCatching lambda, so it
+            // escapes to the outer try and the whole load reports as failed.
+            onBlocking { personSizes(any()) } doReturn emptyList<PersonSizeDto>()
         }
-        return PersonDetailViewModel(api, dao, SavedStateHandle(mapOf("personId" to "p1")))
+        return PersonDetailViewModel(api, dao, feedback, SavedStateHandle(mapOf("personId" to "p1")))
     }
 
     @Test
@@ -209,5 +214,70 @@ class PersonDetailViewModelTest {
 
         assertEquals(1, model.state.value.totes.size)
         assertEquals("A14", model.state.value.totes.first().code)
+    }
+
+    // ── Maintenance ──────────────────────────────────────────────────
+
+    @Test
+    fun `the whole size history loads, not just what is current`() = runTest {
+        // `currentSizes` answers "what size is she now"; the history answers "what size was she
+        // last winter", which is what tells you which bin to open — and it is the only way to
+        // find a mistyped reading that is silently breaking every fits query.
+        val model = vm()
+        dispatcher.scheduler.advanceUntilIdle()
+        // Re-stubbed after construction: vm() sets a default empty history for every other test.
+        api.stub {
+            onBlocking { personSizes(any()) } doReturn listOf(
+                PersonSizeDto("s1", "p1", "tops", "5T", "toddler", 5.0, "2026-08-01"),
+                PersonSizeDto("s0", "p1", "tops", "4T", "toddler", 4.0, "2025-11-14"),
+            )
+        }
+
+        model.load()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(2, model.state.value.sizeHistory.size)
+    }
+
+    @Test
+    fun `a size is deleted, never edited`() = runTest {
+        // size_raw is sacred and the index is derived from it server-side, so the sanctioned fix
+        // for a fat-fingered "5TT" is delete-and-re-add — which re-derives cleanly. There is
+        // deliberately no patch-a-size call to make.
+        val model = vm()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        model.deleteSize("s1")
+        dispatcher.scheduler.advanceUntilIdle()
+
+        verify(api).deletePersonSize(eq("p1"), eq("s1"))
+    }
+
+    @Test
+    fun `editing a person sends only the fields a person can correct`() = runTest {
+        val model = vm()
+        dispatcher.scheduler.advanceUntilIdle()
+        api.stub { onBlocking { patchPerson(any(), any()) } doReturn emma }
+
+        model.editPerson("  Emma R  ", "2021-04-09")
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val body = argumentCaptor<com.tote.data.remote.PersonPatch>()
+        verify(api).patchPerson(eq("p1"), body.capture())
+        assertEquals("Emma R", body.firstValue.name)
+        assertEquals("2021-04-09", body.firstValue.birthdate)
+    }
+
+    @Test
+    fun `removing a person leaves the screen`() = runTest {
+        val model = vm()
+        dispatcher.scheduler.advanceUntilIdle()
+        var gone = false
+
+        model.deletePerson { gone = true }
+        dispatcher.scheduler.advanceUntilIdle()
+
+        verify(api).deletePerson(eq("p1"))
+        assertTrue(gone)
     }
 }

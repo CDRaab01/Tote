@@ -57,6 +57,14 @@ data class PersonIn(
     val notes: String? = null,
 )
 
+/** Only what a person can legitimately correct: their name and their birthdate. */
+@Serializable
+data class PersonPatch(
+    val name: String? = null,
+    val birthdate: String? = null,
+    val notes: String? = null,
+)
+
 @Serializable
 data class PersonSizeIn(
     @SerialName("garment_type") val garmentType: String,

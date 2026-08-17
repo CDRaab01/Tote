@@ -279,7 +279,10 @@ fun ToteNavHost(
                 Routes.PERSON_DETAIL,
                 arguments = listOf(navArgument("personId") { type = NavType.StringType }),
             ) {
-                PersonDetailScreen(onOpenTote = { nav.navigate(Routes.toteDetail(it)) })
+                PersonDetailScreen(
+                    onOpenTote = { nav.navigate(Routes.toteDetail(it)) },
+                    onGone = { nav.navigateUp() },
+                )
             }
         }
     }
