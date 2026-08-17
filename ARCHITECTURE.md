@@ -293,6 +293,37 @@ absent and the tests that prove them would be testing a schema that never ships.
 `search_vector` covers the item's own name, description and notes. Category lives in another
 table and a generated column cannot join, so category is a **filter**, not a search term.
 
+## Adding to the seeded vocabulary
+
+`DEFAULT_CATEGORIES` is written **once, at first login**, and never looked at again. That is
+correct — the vocabulary belongs to the user and re-seeding would resurrect names they deleted —
+but it means adding a name to the tuple reaches new accounts and **nobody who already has one**.
+Which, on a single-household app, is nobody at all.
+
+So a new seed name is two changes: the tuple, and a data migration that back-fills every existing
+user. A migration rather than a hand-run `INSERT` on the box, because a statement typed into psql
+is lost the next time the database is restored from a backup — and a household inventory is
+exactly the kind of thing restored years later.
+
+Three properties the back-fill needs, all of them tested:
+
+- **Appended at the end of each user's own ordering**, not slotted in at the position it holds in
+  the tuple. Renumbering every existing row would rewrite an ordering the user may have arranged,
+  to move one row a few places up a list of twelve.
+- **Idempotent by hand as well as by Alembic** (`WHERE NOT EXISTS`, matched case-insensitively).
+  `uq_categories_user_name` would raise on a second pass, and a data migration that cannot be
+  re-run against a half-migrated restore turns a bad afternoon into a worse one. Case-insensitive
+  because somebody who typed their own is as likely to have written "baby", and two rows a picker
+  shows as the same word is the fragmentation the categories table exists to prevent.
+- **The downgrade only removes rows nothing was filed under.** The schema going backwards is no
+  reason to lose data; a category left behind is a far smaller problem than an item that lost the
+  one it was in.
+
+The test database migrates to head before any user exists, so the back-fill is a no-op there and
+would otherwise ship entirely unexercised — which for a data migration is the same as untested.
+The statement is a module-level constant in the migration so `test_category_backfill.py` can run
+it directly against a real Postgres.
+
 ## The movement ledger
 
 `app/services/movement.py` is the **single writer** of `current_tote_id`, `status`,

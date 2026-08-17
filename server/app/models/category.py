@@ -12,6 +12,10 @@ from app.database import Base
 DEFAULT_CATEGORIES = (
     "Christmas / seasonal decor",
     "Clothing",
+    # Its own domain rather than a corner of Clothing: a household's baby things are cot sheets,
+    # a monitor, bottles and a bouncer as much as they are sleepsuits, and they leave the house
+    # together when they leave at all.
+    "Baby",
     "Electronics",
     "Vintage games",
     "Tools",
