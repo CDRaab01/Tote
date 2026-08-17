@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.tote.data.CardDownloader
 import com.tote.data.CatalogRepository
 import com.tote.data.remote.ApiService
+import com.tote.data.local.CachedTote
 import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.ItemCreate
 import com.tote.data.remote.LocationDto
@@ -22,7 +23,9 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 @HiltViewModel
@@ -31,6 +34,7 @@ class ToteDetailViewModel @Inject constructor(
     private val api: ApiService,
     private val feedback: FeedbackBus,
     private val cards: CardDownloader,
+    private val catalogDao: com.tote.data.local.CatalogDao,
     savedState: SavedStateHandle,
 ) : ViewModel() {
 
@@ -261,6 +265,96 @@ class ToteDetailViewModel @Inject constructor(
             }
         }
     }
+
+    /**
+     * Which items are ticked, if any.
+     *
+     * An EMPTY SET IS NOT THE SAME AS NOT SELECTING — empty means selection mode is off and the
+     * rows behave normally. Tracked as a nullable set rather than a boolean plus a set, so the
+     * two can never disagree about whether the screen is in selection mode.
+     */
+    private val _selection = MutableStateFlow<Set<String>?>(null)
+    val selection: StateFlow<Set<String>?> = _selection.asStateFlow()
+
+    fun beginSelecting(itemId: String? = null) {
+        _selection.value = setOfNotNull(itemId)
+    }
+
+    fun cancelSelecting() {
+        _selection.value = null
+    }
+
+    fun toggleSelected(itemId: String) {
+        val current = _selection.value ?: return
+        _selection.value = if (itemId in current) current - itemId else current + itemId
+    }
+
+    fun selectAll(itemIds: List<String>) {
+        _selection.value = itemIds.toSet()
+    }
+
+    /**
+     * Move everything ticked into one bin, optionally straight into a bag there.
+     *
+     * One request, not one per item: the server does it in a single transaction, because forty
+     * items moved individually is forty chances to half-succeed and leave a selection somebody
+     * believes is together.
+     */
+    fun moveSelected(toToteId: String, containerId: String? = null) {
+        val ids = _selection.value.orEmpty().toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { repo.bulkMove(ids, toToteId, containerId) }
+                .onSuccess {
+                    _selection.value = null
+                    load()
+                    feedback.say("Moved ${ids.size} item${if (ids.size == 1) "" else "s"}.")
+                }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't move those.")) }
+        }
+    }
+
+    /** Put everything ticked into a bag in THIS bin, or make them loose again with null. */
+    fun bagSelected(containerId: String?) {
+        val ids = _selection.value.orEmpty().toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { repo.bulkBag(ids, containerId) }
+                .onSuccess {
+                    _selection.value = null
+                    load()
+                    feedback.say(
+                        if (containerId == null) "Made ${ids.size} loose in the bin."
+                        else "Bagged ${ids.size} item${if (ids.size == 1) "" else "s"}."
+                    )
+                }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't change those.")) }
+        }
+    }
+
+    /** Take everything ticked out of the bin — the partial unpack the API always supported. */
+    fun unpackSelected() {
+        val ids = _selection.value.orEmpty().toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { repo.unpack(toteId, itemIds = ids) }
+                .onSuccess {
+                    _selection.value = null
+                    load()
+                    feedback.say("Took ${ids.size} out.")
+                }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't take those out.")) }
+        }
+    }
+
+    /**
+     * Every other bin, for the bulk-move picker.
+     *
+     * From the Room cache, not the API: moving a batch between bins happens standing in front of
+     * one of them, which is where the signal is worst.
+     */
+    val bins: StateFlow<List<CachedTote>> = catalogDao.totes()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Places, for the edit sheet's picker. Loaded when the sheet opens, like the categories. */
     private val _locations = MutableStateFlow<List<LocationDto>>(emptyList())

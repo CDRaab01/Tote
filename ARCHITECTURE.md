@@ -776,6 +776,24 @@ a bin's worth of captures 413s one at a time after the bin is closed. Doing it l
 full-resolution original survives on disk until the server has it — resized at capture, a failed
 upload would leave only the lossy copy of a photo that cannot be retaken.
 
+### The stack is worked one at a time, but not in a fixed order
+
+One-at-a-time stands, and the reason is unchanged: a screen of twenty expandable cards is one
+somebody abandons halfway through, which leaves the catalogue half-true. What was wrong was the
+**order**. Oldest-first is a sensible default because it is the order they were shot in; being
+unable to leave it made the stack a queue you had to serve rather than a pile you could work.
+
+`DraftChooser` is a grid of photographs behind the position counter — which is the one control on
+that screen already talking about the stack rather than the draft, so it is where somebody looks
+when they want a different one. Tapping a tile calls `jumpTo`, which reuses `moveTo` and therefore
+resets the edits exactly like Skip does; carrying them would apply one item's corrected name to a
+different photograph.
+
+A grid rather than a filmstrip, deliberately: the picker round removed horizontally-scrolling
+strips everywhere because they run off the edge and hide their own length, and twenty drafts have
+exactly that problem. The current draft is outlined, not merely implied by position — without it,
+jumping away and back leaves the screen with no answer to "which am I on".
+
 ### Nothing in the capture path lives in `cacheDir`
 
 Staging used to be `cacheDir/captures/`, on the reasoning that a photo between the shutter and
@@ -1278,6 +1296,49 @@ So: every list that can be empty for two different reasons distinguishes them, a
 distinguishing state gets its own Roborazzi baseline. `ToteListViewModel.unreachable` exists for
 exactly this and is only consulted when the list is empty — with bins on screen a failed refresh
 is not worth saying, because the screen still answers the question it was opened for.
+
+## Acting on a selection
+
+Two bulk endpoints that look alike and are deliberately different animals:
+
+- **`POST /items/bulk-move`** changes which *bin* things are in, so it writes **one ledger row
+  each**, through `record_move` like every other relocation. A bulk action is a convenience for
+  the person, never a shortcut past the single writer of derived state. `moved` for something
+  stored and `repacked` for something out, matched per item — a year later "it changed bins" and
+  "it came back" are different facts and a bulk action must not flatten them.
+- **`POST /items/bulk-bag`** changes which *bag* inside a bin, and writes **nothing to the
+  ledger**. Which bag a thing sits in is a label; relabelling is not a whereabouts event, and
+  rows for it would fill "where was this last year" with noise.
+
+Getting that distinction wrong in either direction is the interesting failure, so both have tests
+asserting the ledger *count*, not just the outcome.
+
+Three more rules the bulk paths follow:
+
+- **One transaction, not N requests.** The same reason `record_move` does not commit: forty items
+  moved individually is forty chances to half-succeed, leaving a selection somebody believes is
+  together and is not.
+- **All or nothing.** One unknown id fails the whole call before any write. A partial move is
+  worse than an error because nothing says so.
+- **`item_ids` is required and non-empty**, unlike `BulkMoveIn`'s. "Everything applicable" is a
+  sensible default for unpack — the bin is right there and its contents are obvious — but there is
+  no obvious default set for "move these somewhere else", and inventing one would move things
+  nobody chose.
+
+**There is no bulk delete.** The one destructive action in this app removes photographs that
+cannot be retaken, and doing that to twenty rows behind a single tap is a mis-tap with no undo.
+
+### Selection on the client
+
+`selection` is a **nullable set**: null means not selecting at all, an empty set means selecting
+with nothing picked. One field rather than a boolean plus a set, so the screen cannot disagree
+with itself about which mode it is in.
+
+While selecting, a row's tap **ticks rather than opens** — two meanings for one gesture on one
+screen makes every tap a gamble — and the per-row action button disappears, because the bar owns
+the verbs. Long-press on any row enters selection with that row already ticked. The bar is
+disabled rather than hidden at zero: one that appears and vanishes as you tick things is a layout
+that jumps under your thumb.
 
 ## The review stack (client)
 

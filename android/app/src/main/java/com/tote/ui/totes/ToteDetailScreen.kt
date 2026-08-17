@@ -2,8 +2,11 @@ package com.tote.ui.totes
 
 import android.content.Intent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -82,6 +86,10 @@ fun ToteDetailScreen(
     var editingBag by remember { mutableStateOf<ContainerDto?>(null) }
     val people by viewModel.people.collectAsStateWithLifecycle()
     val locations by viewModel.locations.collectAsStateWithLifecycle()
+    val selection by viewModel.selection.collectAsStateWithLifecycle()
+    val bins by viewModel.bins.collectAsStateWithLifecycle()
+    var movingSelection by remember { mutableStateOf(false) }
+    var baggingSelection by remember { mutableStateOf(false) }
     val categories by viewModel.categories.collectAsStateWithLifecycle()
     val cardIntent by viewModel.cardIntent.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -126,6 +134,14 @@ fun ToteDetailScreen(
                     showEdit = true
                 },
                 onAddBag = { addingBag = true },
+                selection = selection,
+                onBeginSelecting = { viewModel.beginSelecting(it.takeIf { id -> id.isNotEmpty() }) },
+                onToggleSelected = viewModel::toggleSelected,
+                onSelectAll = viewModel::selectAll,
+                onCancelSelecting = viewModel::cancelSelecting,
+                onMoveSelected = { movingSelection = true },
+                onBagSelected = { baggingSelection = true },
+                onUnpackSelected = viewModel::unpackSelected,
                 onEditBag = { editingBag = it },
             )
             if (showEdit) {
@@ -146,6 +162,38 @@ fun ToteDetailScreen(
                         confirmingDelete = true
                     },
                     onNewLocation = viewModel::createLocation,
+                )
+            }
+            if (movingSelection) {
+                PickerDialog(
+                    title = "Move to",
+                    options = bins.filter { it.id != s.data.id }.map { t ->
+                        PickerOption(id = t.id, label = t.code, detail = t.label ?: t.locationName)
+                    },
+                    selectedId = null,
+                    onPick = { id ->
+                        id?.let { viewModel.moveSelected(it) }
+                        movingSelection = false
+                    },
+                    onDismiss = { movingSelection = false },
+                    emptyMessage = "No other bins yet.",
+                    searchHint = "Search bins",
+                )
+            }
+            if (baggingSelection) {
+                PickerDialog(
+                    title = "Put in",
+                    options = s.data.containers.map {
+                        PickerOption(id = it.id, label = it.name, detail = it.notes)
+                    },
+                    selectedId = null,
+                    onPick = {
+                        viewModel.bagSelected(it)
+                        baggingSelection = false
+                    },
+                    onDismiss = { baggingSelection = false },
+                    noneLabel = "Loose in the bin",
+                    emptyMessage = "This bin has no bags yet.",
                 )
             }
             if (addingBag) {
@@ -279,6 +327,21 @@ fun ToteDetailContent(
     onEditBin: () -> Unit = {},
     onAddBag: () -> Unit = {},
     onEditBag: (ContainerDto) -> Unit = {},
+    /**
+     * Which rows are ticked, or **null when not selecting at all**.
+     *
+     * Null rather than an empty set plus a boolean, so the screen cannot be in selection mode
+     * and disagree with itself about it. An empty set means selecting-with-nothing-picked, which
+     * is a real and different state: the bar is up, the actions are disabled.
+     */
+    selection: Set<String>? = null,
+    onBeginSelecting: (String) -> Unit = {},
+    onToggleSelected: (String) -> Unit = {},
+    onSelectAll: (List<String>) -> Unit = {},
+    onCancelSelecting: () -> Unit = {},
+    onMoveSelected: () -> Unit = {},
+    onBagSelected: () -> Unit = {},
+    onUnpackSelected: () -> Unit = {},
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -396,6 +459,20 @@ fun ToteDetailContent(
                 )
             }
 
+            selection?.let { picked ->
+                item(key = "selection-bar") {
+                    SelectionBar(
+                        count = picked.size,
+                        canBag = tote.containers.isNotEmpty(),
+                        onSelectAll = { onSelectAll(tote.items.map { it.id }) },
+                        onCancel = onCancelSelecting,
+                        onMove = onMoveSelected,
+                        onBag = onBagSelected,
+                        onUnpack = onUnpackSelected,
+                    )
+                }
+            }
+
             item {
                 Row(
                     Modifier.fillMaxWidth(),
@@ -405,8 +482,25 @@ fun ToteDetailContent(
                     SectionHeader(label = "In this tote", channel = colors.stored.base)
                     // Only offered once there is something to group. A bin with two things in it
                     // does not need subdividing, and the button would be clutter arguing it does.
-                    if (tote.items.isNotEmpty() || tote.containers.isNotEmpty()) {
-                        ToteButton(text = "Add bag", onClick = onAddBag, tonal = true, compact = true)
+                    Row(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
+                        // Only once there is something to act on in bulk. Two items do not need
+                        // a selection mode and the button would be clutter arguing they do.
+                        if (selection == null && tote.items.size > 1) {
+                            ToteButton(
+                                text = "Select",
+                                onClick = { onBeginSelecting("") },
+                                tonal = true,
+                                compact = true,
+                            )
+                        }
+                        if (tote.items.isNotEmpty() || tote.containers.isNotEmpty()) {
+                            ToteButton(
+                                text = "Add bag",
+                                onClick = onAddBag,
+                                tonal = true,
+                                compact = true,
+                            )
+                        }
                     }
                 }
             }
@@ -439,6 +533,9 @@ fun ToteDetailContent(
                         actionLabel = "Take out",
                         onAction = { onTakeOut(item.id) },
                         onOpen = { onOpenItem(item) },
+                        selected = selection?.contains(item.id),
+                        onToggle = { onToggleSelected(item.id) },
+                        onLongPress = { onBeginSelecting(item.id) },
                     )
                 }
             }
@@ -458,6 +555,9 @@ fun ToteDetailContent(
                         actionLabel = "Take out",
                         onAction = { onTakeOut(item.id) },
                         onOpen = { onOpenItem(item) },
+                        selected = selection?.contains(item.id),
+                        onToggle = { onToggleSelected(item.id) },
+                        onLongPress = { onBeginSelecting(item.id) },
                     )
                 }
             }
@@ -552,6 +652,62 @@ private fun TagAndCardRow(
  * *approximately* catalogued — "mostly 3-6M onesies, some vests" — and knowing that is the
  * difference between reaching for the right one and opening all three.
  */
+
+/**
+ * What you can do to a ticked selection.
+ *
+ * Three verbs, and they are the three that are painful one at a time after a batch: move them all
+ * to another bin, drop them all in a bag, take them all out. Everything else stays per-item —
+ * a bulk delete is not offered at all, because the one destructive action in this app removes
+ * photographs that cannot be retaken and doing that to twenty rows behind one tap is a mis-tap
+ * with no undo.
+ *
+ * Disabled rather than hidden at zero: a bar that appears and disappears as you tick things is a
+ * layout that jumps under your thumb.
+ */
+@Composable
+private fun SelectionBar(
+    count: Int,
+    canBag: Boolean,
+    onSelectAll: () -> Unit,
+    onCancel: () -> Unit,
+    onMove: () -> Unit,
+    onBag: () -> Unit,
+    onUnpack: () -> Unit,
+) {
+    val colors = ToteTheme.colors
+    val spacing = ToteTheme.spacing
+
+    PanelCard(channel = colors.slate.base) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (count == 0) "Nothing ticked" else "$count selected",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = colors.slate.base,
+                    modifier = Modifier.weight(1f),
+                )
+                ToteButton(text = "All", onClick = onSelectAll, tonal = true, compact = true)
+                Spacer(Modifier.width(spacing.sm))
+                ToteButton(text = "Done", onClick = onCancel, tonal = true, compact = true)
+            }
+            Spacer(Modifier.height(spacing.sm))
+            // FlowRow, because three verbs plus a bag button do not fit one line on a phone and
+            // "Take out" wrapped inside its own button rather than onto the next row.
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(spacing.sm),
+            ) {
+                ToteButton(text = "Move…", onClick = onMove, tonal = true, enabled = count > 0)
+                if (canBag) {
+                    ToteButton(text = "Bag…", onClick = onBag, tonal = true, enabled = count > 0)
+                }
+                ToteButton(text = "Take out", onClick = onUnpack, tonal = true, enabled = count > 0)
+            }
+        }
+    }
+}
+
 @Composable
 private fun BagHeader(bag: ContainerDto, count: Int, onEdit: () -> Unit) {
     val colors = ToteTheme.colors
@@ -577,21 +733,39 @@ private fun BagHeader(bag: ContainerDto, count: Int, onEdit: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ItemRow(
     item: ItemDto,
     actionLabel: String,
     onAction: () -> Unit,
     onOpen: (() -> Unit)? = null,
+    /** Null when the screen is not selecting; true/false when it is. */
+    selected: Boolean? = null,
+    onToggle: () -> Unit = {},
+    onLongPress: () -> Unit = {},
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
 
     PanelCard(
-        onClick = onOpen,
-        channel = if (item.isOverdue) colors.attention.base else null,
+        // While selecting, a tap ticks rather than opens. Two meanings for one gesture on the
+        // same screen would make every tap a gamble.
+        onClick = if (selected != null) onToggle else onOpen,
+        channel = when {
+            selected == true -> colors.slate.base
+            item.isOverdue -> colors.attention.base
+            else -> null
+        },
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.combinedClickable(onClick = {}, onLongClick = onLongPress),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (selected != null) {
+                Checkbox(checked = selected, onCheckedChange = { onToggle() })
+                Spacer(Modifier.width(spacing.sm))
+            }
             // The picture leads. A bin's contents are recognised by sight long before they are
             // read, and two rows both saying "Toddler Bed Comforter" are indistinguishable as
             // text and obviously different as photographs.
@@ -630,7 +804,9 @@ private fun ItemRow(
             // sheet behind a tap: a second button here costs the name the width it needs, and
             // a destructive action next to an everyday one is a mis-tap away from deleting a
             // photograph that cannot be retaken.
-            ToteButton(text = actionLabel, onClick = onAction, tonal = true, compact = true)
+            if (selected == null) {
+                ToteButton(text = actionLabel, onClick = onAction, tonal = true, compact = true)
+            }
         }
     }
 }

@@ -172,6 +172,17 @@ class CatalogRepository @Inject constructor(
     suspend fun repack(toteId: String, itemIds: List<String>? = null) =
         api.repack(toteId, BulkMove(itemIds)).also { refresh() }
 
+    suspend fun bulkMove(
+        itemIds: List<String>,
+        toToteId: String,
+        containerId: String? = null,
+    ) = api.bulkMove(
+        com.tote.data.remote.BulkRelocate(itemIds, toToteId, containerId)
+    ).also { refresh() }
+
+    suspend fun bulkBag(itemIds: List<String>, containerId: String?) =
+        api.bulkBag(com.tote.data.remote.BulkBag(itemIds, containerId)).also { refresh() }
+
     suspend fun movements(itemId: String) = api.movements(itemId)
 
     suspend fun nfcBase(): String = api.nfcBase().base

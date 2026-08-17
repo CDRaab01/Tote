@@ -816,6 +816,29 @@ its bin), `items.container_id` SET NULL (deleting a bin or a bag loses the group
 contents). Which is why removing a bag needs no confirmation — nothing is destroyed but the label,
 and the copy says so.
 
+
+**Pick which draft, and act on a selection (#35).** Two owner requests.
+**Review is no longer FIFO.** One-at-a-time stands — a screen of twenty expandable cards is one
+somebody abandons halfway through — but the *order* was never the point. The position counter in
+the hero is now the door to a **grid of draft photographs**; tapping one jumps straight to it via
+`jumpTo`, which reuses `moveTo` and so resets the edits exactly like Skip. A grid rather than a
+filmstrip on purpose: the picker round removed horizontally-scrolling strips because they run off
+the edge and hide their own length, and twenty drafts have that problem exactly.
+**Mass select in a bin**, with two new endpoints that look alike and are different animals:
+`POST /items/bulk-move` changes which *bin* things are in and writes **one ledger row each**
+through `record_move` (`moved` vs `repacked` matched per item, because a year later those are
+different facts); `POST /items/bulk-bag` changes which *bag* inside a bin and writes **nothing** —
+relabelling is not a whereabouts event, and rows for it would fill the history with noise. Both
+have tests asserting the ledger *count*.
+Three rules on the bulk paths: **one transaction, not N requests** (forty individual moves is
+forty chances to half-succeed); **all or nothing** on an unknown id (a partial move is worse than
+an error because nothing says so); and **`item_ids` required and non-empty**, unlike unpack's
+null-means-everything — there is no obvious default set for "move these". **No bulk delete**: the
+one destructive action here removes photographs that cannot be retaken.
+Client: `selection` is a **nullable set** — null is not-selecting, empty is selecting-with-nothing
+— so the screen cannot disagree with itself. While selecting a tap ticks rather than opens, and
+the per-row button disappears because the bar owns the verbs.
+
 ---
 
 ## 9. Testing & CI

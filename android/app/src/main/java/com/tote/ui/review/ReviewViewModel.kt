@@ -228,6 +228,20 @@ class ReviewViewModel @Inject constructor(
 
     fun back() = moveTo(_state.value.index - 1)
 
+    /**
+     * Go straight to one draft, by position.
+     *
+     * The stack is still reviewed one at a time — a screen of twenty expandable cards is one
+     * somebody abandons halfway through, which leaves the catalogue half-true — but the ORDER
+     * was never the point. It was oldest-first because that is the order they were shot in, and
+     * being unable to leave that order made the stack a queue you had to serve rather than a pile
+     * you could work.
+     *
+     * Reuses `moveTo`, so a jump resets the edits exactly like Skip does: carrying them would
+     * apply one item's corrected name to a different photograph.
+     */
+    fun jumpTo(index: Int) = moveTo(index)
+
     private fun moveTo(target: Int) {
         val s = _state.value
         if (s.drafts.isEmpty()) return

@@ -327,6 +327,34 @@ data class BulkMove(
  * renamed since the move shows its *current* code, which is the one printed on the card in the
  * attic today.
  */
+/**
+ * Move a selection of items into one bin, optionally straight into a bag there.
+ *
+ * `itemIds` is required and non-empty, unlike [BulkMove]'s. "Everything applicable" is a sensible
+ * default for unpack — the bin is right there and its contents are obvious — but there is no
+ * obvious default set for "move these somewhere else", and inventing one would move things
+ * nobody chose.
+ */
+@Serializable
+data class BulkRelocate(
+    @SerialName("item_ids") val itemIds: List<String>,
+    @SerialName("to_tote_id") val toToteId: String,
+    @SerialName("container_id") val containerId: String? = null,
+    val note: String? = null,
+)
+
+/**
+ * Put a selection into a bag, or take them out of one.
+ *
+ * NOT a movement: the items do not change bin, so nothing enters the ledger. Which bag a thing
+ * sits in is a label, and relabelling is not a whereabouts event.
+ */
+@Serializable
+data class BulkBag(
+    @SerialName("item_ids") val itemIds: List<String>,
+    @SerialName("container_id") val containerId: String? = null,
+)
+
 @Serializable
 data class MovementDto(
     val id: String,

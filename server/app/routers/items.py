@@ -12,7 +12,17 @@ from app.models.category import Category
 from app.models.container import Container
 from app.models.item import Item, ItemApparel
 from app.models.movement import Movement
-from app.schemas.catalog import ItemIn, ItemOut, ItemPatch, MoveIn, MovementOut, SearchHit
+from app.models.tote import Tote
+from app.schemas.catalog import (
+    BulkBagIn,
+    BulkRelocateIn,
+    ItemIn,
+    ItemOut,
+    ItemPatch,
+    MoveIn,
+    MovementOut,
+    SearchHit,
+)
 from app.security import CurrentUser
 from app.services import photo_store
 from app.services.apparel_write import apply_apparel
@@ -149,6 +159,131 @@ async def patch_item(item_id: uuid.UUID, body: ItemPatch, user: CurrentUser, db:
         await apply_apparel(db, item, apparel_updates)
     await db.commit()
     return await _one(db, user.id, item_id)
+
+
+@router.post("/items/bulk-move", response_model=list[MovementOut])
+async def bulk_move(body: BulkRelocateIn, user: CurrentUser, db: Db):
+    """Move a selection of items into one bin, in ONE transaction.
+
+    One ledger row each, written by `record_move` like every other relocation — a bulk operation
+    is a convenience for the person, never a shortcut past the single writer of derived state.
+    And one transaction rather than N requests, for the reason `record_move` does not commit:
+    forty items moved individually is forty chances to half-succeed, leaving a selection the
+    person believes is together and is not.
+
+    The reason is `moved` for something already stored and `repacked` for something that is out,
+    matched to the item — the same distinction the item sheet makes one at a time, because a year
+    later "it changed bins" and "it came back" are different facts.
+    """
+    tote = (
+        await db.execute(select(Tote).where(Tote.id == body.to_tote_id, Tote.user_id == user.id))
+    ).scalar_one_or_none()
+    if tote is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Tote not found")
+
+    container = None
+    if body.container_id is not None:
+        container = (
+            await db.execute(
+                select(Container).where(
+                    Container.id == body.container_id,
+                    Container.user_id == user.id,
+                    # Against the DESTINATION, not where the items are now: a bag in any other
+                    # bin is the contradiction the container model exists to prevent.
+                    Container.tote_id == body.to_tote_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if container is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "That bag is not in the tote these items are going to",
+            )
+
+    items = (
+        (
+            await db.execute(
+                select(Item).where(
+                    Item.id.in_(body.item_ids),
+                    Item.user_id == user.id,
+                    Item.is_draft.is_(False),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(items) != len(set(body.item_ids)):
+        # All or nothing. A partial move would leave the person believing a selection is
+        # together when some of it never went.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "One or more items not found")
+
+    moves = []
+    for item in items:
+        moves.append(
+            await record_move(
+                db,
+                item=item,
+                reason="moved" if item.status == "stored" else "repacked",
+                to_tote_id=body.to_tote_id,
+                note=body.note,
+            )
+        )
+        # After the move, because `record_move` clears container_id on the way in — the
+        # destination's bags are not the source's.
+        if container is not None:
+            item.container_id = container.id
+    await db.commit()
+    return [MovementOut.model_validate(m) for m in moves]
+
+
+@router.post("/items/bulk-bag", status_code=status.HTTP_204_NO_CONTENT)
+async def bulk_bag(body: BulkBagIn, user: CurrentUser, db: Db):
+    """Put a selection into a bag, or take them out of one.
+
+    NOT a movement and deliberately no ledger rows: the items do not change bin. Which bag a
+    thing sits in inside a tote is a label, and relabelling is not a whereabouts event — writing
+    one would fill the history someone reads for "where was this last year" with noise.
+
+    Every item must already be in the bag's tote. That is the same rule the single-item PATCH
+    enforces, and it is the only way this could ever produce a container that lies.
+    """
+    container = None
+    if body.container_id is not None:
+        container = (
+            await db.execute(
+                select(Container).where(
+                    Container.id == body.container_id, Container.user_id == user.id
+                )
+            )
+        ).scalar_one_or_none()
+        if container is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Container not found")
+
+    items = (
+        (
+            await db.execute(
+                select(Item).where(
+                    Item.id.in_(body.item_ids),
+                    Item.user_id == user.id,
+                    Item.is_draft.is_(False),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(items) != len(set(body.item_ids)):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "One or more items not found")
+
+    for item in items:
+        if container is not None and item.current_tote_id != container.tote_id:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "That bag is not in the tote these items are in",
+            )
+        item.container_id = container.id if container is not None else None
+    await db.commit()
 
 
 @router.delete("/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
