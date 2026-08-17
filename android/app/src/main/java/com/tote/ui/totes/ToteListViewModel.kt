@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tote.data.CatalogRepository
 import com.tote.data.local.CachedTote
+import com.tote.data.remote.LocationDto
 import com.tote.data.remote.ToteCreate
 import com.tote.util.ApiErrors
 import com.tote.util.UiState
@@ -25,8 +26,25 @@ class ToteListViewModel @Inject constructor(
     val totes: StateFlow<List<CachedTote>> =
         repo.cachedTotes.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private val _create = MutableStateFlow<UiState<Unit>>(UiState.Idle)
-    val create: StateFlow<UiState<Unit>> = _create.asStateFlow()
+    /** Put away, not thrown away. Kept apart from the live list and collapsed by default. */
+    val archived: StateFlow<List<CachedTote>> =
+        repo.cachedArchivedTotes
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * On success this carries the **new bin's id**, because creating one is never the goal.
+     *
+     * The goal is a labelled bin, and everything that labels it — write the tag, print the card —
+     * lives on its detail screen. The dialog used to close onto the list, leaving the one screen
+     * that finishes the job a scroll and a tap away, which is how a bin ends up catalogued and
+     * unlabelled: the exact failure the app exists to prevent.
+     */
+    private val _create = MutableStateFlow<UiState<String>>(UiState.Idle)
+    val create: StateFlow<UiState<String>> = _create.asStateFlow()
+
+    /** Places, for the create dialog's picker. Also the list an inline "New location…" grows. */
+    private val _locations = MutableStateFlow<List<LocationDto>>(emptyList())
+    val locations: StateFlow<List<LocationDto>> = _locations.asStateFlow()
 
     private val _refreshing = MutableStateFlow(false)
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
@@ -68,11 +86,37 @@ class ToteListViewModel @Inject constructor(
         }
     }
 
-    fun createTote(code: String, label: String?) {
+    fun loadLocations() {
+        viewModelScope.launch {
+            runCatching { repo.locations() }.onSuccess { _locations.value = it }
+        }
+    }
+
+    /** Add a place without leaving the dialog, and select it. */
+    fun createLocation(name: String, onCreated: (String) -> Unit) {
+        viewModelScope.launch {
+            runCatching { repo.createLocation(name) }
+                .onSuccess {
+                    _locations.value = _locations.value + it
+                    onCreated(it.id)
+                }
+                .onFailure { _create.value = UiState.Error(ApiErrors.message(it, "Couldn't add that place.")) }
+        }
+    }
+
+    fun createTote(code: String, label: String?, locationId: String?) {
         viewModelScope.launch {
             _create.value = UiState.Loading
-            runCatching { repo.createTote(ToteCreate(code = code.trim(), label = label?.ifBlank { null })) }
-                .onSuccess { _create.value = UiState.Success(Unit) }
+            runCatching {
+                repo.createTote(
+                    ToteCreate(
+                        code = code.trim(),
+                        label = label?.ifBlank { null },
+                        locationId = locationId,
+                    )
+                )
+            }
+                .onSuccess { _create.value = UiState.Success(it.id) }
                 .onFailure {
                     // 409 is the case worth naming: the code is printed on a physical card, so a
                     // duplicate is a real-world ambiguity and "already exists" is the useful thing

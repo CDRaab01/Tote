@@ -26,14 +26,40 @@ data class ToteDto(
     val label: String? = null,
     @SerialName("category_id") val categoryId: String? = null,
     @SerialName("location_id") val locationId: String? = null,
+    // Denormalised by the server alongside the id: a code with no place is half an answer, and
+    // every screen that names a bin wants to name where it is.
+    @SerialName("location_name") val locationName: String? = null,
     val notes: String? = null,
     @SerialName("bin_kind") val binKind: String? = null,
     val color: String? = null,
     val archived: Boolean = false,
     @SerialName("nfc_tag_uid") val nfcTagUid: String? = null,
+    @SerialName("nfc_written_at") val nfcWrittenAt: String? = null,
     @SerialName("item_count") val itemCount: Int = 0,
     @SerialName("out_count") val outCount: Int = 0,
 )
+
+/**
+ * A hand edit of a bin.
+ *
+ * Every field is required, with no defaults, and that is deliberate rather than clumsy: this is
+ * the same trap [ItemUpdate] documents. `encodeDefaults` is on, so anything omitted would be sent
+ * as an explicit null and the server (`exclude_unset=True`) reads a present null as "clear this" —
+ * a `TotePatch(archived = true)` built from defaults would set `code` null against a NOT NULL
+ * column. Making the fields mandatory means a sparse one cannot be written by accident.
+ */
+@Serializable
+data class TotePatch(
+    val code: String,
+    val label: String?,
+    @SerialName("location_id") val locationId: String?,
+    @SerialName("category_id") val categoryId: String?,
+    val notes: String?,
+    val archived: Boolean,
+)
+
+@Serializable
+data class LocationIn(val name: String)
 
 @Serializable
 data class ToteDetailDto(
@@ -42,10 +68,13 @@ data class ToteDetailDto(
     val label: String? = null,
     @SerialName("category_id") val categoryId: String? = null,
     @SerialName("location_id") val locationId: String? = null,
+    @SerialName("location_name") val locationName: String? = null,
     val notes: String? = null,
+    val archived: Boolean = false,
     @SerialName("item_count") val itemCount: Int = 0,
     @SerialName("out_count") val outCount: Int = 0,
     @SerialName("nfc_tag_uid") val nfcTagUid: String? = null,
+    @SerialName("nfc_written_at") val nfcWrittenAt: String? = null,
     @SerialName("card_printed_at") val cardPrintedAt: String? = null,
     val items: List<ItemDto> = emptyList(),
     @SerialName("items_out") val itemsOut: List<ItemDto> = emptyList(),

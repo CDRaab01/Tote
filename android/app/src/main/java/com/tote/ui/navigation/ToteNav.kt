@@ -273,7 +273,7 @@ fun ToteNavHost(
                         defaultValue = false
                     },
                 ),
-            ) { ToteDetailScreen() }
+            ) { ToteDetailScreen(onGone = { nav.navigateUp() }) }
             composable(Routes.SETTINGS) { SettingsScreen() }
             composable(
                 Routes.PERSON_DETAIL,

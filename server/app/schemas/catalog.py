@@ -107,6 +107,9 @@ class ToteOut(BaseModel):
     label: str | None
     category_id: uuid.UUID | None
     location_id: uuid.UUID | None
+    # Denormalised alongside the id, exactly like ItemOut's: a code with no place is half an
+    # answer, and every screen that names a bin wants to name where it is.
+    location_name: str | None = None
     notes: str | None
     bin_kind: str | None
     color: str | None

@@ -828,6 +828,77 @@ The affordance lives one tap deep, in the app's error voice, behind its own conf
 beside "Take out" on the row. A destructive action next to an everyday one is a mis-tap away from
 taking a photograph that cannot be retaken once the bin is taped shut.
 
+## A bin is editable, placeable and archivable
+
+Everything about a bin was fixed at creation. The dialog collected a code and a label, and nothing
+in the app could change either afterwards — no notes, no category, and, the one that actually
+mattered, **no way to say where the bin physically is**. `PATCH /totes/{id}` and the whole
+`/locations` CRUD had shipped in Phase 2 and had **no caller anywhere in the client**, so every
+row in the catalogue read "A14" with nothing after it and the browse-by-location entry point named
+in the product summary did not exist.
+
+### `ToteOut.location_name` — the round's only server change
+
+Denormalised beside `location_id`, exactly as `ItemOut` already does it. Populated from one
+`location_names()` map fetched per request rather than a join per row: a household has a handful
+of places against however many bins, so one small query beats an N+1 on the endpoint that backs
+the browse screen. No migration — it is a read-side field over a column that has existed since
+`0001`.
+
+A bin that moves out of a place returns `null`, not a stale name. "Attic" left behind on a bin
+now in the garage is worse than no answer, because it is an answer somebody would act on.
+
+### The list is grouped by place, and archived is collapsed rather than hidden
+
+A flat alphabetical run of A14, A15, B02, G01 is a list of codes, and remembering codes is
+precisely the work this app exists to remove. Bins group under their location, alphabetically,
+with **the placeless ones last under their own heading** in the attention channel. Last rather
+than first because a loose end at the top is in the way of every browse; under its own heading
+rather than folded into the first real place because that would be a lie about where they are.
+
+Archived bins are cached (`api.totes(includeArchived = true)`) and shown behind a collapsed
+"Archived (N)" header. An archived bin is a physical box that still exists somewhere — it is off
+the daily list, not out of the catalogue, and a snapshot that dropped it would make "where did A14
+go" unanswerable offline, which is where it would be asked.
+
+### `TotePatch` names every field, for the same reason `ItemUpdate` does
+
+`encodeDefaults` is on and the server's `exclude_unset=True` reads a present null as *clear this*,
+so a sparse body built from defaults would set `code` null against a NOT NULL column. The client's
+`TotePatch` therefore has **no default values at all** — a partial one cannot be written by
+accident. That is why archiving carries the code, the label, the location and the notes with it,
+and why editing carries `archived` through unchanged: an edit must never quietly un-archive a bin.
+
+### Changing a bin's code is a change to a physical object
+
+The one place in the app that warns about the world outside it. The code is written on an index
+card in permanent marker, encoded in that card's QR, and written into the NFC tag's URI as
+`/t/A14` — and the server resolves that path **by code**. So renaming a bin does not update the
+tag; it makes the tag stop resolving, and the tap lands on "no such bin" in an attic, over a box
+that is sitting right there. The warning appears as soon as the code field diverges and the bin
+has a tag, before the save rather than after it.
+
+### Delete says what it actually does
+
+"Delete the bin" reads as "delete everything in it" to anyone who has not read the schema. It does
+not: `ON DELETE SET NULL` leaves every item catalogued and in no bin, because throwing a box away
+must never erase the record of what was in it. The confirmation says so, counts the items that
+will be left unfiled, and offers archiving — which is nearly always the operation actually wanted.
+
+### Two smaller things that were simply missing
+
+- **The tag's text record carries the location now.** The spec said it always did; the call passed
+  a hardcoded `null`. That record exists for a stock NFC reader on a phone without Tote, and
+  "A14 — Christmas decor" with no place is the half of the answer the person already had in their
+  hands.
+- **`nfc_written_at` reaches the UI.** It was on `ToteOut` from Phase 3 and rendered nowhere. A tag
+  written before the bin was renamed carries the old text, and the date is the only way to know
+  that from the app.
+- **Creating a bin navigates to it.** Creating one is never the goal — labelling it is, and the
+  tag and the card live on its detail screen. The dialog used to close onto the list, leaving the
+  screen that finishes the job a scroll and a tap away. That is how a bin ends up catalogued and
+  unlabelled, which is the exact failure the app exists to prevent.
+
 ## Picking one thing out of a list that grows
 
 Every choose-a-bin, choose-a-category, choose-a-person control was a horizontally-scrolling strip

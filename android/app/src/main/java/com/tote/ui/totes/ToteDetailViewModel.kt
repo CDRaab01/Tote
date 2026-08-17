@@ -8,6 +8,8 @@ import com.tote.data.CatalogRepository
 import com.tote.data.remote.ApiService
 import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.ItemCreate
+import com.tote.data.remote.LocationDto
+import com.tote.data.remote.TotePatch
 import com.tote.data.remote.PersonDto
 import com.tote.data.remote.ToteDetailDto
 import com.tote.nfc.TagIo
@@ -224,7 +226,12 @@ class ToteDetailViewModel @Inject constructor(
             val summary = TagIo.summaryFor(
                 code = current.code,
                 label = current.label,
-                location = null,
+                // The spec always said the tag's text record carries the location; the call
+                // always passed null. That record is the whole point of writing text at all —
+                // it is what a stock NFC reader on a phone without Tote shows someone holding
+                // a bin, and "A14 — Christmas decor" without a place is the half of the answer
+                // they already had in their hands.
+                location = current.locationName,
                 itemCount = current.itemCount,
             )
             when (val result = TagIo.write(tag, uri, summary)) {
@@ -252,6 +259,110 @@ class ToteDetailViewModel @Inject constructor(
                     )
                 is TagWriteResult.Failed -> _write.value = WriteState.Problem(result.reason)
             }
+        }
+    }
+
+    /** Places, for the edit sheet's picker. Loaded when the sheet opens, like the categories. */
+    private val _locations = MutableStateFlow<List<LocationDto>>(emptyList())
+    val locations: StateFlow<List<LocationDto>> = _locations.asStateFlow()
+
+    fun loadLocations() {
+        viewModelScope.launch {
+            runCatching { repo.locations() }.onSuccess { _locations.value = it }
+        }
+    }
+
+    fun createLocation(name: String, onCreated: (String) -> Unit) {
+        viewModelScope.launch {
+            runCatching { repo.createLocation(name) }
+                .onSuccess {
+                    _locations.value = _locations.value + it
+                    onCreated(it.id)
+                }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't add that place.")) }
+        }
+    }
+
+    /**
+     * Edit the bin itself.
+     *
+     * The body names every field this form owns — see [TotePatch]. `archived` is carried through
+     * unchanged here so that editing a bin can never quietly un-archive it.
+     */
+    fun editTote(code: String, label: String?, locationId: String?, notes: String?) {
+        val current = (_state.value as? UiState.Success)?.data ?: return
+        viewModelScope.launch {
+            runCatching {
+                repo.patchTote(
+                    toteId,
+                    TotePatch(
+                        code = code.trim(),
+                        label = label?.takeIf { it.isNotBlank() },
+                        locationId = locationId,
+                        categoryId = current.categoryId,
+                        notes = notes?.takeIf { it.isNotBlank() },
+                        archived = current.archived,
+                    ),
+                )
+            }
+                .onSuccess {
+                    load()
+                    feedback.say("Saved.")
+                }
+                .onFailure {
+                    feedback.say(
+                        if (ApiErrors.statusOf(it) == 409) "A tote with that code already exists."
+                        else ApiErrors.message(it, "Couldn't save the bin.")
+                    )
+                }
+        }
+    }
+
+    /**
+     * Put the bin away, or bring it back.
+     *
+     * Archiving is the reversible half of the pair and the one that should be reached for: the
+     * bin, its items and its ledger all survive, it simply stops appearing in the daily list.
+     */
+    fun setArchived(archived: Boolean) {
+        val current = (_state.value as? UiState.Success)?.data ?: return
+        viewModelScope.launch {
+            runCatching {
+                repo.patchTote(
+                    toteId,
+                    TotePatch(
+                        code = current.code,
+                        label = current.label,
+                        locationId = current.locationId,
+                        categoryId = current.categoryId,
+                        notes = current.notes,
+                        archived = archived,
+                    ),
+                )
+            }
+                .onSuccess {
+                    load()
+                    feedback.say(if (archived) "Archived ${current.code}." else "Back on the list.")
+                }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't change that.")) }
+        }
+    }
+
+    /**
+     * Delete the bin. Its items survive, unfiled.
+     *
+     * `ON DELETE SET NULL` on the server, deliberately: throwing a box away must not erase the
+     * record of what was in it. The confirmation says so, because "delete the bin" reads like
+     * "delete its contents" to everyone who has not read the schema.
+     */
+    fun deleteTote(onGone: () -> Unit) {
+        viewModelScope.launch {
+            runCatching { repo.deleteTote(toteId) }
+                .onSuccess {
+                    feedback.say("Bin deleted. Its items are still catalogued, in no bin.")
+                    onGone()
+                }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't delete the bin.")) }
         }
     }
 

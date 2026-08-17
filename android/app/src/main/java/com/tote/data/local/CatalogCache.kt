@@ -67,6 +67,9 @@ interface CatalogDao {
     @Query("SELECT * FROM cached_totes WHERE archived = 0 ORDER BY code")
     fun totes(): Flow<List<CachedTote>>
 
+    @Query("SELECT * FROM cached_totes WHERE archived = 1 ORDER BY code")
+    fun archivedTotes(): Flow<List<CachedTote>>
+
     @Query("SELECT * FROM cached_items WHERE currentToteId = :toteId ORDER BY name")
     fun itemsInTote(toteId: String): Flow<List<CachedItem>>
 

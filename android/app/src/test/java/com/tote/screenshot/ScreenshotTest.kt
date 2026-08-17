@@ -754,6 +754,44 @@ class ScreenshotTest {
         photoCount = 0,
     )
 
+
+    /**
+     * The bin list grouped by where the bins physically are, with archived collapsed.
+     *
+     * A flat run of A14, A15, B02, G01 is a list of codes — the exact thing the app exists to
+     * stop you having to remember. The placeless bin gets its own heading, last, in the attention
+     * channel: it is a loose end, and a loose end you cannot see is one nobody fixes.
+     */
+    @Test fun totes_grouped_dark() = capture("totes_grouped_dark", dark = true) {
+        ToteListContent(
+            totes = totes + CachedTote("4", "X9", "Odds and ends", null, null, 2, 0, false),
+            onOpenTote = {},
+            onNewTote = {},
+            archived = listOf(CachedTote("9", "C03", "Old baby clothes", null, "Attic", 20, 0, true)),
+        )
+    }
+
+    /** The bin's own screen: the place on the hero, the tag's date, and a way to edit it. */
+    @Test fun tote_detail_placed_dark() = capture("tote_detail_placed_dark", dark = true) {
+        ToteDetailContent(
+            tote = ToteDetailDto(
+                id = "t1",
+                code = "A14",
+                label = "Christmas decor",
+                locationName = "Attic",
+                itemCount = 2,
+                outCount = 0,
+                nfcTagUid = "04A2B3C4D5E6",
+                nfcWrittenAt = "2026-08-15T18:20:00Z",
+                items = listOf(
+                    ItemDto(id = "a", name = "Pre-lit tree, 7ft", quantity = 1, status = "stored"),
+                    ItemDto(id = "b", name = "Ornament box", quantity = 4, status = "stored"),
+                ),
+            ),
+            onAddItem = {}, onUnpackAll = {}, onRepackAll = {}, onTakeOut = {}, onPutBack = {},
+        )
+    }
+
     // LoginContent is the stateless body precisely so it can be captured here: the stateful
     // LoginScreen needs Hilt and a real AppAuth service, neither of which exists in a JVM test.
     @Test fun login_light() =
