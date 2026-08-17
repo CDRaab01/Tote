@@ -38,12 +38,16 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.data.local.CachedTote
+import com.tote.data.local.CachedItem
 import com.tote.data.remote.LocationDto
+import com.tote.data.remote.ItemDto
 import com.tote.ui.components.PickerDialog
 import com.tote.ui.components.PickerField
 import com.tote.ui.components.PickerOption
 import com.tote.ui.components.RefreshOnResume
 import com.tote.ui.components.ToteButton
+import com.tote.ui.items.ItemSheetViewModel
+import com.tote.ui.items.ItemSheet
 import com.tote.ui.theme.ToteTheme
 import com.tote.util.UiState
 import design.pulse.ui.components.Caption
@@ -59,9 +63,11 @@ internal const val NO_LOCATION = "No location yet"
 fun ToteListScreen(
     onOpenTote: (String) -> Unit,
     viewModel: ToteListViewModel = hiltViewModel(),
+    itemSheet: ItemSheetViewModel = hiltViewModel(),
 ) {
     val totes by viewModel.totes.collectAsStateWithLifecycle()
     val archived by viewModel.archived.collectAsStateWithLifecycle()
+    val unfiled by viewModel.unfiled.collectAsStateWithLifecycle()
     val locations by viewModel.locations.collectAsStateWithLifecycle()
     val createState by viewModel.create.collectAsStateWithLifecycle()
     val unreachable by viewModel.unreachable.collectAsStateWithLifecycle()
@@ -79,11 +85,24 @@ fun ToteListScreen(
             showCreate = true
         },
         archived = archived,
+        unfiled = unfiled,
+        onOpenUnfiled = itemSheet::open,
         unreachable = unreachable,
         loading = loading,
         refreshing = refreshing,
         onRefresh = viewModel::refresh,
         onRetry = viewModel::refresh,
+    )
+
+    // The sheet already knows how to put an `out` item away — its move button reads "Put it
+    // away" for exactly this case — so filing a deferred item needs no new screen.
+    ItemSheet(
+        viewModel = itemSheet,
+        onChanged = viewModel::refresh,
+        onOpenBin = { toteId ->
+            itemSheet.close()
+            onOpenTote(toteId)
+        },
     )
 
     if (showCreate) {
@@ -118,6 +137,8 @@ fun ToteListContent(
     onNewTote: () -> Unit,
     modifier: Modifier = Modifier,
     archived: List<CachedTote> = emptyList(),
+    unfiled: List<CachedItem> = emptyList(),
+    onOpenUnfiled: (ItemDto) -> Unit = {},
     unreachable: Boolean = false,
     loading: Boolean = false,
     refreshing: Boolean = false,
@@ -127,6 +148,7 @@ fun ToteListContent(
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
     var showArchived by remember { mutableStateOf(false) }
+    var showUnfiled by remember { mutableStateOf(false) }
     val groups = remember(totes) { byLocation(totes) }
 
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -143,6 +165,30 @@ fun ToteListContent(
                 ) {
                     SectionHeader(label = "Totes", channel = colors.slate.base)
                     ToteButton(text = "New tote", onClick = onNewTote, tonal = true)
+                }
+            }
+
+            // Directly under the header, and one line when collapsed. These are loose ends the
+            // person created deliberately by deferring a destination, and deferring is only
+            // reasonable if the deferred things visibly accumulate somewhere they will look.
+            if (unfiled.isNotEmpty()) {
+                item(key = "unfiled-head") {
+                    Row(
+                        Modifier.fillMaxWidth().clickable { showUnfiled = !showUnfiled },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SectionHeader(
+                            label = "Not in a bin (${unfiled.size})",
+                            channel = colors.attention.base,
+                        )
+                        Spacer(Modifier.width(spacing.sm))
+                        Caption(text = if (showUnfiled) "Hide" else "Show")
+                    }
+                }
+                if (showUnfiled) {
+                    items(unfiled, key = { "unfiled-${it.id}" }) { cached ->
+                        UnfiledRow(cached, onClick = { onOpenUnfiled(cached.toItemDto()) })
+                    }
                 }
             }
 
@@ -261,6 +307,54 @@ private fun ToteRow(tote: CachedTote, onClick: () -> Unit) {
                     // The location is the section heading now, so it is not repeated on the row.
                 }
                 Caption(text = counts)
+            }
+        }
+    }
+}
+
+/**
+ * A catalogued item that is in no bin.
+ *
+ * The cached row is enough to draw it, but the item sheet speaks [ItemDto] — so this converts.
+ * Only the fields the sheet reads for an unfiled item are carried; the rest are defaults, which
+ * is honest because a cache row genuinely does not hold them. The sheet re-reads nothing: it
+ * takes what it is given, and for an item with no bin that is all there is to know locally.
+ */
+private fun CachedItem.toItemDto() = ItemDto(
+    id = id,
+    name = name,
+    description = description,
+    notes = notes,
+    quantity = quantity,
+    status = status,
+    currentToteId = currentToteId,
+    toteCode = toteCode,
+    locationName = locationName,
+    isOverdue = isOverdue,
+)
+
+@Composable
+private fun UnfiledRow(item: CachedItem, onClick: () -> Unit) {
+    val spacing = ToteTheme.spacing
+    PanelCard(onClick = onClick) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (item.quantity > 1) "${item.name} ×${item.quantity}" else item.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(spacing.xs))
+                Caption(
+                    text = listOfNotNull(
+                        item.sizeRaw,
+                        // Named, because "not in a bin" covers two different histories and the
+                        // difference decides what to do: one needs filing, the other came out
+                        // of a bin on purpose and may be meant to stay out.
+                        if (item.status == "loaned") "Lent out" else "Catalogued, not filed",
+                    ).joinToString(" · "),
+                )
             }
         }
     }

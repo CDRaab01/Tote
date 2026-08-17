@@ -18,6 +18,8 @@ MOVEMENT_REASONS = (
     "returned",
     "disposed",
     "corrected",
+    # Entered the catalogue without entering a bin — see services/movement.py.
+    "catalogued",
 )
 
 

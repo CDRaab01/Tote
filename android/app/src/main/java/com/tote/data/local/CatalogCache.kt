@@ -74,6 +74,20 @@ interface CatalogDao {
     fun itemsInTote(toteId: String): Flow<List<CachedItem>>
 
     /**
+     * Catalogued, in no bin.
+     *
+     * Deliberately NOT filtered to the `unfiled` out_reason: an item unpacked from a bin and
+     * never put back is in exactly the same practical position — it exists, and nothing says
+     * where it is. The ledger keeps *why* they differ; this list is about what to do next.
+     * `disposed` is excluded because it is terminal, not a loose end.
+     */
+    @Query(
+        "SELECT * FROM cached_items WHERE currentToteId IS NULL AND status != 'disposed' " +
+            "ORDER BY name"
+    )
+    fun unfiledItems(): Flow<List<CachedItem>>
+
+    /**
      * Offline search.
      *
      * Deliberately a LIKE scan rather than an attempt to reproduce Postgres full-text: FTS

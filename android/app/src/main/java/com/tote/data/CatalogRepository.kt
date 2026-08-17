@@ -42,6 +42,9 @@ class CatalogRepository @Inject constructor(
 
     fun cachedItemsIn(toteId: String): Flow<List<CachedItem>> = dao.itemsInTote(toteId)
 
+    /** Catalogued but in no bin — the loose ends deferring a destination creates. */
+    val cachedUnfiled: Flow<List<CachedItem>> = dao.unfiledItems()
+
     suspend fun locations(): List<LocationDto> = api.locations()
 
     suspend fun categories(): List<CategoryDto> = api.categories()

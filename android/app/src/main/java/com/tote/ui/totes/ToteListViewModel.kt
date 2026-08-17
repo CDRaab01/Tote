@@ -3,6 +3,7 @@ package com.tote.ui.totes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tote.data.CatalogRepository
+import com.tote.data.local.CachedItem
 import com.tote.data.local.CachedTote
 import com.tote.data.remote.LocationDto
 import com.tote.data.remote.ToteCreate
@@ -25,6 +26,16 @@ class ToteListViewModel @Inject constructor(
     /** Backed by the cache, so the list is on screen instantly and survives a dead network. */
     val totes: StateFlow<List<CachedTote>> =
         repo.cachedTotes.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Catalogued, in no bin.
+     *
+     * Surfaced here rather than left to search because it is a to-do the person created on
+     * purpose — deferring the destination at review is only reasonable if there is somewhere
+     * the deferred things visibly accumulate.
+     */
+    val unfiled: StateFlow<List<CachedItem>> =
+        repo.cachedUnfiled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Put away, not thrown away. Kept apart from the live list and collapsed by default. */
     val archived: StateFlow<List<CachedTote>> =

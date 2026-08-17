@@ -509,9 +509,12 @@ fun ReviewContent(
                 // ── The decision ─────────────────────────────────────────────
                 item {
                     ToteButton(
+                        // The no-bin label says what it will do rather than what is missing.
+                        // "Choose a bin to file it" read as an instruction over a disabled
+                        // button; it is a legitimate choice now, so it gets a verb.
                         text = when {
-                            state.saving -> "Filing…"
-                            state.edits.toteId == null -> "Choose a bin to file it"
+                            state.saving -> "Saving…"
+                            state.edits.toteId == null -> "Save without a bin"
                             else -> "File it"
                         },
                         onClick = onConfirm,

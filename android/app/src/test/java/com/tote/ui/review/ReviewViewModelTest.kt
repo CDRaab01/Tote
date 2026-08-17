@@ -97,15 +97,24 @@ class ReviewViewModelTest {
     }
 
     @Test
-    fun `a draft with no destination cannot be filed until a bin is chosen`() = runTest {
+    fun `a draft with no destination can be confirmed, and lands unfiled`() = runTest {
+        // This test used to assert the opposite: no bin, no confirm. That forced the
+        // destination decision at review time — the moment you are least sure, with the object
+        // already back in a closed bin — so null is a legitimate answer now. The server records
+        // it as `catalogued` rather than `initial`, and the item shows up under "Not in a bin".
         val vm = vmWith(draft("d1", "Ratchet set"))
         dispatcher.scheduler.advanceUntilIdle()
 
         assertNull(vm.state.value.edits.toteId)
-        assertFalse(vm.state.value.edits.canConfirm)
-
-        vm.edit { it.copy(toteId = "t2") }
         assertTrue(vm.state.value.edits.canConfirm)
+
+        vm.confirm()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val body = argumentCaptor<DraftConfirm>()
+        verify(api).confirmDraft(eq("d1"), body.capture())
+        // Explicitly null, not omitted and not a placeholder bin.
+        assertNull(body.firstValue.toteId)
     }
 
     @Test

@@ -324,6 +324,47 @@ would otherwise ship entirely unexercised — which for a data migration is the 
 The statement is a module-level constant in the migration so `test_category_backfill.py` can run
 it directly against a real Postgres.
 
+## Catalogued, but not filed yet
+
+Confirming a draft used to require a bin. That put the destination decision at review time —
+which is the moment you are *least* sure, because the bin is closed and the object is already
+back inside it. `DraftConfirm.tote_id` is optional now.
+
+**The state is not new.** An item with no bin already existed: deleting a tote leaves its
+contents unfiled (`ON DELETE SET NULL`), search already renders "Not in a tote", and bin
+contents already exclude it. What is new is a deliberate way to *arrive* there.
+
+### A third kind of movement reason
+
+The ledger has had two kinds — `_INBOUND` (needs a destination) and `_OUTBOUND` (must not have
+one). Unfiled needs a third, `_UNFILED = {"catalogued"}`, which also refuses a destination but
+means something different: **the item entered the catalogue without entering a bin.**
+
+It could have been an outbound reason with a friendly label. It is not, because "it was never put
+in a bin" and "it came out of A14" are different facts about an object's history, and the ledger
+is the one place that difference survives a year. `out_reason` is `unfiled` for the same reason.
+
+The derived-state invariant is untouched: `current_tote_id IS NOT NULL <=> status == "stored"`.
+An unfiled item has no tote, so it cannot be `stored`; it is `out`/`unfiled`. Filing it later is
+an ordinary inbound `moved`, which clears `out_reason` and sets `stored` through the same single
+writer as everything else.
+
+### Where the loose ends go
+
+Deferring is only reasonable if the deferred things visibly accumulate somewhere the person will
+look — otherwise "decide later" is a way to lose an object you have already photographed and
+named. So the Totes tab carries a **"Not in a bin (N)"** section, collapsed to one line, directly
+under the header, in the attention channel, and absent entirely at zero.
+
+Filing from there needs no new screen: the rows open the **item sheet**, whose move button
+already reads "Put it away" for an item that is out. The list is drawn from the Room cache
+(`unfiledItems()`), so it works in the garage like everything else.
+
+That query deliberately does **not** filter on `out_reason = 'unfiled'`. An item unpacked from a
+bin and never put back is in the same practical position — it exists and nothing says where it
+is. The ledger keeps *why* they differ; this list is about what to do next. `disposed` is
+excluded because it is terminal, not a loose end.
+
 ## The movement ledger
 
 `app/services/movement.py` is the **single writer** of `current_tote_id`, `status`,

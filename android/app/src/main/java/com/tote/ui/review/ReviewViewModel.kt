@@ -52,8 +52,14 @@ data class DraftEdits(
     val material: String = "",
     val touchedApparel: Boolean = false,
 ) {
-    /** Filing needs a destination and a name; everything else may legitimately be blank. */
-    val canConfirm: Boolean get() = name.isNotBlank() && toteId != null
+    /**
+     * A name is the only thing confirming actually requires.
+     *
+     * The destination used to be required too, which forced the bin decision at review time —
+     * the one moment you are least sure, with the object already back in a closed bin. Without
+     * one the item is catalogued and unfiled, which is a real state the catalogue already has.
+     */
+    val canConfirm: Boolean get() = name.isNotBlank()
 
     companion object {
         fun from(draft: DraftDto) = DraftEdits(
@@ -239,7 +245,9 @@ class ReviewViewModel @Inject constructor(
     fun confirm(onFiled: (String) -> Unit = {}) {
         val s = _state.value
         val draft = s.current ?: return
-        val toteId = s.edits.toteId ?: return
+        // No longer a guard: null is a legitimate answer meaning "catalogued, decide the
+        // bin later", and the server records it as `catalogued` rather than `initial`.
+        val toteId = s.edits.toteId
         if (!s.edits.canConfirm || s.saving) return
 
         viewModelScope.launch {
@@ -273,10 +281,16 @@ class ReviewViewModel @Inject constructor(
                 // form being replaced by the next draft — twenty minutes of cataloguing with no
                 // evidence any of it landed. Named by bin CODE because that is what is written
                 // on the physical box the person is about to walk away from.
-                val binCode = s.totes.firstOrNull { it.id == toteId }?.code
+                val binCode = toteId?.let { id -> s.totes.firstOrNull { it.id == id }?.code }
                 feedback.say(
-                    if (binCode != null) "Filed ${item.name} into $binCode"
-                    else "Filed ${item.name}"
+                    // Three sentences, because they are three different outcomes and the last
+                    // one is a promise to come back to: an item nobody ever files is exactly
+                    // the loose end deferring the choice risks creating.
+                    when {
+                        binCode != null -> "Filed ${item.name} into $binCode"
+                        toteId != null -> "Filed ${item.name}"
+                        else -> "Saved ${item.name} — no bin yet, it's on the Totes tab"
+                    }
                 )
                 // And make the rest of the app agree. This ViewModel bypasses CatalogRepository
                 // for reads (drafts are not catalog), but a confirm WRITES to the catalog —

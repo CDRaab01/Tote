@@ -12,6 +12,7 @@ import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
 import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.tote.data.local.CachedItem
 import com.tote.data.local.CachedTote
 import com.tote.data.local.CaptureQueueEntity
 import com.tote.data.remote.ApparelDto
@@ -852,6 +853,34 @@ class ScreenshotTest {
             ),
             onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
             onBack = {}, onRetry = {}, photoUrlFor = noPhotos,
+        )
+    }
+
+
+    /**
+     * The Totes tab with items catalogued but not yet filed.
+     *
+     * Deferring the bin at review is only reasonable if the deferred things visibly accumulate
+     * somewhere the person will look — otherwise "decide later" is just a way to lose track of
+     * an object you have already photographed and named.
+     */
+    @Test fun totes_unfiled_dark() = capture("totes_unfiled_dark", dark = true) {
+        ToteListContent(
+            totes = totes,
+            onOpenTote = {},
+            onNewTote = {},
+            unfiled = listOf(
+                CachedItem(
+                    id = "u1", name = "Sleepsuit", description = null, notes = null, quantity = 6,
+                    status = "out", currentToteId = null, toteCode = null, locationName = null,
+                    isOverdue = false, sizeRaw = "3-6M",
+                ),
+                CachedItem(
+                    id = "u2", name = "Snow boots", description = null, notes = null, quantity = 1,
+                    status = "loaned", currentToteId = null, toteCode = null, locationName = null,
+                    isOverdue = false,
+                ),
+            ),
         )
     }
 
