@@ -724,6 +724,20 @@ must not become a second row), and the downgrade only removes rows nothing was f
 The test DB migrates to head before any user exists, so the back-fill is a no-op there — the
 statement is a module-level constant so the tests can run it directly against real Postgres.
 
+
+**Follow-up to #29 — "Baby" had switched the label pass off (#30).** Caught within the hour, and
+worth recording as a rule rather than an incident. `looks_like_clothing` gates the size-reading
+pass on the **category the model chose**, matched against a hand-maintained
+`_CLOTHING_CATEGORY_HINTS` — and "Baby" matched none of them. Every baby garment filed under the
+category seeded that morning would have skipped the size read unless its *name* happened to carry
+a word from a second hand-maintained list, which had `sleeper` but not `sleepsuit`, no `swaddle`,
+no `bib`. Silent, and precisely the false negative the gate's docstring calls the expensive one:
+"loses the size of a garment that is now sealed in a bin in an attic."
+**Rule: any new seeded category is also a change to `sizing_hints.py`.** If it can hold a garment
+it belongs in the hints. The close calls go toward asking — a baby bin holds a monitor and a
+steriliser with no label between them, one wasted model call each, against one missed sleepsuit
+costing a trip to the attic.
+
 ---
 
 ## 9. Testing & CI

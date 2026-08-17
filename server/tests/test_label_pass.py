@@ -116,6 +116,17 @@ def test_an_unrecognised_department_degrades_rather_than_rejecting():
         ("Unidentified item", "Clothing", True),
         ("Unidentified item", "Kids clothes", True),
         ("Unidentified item", "Christmas decor", False),
+        # "Baby" matched none of the original hints, so every garment filed under the seeded
+        # category shipped 2026-08-17 would have skipped the size read unless its NAME happened
+        # to carry a listed word — the exact failure this gate exists to prevent.
+        ("Unidentified item", "Baby", True),
+        ("Unidentified item", "Infant gear", True),
+        # The garment words a house with small children actually uses. "sleeper" was listed and
+        # "sleepsuit" was not, which is a distinction no one typing into a phone would predict.
+        ("Sleepsuit", None, True),
+        ("Swaddle blanket", None, True),
+        ("Bib", None, True),
+        ("Dungarees", None, True),
         # Named by size rather than by garment type.
         ("4T winter set", None, True),
         ("Size 10 bundle", None, True),

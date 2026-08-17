@@ -1385,6 +1385,24 @@ to the bin, a wrong ordinal sends them to the wrong bin twice. A department reso
 `girls` is a youth 8) because that is evidence, not a guess.
 
 ## The label pass
+### The gate is only as good as the category list
+
+`looks_like_clothing` matches the **category the model chose** first, then falls back to a word
+list over the name. Both halves are hand-maintained vocabularies, which means **adding a seeded
+category can silently switch the label pass off for everything filed under it**.
+
+That happened the day "Baby" was seeded: it matched none of `_CLOTHING_CATEGORY_HINTS`, so a
+sleepsuit filed under it would have skipped the size read unless its *name* carried a listed word
+— and the list contained `sleeper` but not `sleepsuit`, no `swaddle`, no `bib`. A distinction
+nobody typing into a phone would predict, producing exactly the failure the gate exists to
+prevent, silently.
+
+**So: any new seeded category is also a change to this file.** If it can contain a garment, it
+belongs in the hints. The asymmetry decides the close calls — a baby bin holds a monitor and a
+steriliser with no label between them, and each costs one wasted call, while one missed sleepsuit
+costs a trip to the attic.
+
+
 
 A **second, narrow** vision call that does exactly one job: transcribe what is printed on the tag.
 Measured in Crate, the omnibus identify prompt read about 1 in 6 legible sizes; the same model
