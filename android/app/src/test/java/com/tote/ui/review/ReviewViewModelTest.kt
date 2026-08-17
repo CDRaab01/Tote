@@ -1,6 +1,7 @@
 package com.tote.ui.review
 
 import com.tote.data.local.CachedTote
+import com.tote.data.CaptureQueueRepository
 import com.tote.data.CatalogRepository
 import com.tote.data.local.CatalogDao
 import com.tote.data.remote.ApiService
@@ -15,6 +16,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -48,6 +50,7 @@ class ReviewViewModelTest {
     private lateinit var api: ApiService
     private lateinit var dao: CatalogDao
     private lateinit var repo: CatalogRepository
+    private lateinit var captureQueue: CaptureQueueRepository
     private val feedback = FeedbackBus()
 
     private val bins = listOf(
@@ -61,6 +64,8 @@ class ReviewViewModelTest {
         api = mock()
         dao = mock<CatalogDao>().stub { on { totes() } doReturn flowOf(bins) }
         repo = mock()
+        captureQueue = mock()
+        captureQueue.stub { on { queue } doReturn MutableStateFlow(emptyList()) }
     }
 
     @After
@@ -74,7 +79,7 @@ class ReviewViewModelTest {
             onBlocking { drafts() } doReturn drafts.toList()
             onBlocking { categories() } doReturn listOf(CategoryDto("c1", "Seasonal decor"))
         }
-        return ReviewViewModel(api, dao, repo, feedback)
+        return ReviewViewModel(api, dao, repo, feedback, captureQueue)
     }
 
     @Test
@@ -311,7 +316,7 @@ class ReviewViewModelTest {
         api.stub {
             onBlocking { drafts() } doAnswer { throw java.io.IOException("offline") }
         }
-        val vm = ReviewViewModel(api, dao, repo, feedback)
+        val vm = ReviewViewModel(api, dao, repo, feedback, captureQueue)
         dispatcher.scheduler.advanceUntilIdle()
 
         // Reviewing happens on the way back from the garage, so the destination list comes from
