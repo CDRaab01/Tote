@@ -255,7 +255,7 @@ holding in both arms; a QR on the same card costs nothing and reads from four fe
   text on the tote, because "show me everything in the attic" is a browse entry point (§1)
   and free text fragments into "attic"/"Attic"/"the attic".
 - `categories` — id, user_id, name, icon, sort_order, seeded with the user's real domains
-  (Christmas/seasonal decor, clothing, electronics, vintage games, tools, kitchen, books,
+  (Christmas/seasonal decor, clothing, baby, electronics, vintage games, tools, kitchen, books,
   documents, toys, sporting goods, craft/hobby) and freely editable. Seeded rows, not a
   Python enum: this vocabulary is the user's and will change.
 - `items` — id, user_id, name, description, category_id, **quantity** (int, default 1 — a
@@ -710,6 +710,19 @@ the server re-renders it, so it is genuinely disposable.
 Worth knowing: **`FileProvider` cannot be exercised under Robolectric here** — `getUriForFile`
 fails to resolve every configured root, including ones older than this change — so `stagingDir`
 is `internal` and the location is asserted directly instead.
+
+**"Baby" added to the seeded categories (#29).** Owner-requested. A household's baby things are a
+domain of their own — cot sheets, a monitor, bottles, a bouncer, as much as sleepsuits — and they
+leave the house together when they leave at all.
+The thing worth knowing: **adding a name to `DEFAULT_CATEGORIES` reaches new accounts and nobody
+else**, because the seed is written once at first login and never revisited. On a single-household
+app that means it reaches nobody. So a new seed name is always two changes — the tuple and a data
+migration (`0004`) back-filling existing users. Appended at the end of each user's own ordering
+rather than slotted in (renumbering would rewrite an order they may have arranged), idempotent and
+case-insensitive (`uq_categories_user_name` would raise on a second pass, and "baby" typed by hand
+must not become a second row), and the downgrade only removes rows nothing was filed under.
+The test DB migrates to head before any user exists, so the back-fill is a no-op there — the
+statement is a module-level constant so the tests can run it directly against real Postgres.
 
 ---
 
