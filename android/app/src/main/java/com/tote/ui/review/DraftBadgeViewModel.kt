@@ -8,9 +8,11 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
@@ -34,6 +36,16 @@ class DraftBadgeViewModel @Inject constructor(
 
     private val _pending = MutableStateFlow(0)
     val pending: StateFlow<Int> = _pending.asStateFlow()
+
+    /**
+     * Captures stuck on this phone, for the Catalogue tab.
+     *
+     * Two badges meaning two different things: Review counts drafts waiting on a decision from
+     * you; Catalogue counts uploads that cannot proceed without one. Both halves of the loop can
+     * silently stall, and only one of them was ever visible.
+     */
+    val stuck: StateFlow<Int> = queue.stuckCount
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     init {
         viewModelScope.launch {

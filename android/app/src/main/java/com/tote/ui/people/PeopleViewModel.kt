@@ -31,6 +31,9 @@ class PeopleViewModel @Inject constructor(
     private val _state = MutableStateFlow<UiState<List<PersonDto>>>(UiState.Loading)
     val state: StateFlow<UiState<List<PersonDto>>> = _state.asStateFlow()
 
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
     private val _create = MutableStateFlow<UiState<Unit>>(UiState.Idle)
     val create: StateFlow<UiState<Unit>> = _create.asStateFlow()
 
@@ -40,9 +43,17 @@ class PeopleViewModel @Inject constructor(
 
     fun refresh() {
         viewModelScope.launch {
+            _refreshing.value = true
             runCatching { api.people() }
                 .onSuccess { _state.value = UiState.Success(it) }
-                .onFailure { _state.value = UiState.Error(ApiErrors.message(it, "Couldn't load people.")) }
+                .onFailure {
+                    // Keep what is on screen if there is anything: a failed re-poll should not
+                    // wipe a list someone is reading. Only a first load has nothing to protect.
+                    if (_state.value !is UiState.Success) {
+                        _state.value = UiState.Error(ApiErrors.message(it, "Couldn't load people."))
+                    }
+                }
+            _refreshing.value = false
         }
     }
 

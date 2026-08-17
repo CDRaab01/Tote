@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material3.AlertDialog
@@ -38,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -53,6 +55,7 @@ import com.tote.nfc.NfcWriteSession
 import com.tote.nfc.WriteState
 import com.tote.nfc.hasNfc
 import com.tote.ui.components.HazardRule
+import com.tote.ui.components.DateField
 import com.tote.ui.components.ItemThumbnail
 import com.tote.ui.components.PickerDialog
 import com.tote.ui.components.PickerField
@@ -536,6 +539,9 @@ private fun AddItemDialog(onDismiss: () -> Unit, onAdd: (String, Int) -> Unit) {
                     onValueChange = { qty = it.filter(Char::isDigit).take(3) },
                     label = { Text("Quantity") },
                     singleLine = true,
+                    // A number field showed a full QWERTY keyboard and silently dropped every
+                    // non-digit as you typed — which reads as the keyboard being broken.
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
                 Spacer(Modifier.height(ToteTheme.spacing.sm))
                 // Quantity exists so "4× ornament box" is one row. Said here because the
@@ -590,12 +596,11 @@ private fun LendDialog(
                         onClick = { showPeoplePicker = true },
                     )
                     Spacer(Modifier.height(ToteTheme.spacing.md))
-                    OutlinedTextField(
+                    DateField(
                         value = due,
                         onValueChange = { due = it },
-                        label = { Text("Back by (optional)") },
-                        placeholder = { Text("2026-09-30") },
-                        singleLine = true,
+                        label = "Back by (optional)",
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(ToteTheme.spacing.sm))
                     Caption(text = "With a date, it nags on the day after. Without one, it just remembers who has it.")

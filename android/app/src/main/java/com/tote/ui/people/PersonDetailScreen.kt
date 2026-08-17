@@ -1,6 +1,7 @@
 package com.tote.ui.people
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.filled.Checkroom
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -45,6 +47,7 @@ import com.tote.ui.components.HazardRule
 import com.tote.ui.components.ItemThumbnail
 import com.tote.ui.components.PickerDialog
 import com.tote.ui.components.PickerOption
+import com.tote.ui.components.RefreshOnResume
 import com.tote.ui.components.ToteButton
 import com.tote.ui.theme.ToteTheme
 import design.pulse.ui.components.Caption
@@ -60,6 +63,9 @@ fun PersonDetailScreen(
     viewModel: PersonDetailViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    RefreshOnResume(viewModel::load)
+
     PersonDetailContent(
         state = state,
         onOpenTote = onOpenTote,
@@ -109,6 +115,15 @@ fun PersonDetailContent(
                     Spacer(Modifier.height(spacing.md))
                     HazardRule()
                 }
+            }
+
+            if (state.loading && state.person == null) {
+                item {
+                    Box(Modifier.fillMaxWidth().padding(spacing.xl), Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                }
+                return@LazyColumn
             }
 
             if (state.error != null) {

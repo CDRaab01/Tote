@@ -11,12 +11,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -25,12 +28,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.data.remote.ItemDto
 import com.tote.ui.components.HazardRule
+import com.tote.ui.components.RefreshOnResume
 import com.tote.ui.components.ItemThumbnail
 import com.tote.ui.theme.ToteTheme
 import design.pulse.ui.components.Caption
@@ -51,6 +56,11 @@ fun SearchScreen(
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    // Find's counters and the overdue card were frozen at whatever they said the first time the
+    // tab was opened, for the life of the process.
+    RefreshOnResume(viewModel::refresh)
+
     SearchContent(
         state = state,
         onQueryChange = viewModel::onQueryChange,
@@ -115,9 +125,25 @@ fun SearchContent(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    // Clearing used to mean holding backspace through "ratchet set".
+                    trailingIcon = {
+                        if (state.query.isNotEmpty()) {
+                            IconButton(onClick = { onQueryChange("") }) {
+                                Icon(Icons.Filled.Close, contentDescription = "Clear")
+                            }
+                        }
+                    },
                     label = { Text("Search everything") },
                     placeholder = { Text("ratchet set, 4T, Zelda…") },
+                    // The keyboard's action key says Search rather than newline-into-a-single-
+                    // line-field, which does nothing.
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 )
+                // `searching` was tracked and never rendered: a slow attic query looked exactly
+                // like a frozen screen still showing the previous results.
+                if (state.searching) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
             }
 
             // The attention card, above the stats and below the search box — idle only, for the

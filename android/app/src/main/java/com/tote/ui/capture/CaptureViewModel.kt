@@ -3,6 +3,7 @@ package com.tote.ui.capture
 import android.app.Application
 import android.net.Uri
 import androidx.core.content.FileProvider
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkManager
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** The server's cap, mirrored so the UI can stop someone before the upload is rejected. */
@@ -30,7 +32,8 @@ class CaptureViewModel @Inject constructor(
     private val app: Application,
     private val repository: CaptureQueueRepository,
     private val feedback: FeedbackBus,
-    catalogDao: CatalogDao,
+    private val savedState: SavedStateHandle,
+    private val catalogDao: CatalogDao,
 ) : ViewModel() {
 
     /** Photos shot for the item currently in hand — not yet a queue row. */
@@ -49,15 +52,36 @@ class CaptureViewModel @Inject constructor(
     val totes: StateFlow<List<CachedTote>> = catalogDao.totes()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** The bin being filled. Chosen once and remembered across captures — that is what makes
-     *  this a batch flow rather than fifty identical dropdown taps at review time. */
+    /**
+     * The bin being filled. Chosen once and remembered across captures — that is what makes this
+     * a batch flow rather than fifty identical picker taps at review time.
+     *
+     * Persisted through `SavedStateHandle`, because the exact situation the queue exists for —
+     * shooting a bin's worth in a garage with the app backgrounded between shots — is also when
+     * Android kills the process. Losing the destination there silently reset it to "Decide
+     * later", and the cost showed up at review as one picker tap per item: precisely what
+     * choosing it up front was meant to avoid.
+     */
     private val _destination = MutableStateFlow<CachedTote?>(null)
     val destination: StateFlow<CachedTote?> = _destination
 
     private var pendingCameraTarget: File? = null
 
+    init {
+        // Restored by id against the cached bins, not stored whole: a CachedTote snapshot would
+        // go stale, and the id is the only part that is stable.
+        val savedId: String? = savedState[DESTINATION_KEY]
+        if (savedId != null) {
+            viewModelScope.launch {
+                _destination.value = totes.value.firstOrNull { it.id == savedId }
+                    ?: catalogDao.totes().first().firstOrNull { it.id == savedId }
+            }
+        }
+    }
+
     fun chooseDestination(tote: CachedTote?) {
         _destination.value = tote
+        savedState[DESTINATION_KEY] = tote?.id
     }
 
     /** A fresh camera output target under cache/captures/; returns its content Uri. */
@@ -137,5 +161,9 @@ class CaptureViewModel @Inject constructor(
 
     fun discard(id: String) {
         viewModelScope.launch { repository.discard(id) }
+    }
+
+    private companion object {
+        const val DESTINATION_KEY = "capture_destination_id"
     }
 }

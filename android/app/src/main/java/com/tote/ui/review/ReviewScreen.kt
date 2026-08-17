@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -209,7 +210,15 @@ fun ReviewContent(
                         onRetry = onRetry,
                     )
                 }
-            } else if (draft == null && !state.loading) {
+            } else if (draft == null && state.loading) {
+                // Neither branch matched while loading, so the screen was a hero panel over
+                // empty space with no spinner — indistinguishable from an empty stack.
+                item {
+                    Box(Modifier.fillMaxWidth().padding(spacing.xl), Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                }
+            } else if (draft == null) {
                 item {
                     Column {
                         EmptyState(
