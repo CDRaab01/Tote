@@ -80,6 +80,26 @@ object ToteMigrations {
     }
 
     /**
+     * v4 — what the person said the item is, carried on the queue row (name-first capture).
+     *
+     * Three plain `ADD COLUMN`s on `capture_queue`, which is the one table in this database
+     * whose contents exist nowhere else: a queued row points at photographs of an object that
+     * is already back in a taped bin. So drop-and-recreate is not available here even in
+     * principle, and additive is not a convenience — it is the only shape allowed.
+     *
+     * `describe` is NOT NULL with a default, because SQLite cannot add a NOT NULL column
+     * without one and because the honest value for every row already in the queue is "nobody
+     * asked for a description".
+     */
+    private val MIGRATION_3_4 = Migration(3, 4) { db ->
+        db.execSQL("ALTER TABLE `capture_queue` ADD COLUMN `name` TEXT")
+        db.execSQL("ALTER TABLE `capture_queue` ADD COLUMN `categoryId` TEXT")
+        db.execSQL(
+            "ALTER TABLE `capture_queue` ADD COLUMN `describe` INTEGER NOT NULL DEFAULT 0"
+        )
+    }
+
+    /**
      * Passed to `Room.databaseBuilder(...).addMigrations(*ALL)`.
      *
      * Order does not matter to Room — it finds a path through the graph — but keeping them in
@@ -88,5 +108,6 @@ object ToteMigrations {
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_1_2,
         MIGRATION_2_3,
+        MIGRATION_3_4,
     )
 }

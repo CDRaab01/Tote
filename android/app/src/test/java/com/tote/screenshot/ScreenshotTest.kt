@@ -214,6 +214,31 @@ class ScreenshotTest {
         )
     }
 
+
+    /**
+     * Name-first capture: the person says what it is, so the model is never asked.
+     *
+     * The sticky name is the whole feature — twenty sleepsuits should be twenty shutter presses —
+     * so the copy under the field has to make "it stays until you change it" obvious, or a
+     * persisting value reads as a bug rather than a convenience.
+     */
+    @Test fun capture_named_dark() = capture("capture_named_dark", dark = true) {
+        CaptureContent(
+            CaptureUiState(
+                totes = captureTotes,
+                destination = captureTotes.first(),
+                itemName = "Sleepsuit",
+                categories = listOf(
+                    CategoryDto(id = "c1", name = "Baby"),
+                    CategoryDto(id = "c2", name = "Clothing"),
+                ),
+                categoryId = "c1",
+                describe = true,
+            ),
+            {}, {}, {}, {}, {}, {}, {},
+        )
+    }
+
     // A queue mid-session, with the three states that need to look different at a glance:
     // waiting (normal), rejected (error), and timed-out (attention — a DIFFERENT recovery).
     private val busyQueue = CaptureUiState(

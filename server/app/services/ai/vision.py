@@ -12,6 +12,11 @@ import httpx
 from fastapi import HTTPException, status
 
 from app.config import settings
+from app.services.ai.describe_prompts import (
+    DescribeDraft,
+    build_describe_messages,
+    parse_describe,
+)
 from app.services.ai.identify_prompts import (
     IdentifyDraft,
     build_identify_messages,
@@ -114,6 +119,26 @@ async def identify_item(
     if draft is None:
         return IdentifyDraft(confidence="low")
     return draft
+
+
+async def describe_item(
+    image_data_urls: list[str],
+    name: str,
+    client: httpx.AsyncClient | None = None,
+) -> DescribeDraft | None:
+    """Say what THIS one looks like, given that we already know what it is.
+
+    Only reached when the person named the item themselves, which is what makes the prompt narrow
+    enough to be worth asking: it is not identifying anything, it is looking for the detail that
+    tells one sleepsuit from another.
+
+    Transport failures RAISE, like the other two. The caller decides whether that is fatal, and in
+    the scan pipeline it deliberately is not — a description is the most disposable thing the
+    pipeline produces, and losing it must never cost the size read that follows.
+    """
+    messages = build_describe_messages(image_data_urls, name)
+    raw_text = await _chat_vision(messages, client)
+    return parse_describe(raw_text)
 
 
 async def read_label(

@@ -30,6 +30,8 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
@@ -53,6 +55,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.tote.data.local.CachedTote
 import com.tote.data.local.CaptureQueueEntity
+import com.tote.data.remote.CategoryDto
 import com.tote.ui.components.HazardRule
 import com.tote.ui.components.PickerDialog
 import com.tote.ui.components.PickerField
@@ -83,6 +86,10 @@ fun CaptureScreen(
     val queue by viewModel.queue.collectAsStateWithLifecycle()
     val totes by viewModel.totes.collectAsStateWithLifecycle()
     val destination by viewModel.destination.collectAsStateWithLifecycle()
+    val itemName by viewModel.itemName.collectAsStateWithLifecycle()
+    val categories by viewModel.categories.collectAsStateWithLifecycle()
+    val categoryId by viewModel.categoryId.collectAsStateWithLifecycle()
+    val describe by viewModel.describe.collectAsStateWithLifecycle()
     var confirmingDiscard by remember { mutableStateOf<String?>(null) }
 
     val cameraLauncher = rememberLauncherForActivityResult(
@@ -108,6 +115,10 @@ fun CaptureScreen(
             queue = queue,
             totes = totes,
             destination = destination,
+            itemName = itemName,
+            categories = categories,
+            categoryId = categoryId,
+            describe = describe,
         ),
         onSnap = {
             val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
@@ -118,6 +129,9 @@ fun CaptureScreen(
         onPickGallery = { galleryLauncher.launch("image/*") },
         onRemoveShot = viewModel::removeShot,
         onChooseDestination = viewModel::chooseDestination,
+        onItemName = viewModel::setItemName,
+        onChooseCategory = viewModel::chooseCategory,
+        onDescribe = viewModel::setDescribe,
         onQueue = viewModel::queueItem,
         onRetry = viewModel::retry,
         onDiscard = { confirmingDiscard = it },
@@ -155,6 +169,11 @@ data class CaptureUiState(
     val queue: List<CaptureQueueEntity> = emptyList(),
     val totes: List<CachedTote> = emptyList(),
     val destination: CachedTote? = null,
+    /** Sticky across shots — see [com.tote.ui.capture.CaptureViewModel.itemName]. */
+    val itemName: String = "",
+    val categories: List<CategoryDto> = emptyList(),
+    val categoryId: String? = null,
+    val describe: Boolean = false,
 )
 
 /** Stateless body — renderable in a screenshot test without Hilt, a camera or a network. */
@@ -169,10 +188,14 @@ fun CaptureContent(
     onRetry: (String) -> Unit,
     onDiscard: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onItemName: (String) -> Unit = {},
+    onChooseCategory: (String?) -> Unit = {},
+    onDescribe: (Boolean) -> Unit = {},
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
     var showDestinationPicker by remember { mutableStateOf(false) }
+    var showCategoryPicker by remember { mutableStateOf(false) }
     val full = state.shots.size >= MAX_PHOTOS_PER_ITEM
 
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -216,6 +239,77 @@ fun CaptureContent(
                     )
                 }
             }
+            // ── What it is ───────────────────────────────────────────────────
+            item {
+                SectionHeader(label = "What you're shooting", channel = colors.provenance.base)
+            }
+            item {
+                OutlinedTextField(
+                    value = state.itemName,
+                    onValueChange = onItemName,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Name it yourself (optional)") },
+                    placeholder = { Text("Sleepsuit") },
+                    trailingIcon = {
+                        if (state.itemName.isNotEmpty()) {
+                            IconButton(onClick = { onItemName("") }) {
+                                Icon(Icons.Filled.Close, contentDescription = "Clear")
+                            }
+                        }
+                    },
+                )
+            }
+            item {
+                // Said plainly, because "it stays until you change it" is the entire feature and
+                // an empty-looking field that silently persists would be alarming rather than
+                // useful.
+                //
+                // Body text, not Caption: Pulse's caption is upper-cased and letter-spaced, which
+                // is right for a label and wrong for a sentence — three lines of it shouts, and
+                // this is the one explanation the feature depends on being read calmly.
+                Text(
+                    text = if (state.itemName.isBlank()) {
+                        "Leave it blank and the photo is identified for you. Name it and that " +
+                            "step is skipped — faster, and the size on the tag reads better."
+                    } else {
+                        "Every shot is filed as this until you change it."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (state.itemName.isNotBlank()) {
+                item {
+                    PickerField(
+                        label = "Category",
+                        selected = state.categories.firstOrNull { it.id == state.categoryId }?.name,
+                        placeholder = "No category",
+                        onClick = { showCategoryPicker = true },
+                    )
+                }
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(checked = state.describe, onCheckedChange = onDescribe)
+                        Spacer(Modifier.width(spacing.md))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Let it write a description",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            // Not decoration: search runs over name, description and notes, so
+                            // this is the difference between findable by "ducks" and findable
+                            // only by "sleepsuit". It costs one extra call per item.
+                            Text(
+                                "Adds a line about this one, and makes it searchable",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+
             // ── The item in hand ─────────────────────────────────────────────
             item {
                 SectionHeader(
@@ -237,8 +331,19 @@ fun CaptureContent(
                     EmptyState(
                         icon = Icons.Outlined.AddAPhoto,
                         title = "No shots yet",
-                        subtitle = "One item at a time. Extra angles — and a clothing tag — give " +
-                            "the identification more to work with. Up to $MAX_PHOTOS_PER_ITEM.",
+                        // Two different reasons to shoot the tag, depending on which path this
+                        // capture is taking. Named, there is no identification to help — but the
+                        // label pass is the ONLY thing the model still does, so the tag matters
+                        // more, not less. Saying "give the identification more to work with"
+                        // over a named capture would describe a call that is not going to happen.
+                        subtitle = if (state.itemName.isBlank()) {
+                            "One item at a time. Extra angles — and a clothing tag — give the " +
+                                "identification more to work with. Up to $MAX_PHOTOS_PER_ITEM."
+                        } else {
+                            "One item at a time. Include the clothing tag — reading the size off " +
+                                "it is the only thing left for the model to do. " +
+                                "Up to $MAX_PHOTOS_PER_ITEM."
+                        },
                     )
                 } else if (state.shots.isEmpty()) {
                     Caption(text = "Next item — up to $MAX_PHOTOS_PER_ITEM photos.")
@@ -341,6 +446,21 @@ fun CaptureContent(
             // where it goes at review, which is what the queue is for.
             noneLabel = "Decide later",
             searchHint = "Search bins",
+        )
+    }
+
+    if (showCategoryPicker) {
+        PickerDialog(
+            title = "Category",
+            options = state.categories.map { PickerOption(id = it.id, label = it.name) },
+            selectedId = state.categoryId,
+            onPick = {
+                onChooseCategory(it)
+                showCategoryPicker = false
+            },
+            onDismiss = { showCategoryPicker = false },
+            noneLabel = "No category",
+            emptyMessage = "No categories yet.",
         )
     }
 }

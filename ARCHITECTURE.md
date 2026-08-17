@@ -1384,6 +1384,64 @@ department there is nothing in the string to tell them apart, so `parse_size` re
 to the bin, a wrong ordinal sends them to the wrong bin twice. A department resolves it (`8` under
 `girls` is a youth 8) because that is evidence, not a guess.
 
+## Name-first capture: the question you do not ask
+
+The scan makes two vision calls for a garment — the omnibus `identify_item` and the narrow
+`read_label` — and the split is measured, not aesthetic (see below). Name-first takes the same
+logic one step further: **no question at all beats a narrow question nobody needed to ask.**
+
+When `POST /items/scan` carries a `name`, identify is skipped entirely. Three things follow, and
+the third is the one that is not obvious:
+
+1. **It is the slow half.** Identify is the omnibus call; dropping it roughly halves a scan
+   measured at 35.5 s for one photo.
+2. **Its answer would have been overwritten**, so every wrong guess was a correction chore in
+   review and nothing else.
+3. **Identify gates the label pass.** `looks_like_clothing` reads the name and category *identify
+   chose*, so a bad guess does not merely cost a correction — it can silently suppress the size
+   read, which is the one vision output measured to work well. A human-supplied name and category
+   make that gate trustworthy instead of circular. The feature is therefore faster **and** more
+   accurate, which is rare enough to be worth stating plainly.
+
+`category_id` rides along for the same reason, and `_read_the_label` resolves it to a name so the
+gate's one rule stays in one place. Both paths remain available: leave the name out and the
+endpoint behaves exactly as it always has. Whitespace is not an answer — a blank falls back to
+identifying.
+
+**The named path must not skip the housekeeping the identified path does.** It returns early, and
+early returns are exactly the shape that loses `draft_tote_id` and `processed_at`. There is a test
+pinning that specifically.
+
+### The description is optional, and it is not decoration
+
+`items.search_vector` is a generated column over **name, description and notes**. So "the one with
+the ducks on it" finds nothing unless something wrote "ducks", and a photographed item with a bare
+name is close to unfindable by any words except its own.
+
+That is the argument for `describe_item` — a third narrow prompt, told what the object is and
+asked only what distinguishes *this* one. It is the same argument in reverse that keeps it
+**off by default**: text that feeds a search index must not contain things the photo does not
+show, because a hallucinated detail is not a cosmetic blemish, it is a false hit on a search
+someone trusts. So the prompt is forbidden to re-identify, told to prefer null over padding, and
+the whole call is opt-in per capture run.
+
+It gets **its own `except`**, like the label pass and for the same reason: a description is the
+most disposable thing this pipeline produces and must never take the size read with it. A failed
+describe is not a scan failure and is not reported as one.
+
+### On the client
+
+The name, the category and the describe toggle are **sticky across shots** and persisted through
+`SavedStateHandle` — the batch this exists for is twenty sleepsuits in a garage with the app
+backgrounded between shots, and typing the name twenty times is precisely the per-item work the
+feature removes. They ride on the queue row (Room **v4**, three additive columns on
+`capture_queue`), because the row is what survives to upload time.
+
+The field holds what was typed, spaces and all; **the trim happens at the repository boundary**,
+which is also where a blank becomes a null rather than an empty string. `""` stored on the row
+would reach the server as "the person named it" and file an item called nothing at all, with
+identification skipped — named by no one.
+
 ## The label pass
 ### The gate is only as good as the category list
 

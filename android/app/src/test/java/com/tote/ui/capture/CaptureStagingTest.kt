@@ -5,10 +5,12 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.test.core.app.ApplicationProvider
 import com.tote.data.CaptureQueueRepository
 import com.tote.data.local.CatalogDao
+import com.tote.data.remote.ApiService
 import com.tote.util.FeedbackBus
 import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -28,6 +30,7 @@ import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
+import org.mockito.kotlin.nullableArgumentCaptor
 import org.mockito.kotlin.stub
 import org.mockito.kotlin.verify
 import org.robolectric.RobolectricTestRunner
@@ -52,6 +55,7 @@ class CaptureStagingTest {
     private lateinit var app: Application
     private lateinit var repository: CaptureQueueRepository
     private lateinit var dao: CatalogDao
+    private lateinit var api: ApiService
 
     @Before
     fun setUp() {
@@ -61,13 +65,15 @@ class CaptureStagingTest {
         repository.stub { on { queue } doReturn MutableStateFlow(emptyList()) }
         dao = mock()
         dao.stub { on { totes() } doReturn flowOf(emptyList()) }
+        api = mock()
+        api.stub { onBlocking { categories() } doReturn emptyList() }
     }
 
     @After
     fun tearDown() = Dispatchers.resetMain()
 
     private fun vm(savedState: SavedStateHandle = SavedStateHandle()) =
-        CaptureViewModel(app, repository, FeedbackBus(), savedState, dao)
+        CaptureViewModel(app, repository, FeedbackBus(), savedState, dao, api)
 
     private fun stage(name: String, content: String = "jpeg"): File =
         File(app.filesDir, "captures").apply { mkdirs() }
@@ -100,7 +106,9 @@ class CaptureStagingTest {
 
         // Survived, and queued what it could rather than dying with the batch in its hands.
         val photos = argumentCaptor<List<File>>()
-        verify(repository).enqueue(photos.capture(), anyOrNull(), anyOrNull())
+        verify(repository).enqueue(
+            photos.capture(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), any<Boolean>()
+        )
         assertEquals(1, photos.firstValue.size)
         assertTrue(photos.firstValue.first().readText() == "jpeg")
     }
@@ -119,7 +127,9 @@ class CaptureStagingTest {
         // A queue row pointing at photos that do not exist claims work nobody can do and that
         // cannot be reconstructed — worse than no row. Better to say it plainly and let the
         // person shoot again while the bin is still open in front of them.
-        verify(repository, never()).enqueue(any(), anyOrNull(), anyOrNull())
+        verify(repository, never()).enqueue(
+            any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), any<Boolean>()
+        )
     }
 
     @Test
@@ -149,4 +159,41 @@ class CaptureStagingTest {
         assertFalse(orphan.exists())
         assertTrue(kept.exists())
     }
+
+    @Test
+    fun `the name, category and describe choice ride along and STAY for the next shot`() =
+        runTest {
+            val savedState = SavedStateHandle()
+            val model = vm(savedState)
+            model.setItemName("  Sleepsuit  ")
+            model.chooseCategory("cat-baby")
+            model.setDescribe(true)
+            savedState["capture_shot_paths"] = listOf(stage("one.jpg").absolutePath)
+            val again = vm(savedState)
+
+            again.queueItem()
+            dispatcher.scheduler.advanceUntilIdle()
+
+            val name = argumentCaptor<String>()
+            val category = argumentCaptor<String>()
+            val describe = argumentCaptor<Boolean>()
+            verify(repository).enqueue(
+                any(), anyOrNull(), anyOrNull(), name.capture(), category.capture(),
+                describe.capture(),
+            )
+            // Passed through as typed; the repository owns the trim, and its own test asserts
+            // that a blank never becomes a stored name.
+            assertEquals("  Sleepsuit  ", name.firstValue)
+            assertEquals("cat-baby", category.firstValue)
+            assertEquals(true, describe.firstValue)
+
+            // Sticky is the whole feature: twenty sleepsuits should be twenty shutter presses,
+            // and it has to survive the process death this flow is built around.
+            // Verbatim in the field: trimming as someone types fights them mid-word. The trim
+            // belongs at the boundary, which is where the repository does it.
+            assertEquals("  Sleepsuit  ", again.itemName.value)
+            assertEquals("cat-baby", again.categoryId.value)
+            assertEquals(true, again.describe.value)
+        }
+
 }

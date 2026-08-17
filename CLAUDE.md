@@ -264,7 +264,8 @@ holding in both arms; a QR on the same card costs nothing and reads from four fe
   **current_tote_id** (nullable — null means not in any tote right now), `out_reason`
   (nullable), `out_since` (nullable), `expected_back` (nullable), value_est (nullable),
   acquired_at (nullable), notes, **`search_vector`** (tsvector, GIN-indexed, generated from
-  name + description + category + tags), created_at, updated_at.
+  name + description + notes — NOT category or tags, whatever an older draft of this file
+  said), created_at, updated_at.
 - `item_photos` — id, item_id, order, original_path, cleaned_path (nullable until
   processed), role (`front|back|detail|tag`, nullable), created_at. Binaries live on a
   server volume (`/data/photos`, named volume, survives redeploys); the DB stores paths
@@ -738,6 +739,28 @@ it belongs in the hints. The close calls go toward asking — a baby bin holds a
 steriliser with no label between them, one wasted model call each, against one missed sleepsuit
 costing a trip to the attic.
 
+
+**Name-first capture (#31).** Owner-driven: the AI was "often wrong" on a workflow that is almost
+entirely photograph-and-file, so every draft was a correction chore. The fix is to stop asking.
+**When `POST /items/scan` carries a `name`, identify is skipped entirely.** Three consequences,
+and the third is the one that is not obvious: it is the slow half of the scan (35.5 s measured for
+one photo); its answer was going to be overwritten anyway; and **identify's answer gates the label
+pass**, so a wrong guess could silently suppress the size read — the one vision output measured to
+work well. Supplying the name and category makes that gate read the person's own vocabulary. The
+feature is faster *and* more accurate, which is rare.
+An optional third narrow prompt, `describe_item`, writes a line about the item when asked. It is
+**off by default and opt-in per run**, because `items.search_vector` is generated over name,
+description and notes — which is both the reason to want it (nothing is findable by "ducks" unless
+something wrote "ducks") and the reason to be careful (a hallucinated detail becomes a false
+search hit). Its own `except`, like the label pass: a description must never take the size read
+with it.
+Client side the name, category and describe toggle are **sticky across shots** and survive process
+death, riding on the queue row — Room **v4**, three additive columns on `capture_queue`. Twenty
+sleepsuits should be twenty shutter presses. The trim happens at the repository boundary, where a
+blank becomes null rather than `""` — which would reach the server as "the person named it" and
+file an item named by nobody.
+Also corrected here: §4 claimed `search_vector` covers category and tags. It is name, description
+and notes — checked against migration 0001, not the docs.
 ---
 
 ## 9. Testing & CI
