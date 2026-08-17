@@ -36,9 +36,45 @@ class CaptureViewModel @Inject constructor(
     private val catalogDao: CatalogDao,
 ) : ViewModel() {
 
-    /** Photos shot for the item currently in hand — not yet a queue row. */
-    private val _shots = MutableStateFlow<List<File>>(emptyList())
+    /**
+     * Where photos live between the shutter and the Queue tap.
+     *
+     * `filesDir`, **never `cacheDir`**. Android empties cache directories without warning when
+     * storage runs low, and it did: on a phone at 100% full the staged JPEGs were deleted out
+     * from under the app between shooting and queueing, and `queueItem`'s copy then threw
+     * `NoSuchFileException` on the main thread and killed the app mid-batch — taking every other
+     * shot in hand with it. These files are the only copy of a photograph until the server has
+     * them, which makes a directory the OS is allowed to reclaim the wrong home for them.
+     */
+    // `internal` so a test can assert which directory this is. That is the whole regression:
+    // FileProvider cannot be exercised under Robolectric here (it fails to resolve ANY of the
+    // configured roots, including ones that predate this change), so `newCameraTarget` cannot
+    // be called in a JVM test and the location has to be checked directly.
+    internal val stagingDir: File get() = File(app.filesDir, "captures").apply { mkdirs() }
+
+    /**
+     * Photos shot for the item currently in hand — not yet a queue row.
+     *
+     * Persisted as paths through `SavedStateHandle` for the same reason the destination is: the
+     * situation this flow exists for — shooting a bin's worth in a garage, app backgrounded
+     * between shots — is also when Android kills the process. Held only in memory, a half-shot
+     * item vanished silently and left its files orphaned on disk.
+     */
+    private val _shots = MutableStateFlow(restoreShots())
     val shots: StateFlow<List<File>> = _shots
+
+    private fun restoreShots(): List<File> =
+        savedState.get<List<String>>(SHOTS_KEY).orEmpty()
+            .map(::File)
+            // A path whose file is gone is not a photo. Dropped quietly here because this is a
+            // restore, not something the person just did — see `queueItem` for the case where
+            // it IS worth saying out loud.
+            .filter { it.exists() }
+
+    private fun setShots(shots: List<File>) {
+        _shots.value = shots
+        savedState[SHOTS_KEY] = shots.map(File::getAbsolutePath)
+    }
 
     val queue: StateFlow<List<CaptureQueueEntity>> = repository.queue
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -77,6 +113,21 @@ class CaptureViewModel @Inject constructor(
                     ?: catalogDao.totes().first().firstOrNull { it.id == savedId }
             }
         }
+        sweepOrphans()
+    }
+
+    /**
+     * Delete staged files nothing can reach any more.
+     *
+     * Staging is durable now, which means it no longer cleans itself. Anything in the directory
+     * that is not in the restored shot list is unreachable — the session that shot it is gone —
+     * and leaving it would grow the app's footprint forever on a phone already out of space.
+     */
+    private fun sweepOrphans() {
+        val keep = _shots.value.map(File::getAbsolutePath).toSet()
+        stagingDir.listFiles()?.forEach { file ->
+            if (file.absolutePath !in keep) file.delete()
+        }
     }
 
     fun chooseDestination(tote: CachedTote?) {
@@ -84,10 +135,9 @@ class CaptureViewModel @Inject constructor(
         savedState[DESTINATION_KEY] = tote?.id
     }
 
-    /** A fresh camera output target under cache/captures/; returns its content Uri. */
+    /** A fresh camera output target under files/captures/; returns its content Uri. */
     fun newCameraTarget(): Uri {
-        val dir = File(app.cacheDir, "captures").apply { mkdirs() }
-        val file = File(dir, "${UUID.randomUUID()}.jpg")
+        val file = File(stagingDir, "${UUID.randomUUID()}.jpg")
         pendingCameraTarget = file
         return FileProvider.getUriForFile(app, "com.tote.fileprovider", file)
     }
@@ -96,14 +146,14 @@ class CaptureViewModel @Inject constructor(
         val file = pendingCameraTarget
         pendingCameraTarget = null
         if (success && file != null && file.exists() && _shots.value.size < MAX_PHOTOS_PER_ITEM) {
-            _shots.value = _shots.value + file
+            setShots(_shots.value + file)
         }
     }
 
     fun onGalleryPicked(uris: List<Uri>) {
         val room = MAX_PHOTOS_PER_ITEM - _shots.value.size
         if (room <= 0) return
-        val dir = File(app.cacheDir, "captures").apply { mkdirs() }
+        val dir = stagingDir
         val copied = uris.take(room).mapNotNull { uri ->
             runCatching {
                 val file = File(dir, "${UUID.randomUUID()}.jpg")
@@ -113,11 +163,11 @@ class CaptureViewModel @Inject constructor(
                 file
             }.getOrNull()
         }
-        _shots.value = _shots.value + copied
+        setShots(_shots.value + copied)
     }
 
     fun removeShot(file: File) {
-        _shots.value = _shots.value - file
+        setShots(_shots.value - file)
         file.delete()
     }
 
@@ -126,29 +176,58 @@ class CaptureViewModel @Inject constructor(
         val shots = _shots.value
         if (shots.isEmpty()) return
         val tote = _destination.value
-        _shots.value = emptyList()
+        setShots(emptyList())
         viewModelScope.launch {
-            // Out of the cache and into durable storage BEFORE the row exists. A queue row
-            // pointing at a photo the OS has since evicted from the cache is worse than no row:
-            // it claims work that cannot be done and cannot be reconstructed.
+            // A staged file that has gone missing is skipped, never fatal. This used to be a
+            // bare `copyTo` over every shot, and one missing source threw NoSuchFileException
+            // straight up the main thread: the app died mid-batch and took the surviving photos
+            // with it. Staging is durable now, so this should not happen at all — but "should
+            // not" is no reason for the rest of the batch to be destroyed if it does.
+            val (present, missing) = shots.partition { it.exists() }
+            if (present.isEmpty()) {
+                feedback.say("Those photos are gone from this phone. Shoot them again.")
+                return@launch
+            }
+
+            // Into the queue's own directory BEFORE the row exists. A queue row pointing at a
+            // photo that is not there is worse than no row: it claims work that cannot be done
+            // and cannot be reconstructed.
             val id = UUID.randomUUID().toString()
             val dir = File(app.filesDir, "capture_queue/$id").apply { mkdirs() }
-            val moved = shots.mapIndexed { index, src ->
-                val dst = File(dir, "photo_$index.jpg")
-                src.copyTo(dst, overwrite = true)
-                src.delete()
-                dst
+            val moved = present.mapIndexedNotNull { index, src ->
+                runCatching {
+                    val dst = File(dir, "photo_$index.jpg")
+                    src.copyTo(dst, overwrite = true)
+                    src.delete()
+                    dst
+                }.getOrNull()
             }
+            if (moved.isEmpty()) {
+                feedback.say("Couldn't save those photos. Check the phone's storage.")
+                return@launch
+            }
+
             repository.enqueue(moved, toteId = tote?.id, toteCode = tote?.code)
             UploadWorker.kick(WorkManager.getInstance(app))
             // Say it landed. The only signal used to be the thumbnail strip vanishing and a
             // counter incrementing further down the scroll — likely off-screen mid-batch, on
             // the one screen used with a bin open and hands full.
+            val lost = shots.size - moved.size
             val photos = "${moved.size} photo${if (moved.size == 1) "" else "s"}"
-            feedback.say(
+            val queued =
                 if (tote != null) "Queued — $photos for ${tote.code}"
                 else "Queued — $photos, bin decided at review"
+            // Counted out loud rather than swallowed: a batch that quietly queues 3 of 5 leaves
+            // two holes in the catalogue that nobody knows to go back and fill.
+            feedback.say(
+                if (lost > 0) {
+                    "$queued · $lost couldn't be read and " +
+                        (if (lost == 1) "was" else "were") + " skipped"
+                } else {
+                    queued
+                }
             )
+            if (missing.isNotEmpty()) sweepOrphans()
         }
     }
 
@@ -165,5 +244,6 @@ class CaptureViewModel @Inject constructor(
 
     private companion object {
         const val DESTINATION_KEY = "capture_destination_id"
+        const val SHOTS_KEY = "capture_shot_paths"
     }
 }

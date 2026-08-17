@@ -694,6 +694,23 @@ said it did; the call passed a hardcoded null), `nfc_written_at` reaches the UI,
 bin navigates to it — the tag and the card live on the detail screen, and closing onto the list is
 how a bin ends up catalogued and unlabelled.
 
+
+**Crash fix — staged photos lived in a directory the OS deletes (#28).** Found on device with
+`adb logcat`: `NoSuchFileException` on `cache/captures/….jpg` from `CaptureViewModel.queueItem`,
+twice in eleven minutes, killing the app **mid-batch**. The trigger was the phone being at
+**100% storage** (1.2 GB free of 461 GB) — Android empties app cache directories without warning
+under storage pressure, and Tote staged every photo between the shutter and the Queue tap in
+`cacheDir/captures/`. `file_paths.xml` had stated the rule correctly all along and the staging
+directory was in a cache dir anyway.
+Staging moved to `filesDir/captures/`; a missing source is now skipped rather than fatal, with the
+skipped count said out loud (a batch that silently queues 3 of 5 leaves holes nobody knows to
+fill); and shots in hand survive process death via `SavedStateHandle`, with an orphan sweep on
+construction because durable staging does not clean itself. The card PDF stays in `cacheDir` —
+the server re-renders it, so it is genuinely disposable.
+Worth knowing: **`FileProvider` cannot be exercised under Robolectric here** — `getUriForFile`
+fails to resolve every configured root, including ones older than this change — so `stagingDir`
+is `internal` and the location is asserted directly instead.
+
 ---
 
 ## 9. Testing & CI
