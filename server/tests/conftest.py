@@ -90,26 +90,48 @@ async def auth_client(client):
     """A client already carrying a session for a fresh, isolated user.
 
     Every test gets its own user rather than sharing one. That is not tidiness: the schema's
-    uniqueness constraints are per-user (tote codes especially), so a shared user would make
-    tests order-dependent in a way that only shows up when someone adds the fifteenth one.
+    uniqueness constraints are per-household (tote codes especially), so a shared user would
+    make tests order-dependent in a way that only shows up when someone adds the fifteenth one.
+
+    The user comes with a **household of one**, exactly as `suite_auth` gives every real account
+    at first login. `client.household_id` is the scope every fixture-built row must carry.
     """
+    return await _make_auth_client(client)
+
+
+async def _make_auth_client(client):
     import uuid as _uuid
 
     from app.models.category import Category
     from app.models.user import User, UserSettings
     from app.security import create_access_token
+    from app.services.household_service import create_household
 
     email = f"t-{_uuid.uuid4().hex[:10]}@example.com"
     async with AsyncSessionLocal() as db:
         user = User(name="Test", email=email)
         db.add(user)
         await db.flush()
+        household = await create_household(db, user.id)
         db.add(UserSettings(user_id=user.id))
-        db.add(Category(user_id=user.id, name="Tools", sort_order=0))
+        db.add(Category(household_id=household.id, user_id=user.id, name="Tools", sort_order=0))
         await db.commit()
         await db.refresh(user)
-        user_id = user.id
+        user_id, household_id = user.id, household.id
 
     client.headers["Authorization"] = f"Bearer {create_access_token(str(user_id))}"
     client.user_id = user_id
+    client.household_id = household_id
     return client
+
+
+@pytest_asyncio.fixture
+async def other_client():
+    """A SECOND signed-in account with its own household.
+
+    Separate from `auth_client` because the sharing tests need two real catalogues to merge, and
+    because "another user's bin is a 404" is only a meaningful assertion when the other user is
+    genuinely somebody else rather than the same row queried twice.
+    """
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield await _make_auth_client(c)

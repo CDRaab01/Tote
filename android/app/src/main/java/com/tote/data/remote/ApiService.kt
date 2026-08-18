@@ -246,4 +246,45 @@ interface ApiService {
      */
     @GET("overdue")
     suspend fun overdue(): List<ItemDto>
+
+    // --- Household sharing ---------------------------------------------------------------
+
+    /** Who shares this catalogue. Always answers — a solo account is a household of one. */
+    @GET("household")
+    suspend fun household(): HouseholdDto
+
+    /** Invite another Tote user by email. Shares nothing until they accept. */
+    @POST("household/members")
+    suspend fun inviteToHousehold(@Body body: InviteRequest): HouseholdDto
+
+    /**
+     * The invitation waiting for this account, or null.
+     *
+     * The preview inside it is recomputed on every read, so re-fetching after renaming a bin is
+     * what clears a conflict — never cache the conflict list.
+     */
+    @GET("household/invite")
+    suspend fun myInvite(): InviteDto?
+
+    /**
+     * Accept, merging YOUR catalogue into theirs. **Irreversible.**
+     *
+     * 409s with `detail.conflicts` when both households use the same bin code or NFC tag; that is
+     * a real answer to show the person, not an error to retry.
+     */
+    @POST("household/accept")
+    suspend fun acceptInvite(): HouseholdDto
+
+    @POST("household/decline")
+    suspend fun declineInvite()
+
+    @POST("household/transfer/{userId}")
+    suspend fun transferOwnership(@Path("userId") userId: String): HouseholdDto
+
+    @DELETE("household/members/{userId}")
+    suspend fun removeMember(@Path("userId") userId: String)
+
+    /** Leave, forfeiting access to the shared catalogue. The bins stay with the household. */
+    @POST("household/leave")
+    suspend fun leaveHousehold()
 }

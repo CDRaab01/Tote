@@ -27,6 +27,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.ui.components.HazardRule
+import com.tote.ui.components.RefreshOnResume
 import com.tote.ui.components.ToteButton
 import com.tote.ui.theme.ToteTheme
 import design.pulse.ui.components.Caption
@@ -48,9 +49,37 @@ import design.pulse.ui.components.SectionHeader
  * and which server is it talking to.
  */
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
+fun SettingsScreen(
+    viewModel: SettingsViewModel = hiltViewModel(),
+    householdViewModel: HouseholdViewModel = hiltViewModel(),
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    SettingsContent(state = state, onSignOut = viewModel::signOut)
+    val household by householdViewModel.state.collectAsStateWithLifecycle()
+
+    // An invitation arrives while the app is closed, and its merge preview goes stale the moment
+    // either side renames a bin — so this re-reads on resume rather than only in `init`. Same
+    // rule as the three tabs in UX round PR 5, for the same reason.
+    RefreshOnResume(householdViewModel::refresh)
+
+    SettingsContent(
+        state = state,
+        household = household,
+        onSignOut = viewModel::signOut,
+        onInviteEmail = householdViewModel::onInviteEmail,
+        onInvite = householdViewModel::invite,
+        onAskAccept = householdViewModel::askAccept,
+        onDecline = householdViewModel::decline,
+        onRemove = householdViewModel::remove,
+        onTransfer = householdViewModel::transfer,
+        onAskLeave = householdViewModel::askLeave,
+    )
+
+    HouseholdDialogs(
+        state = household,
+        onAccept = householdViewModel::accept,
+        onLeave = householdViewModel::leave,
+        onDismiss = householdViewModel::dismissDialogs,
+    )
 }
 
 @Composable
@@ -58,6 +87,14 @@ fun SettingsContent(
     state: SettingsState,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier,
+    household: HouseholdState = HouseholdState(),
+    onInviteEmail: (String) -> Unit = {},
+    onInvite: () -> Unit = {},
+    onAskAccept: () -> Unit = {},
+    onDecline: () -> Unit = {},
+    onRemove: (String) -> Unit = {},
+    onTransfer: (String) -> Unit = {},
+    onAskLeave: () -> Unit = {},
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -95,6 +132,19 @@ fun SettingsContent(
                     Spacer(Modifier.height(spacing.sm))
                     SettingRow("Server", state.serverUrl)
                 }
+            }
+
+            item {
+                HouseholdSection(
+                    state = household,
+                    onInviteEmail = onInviteEmail,
+                    onInvite = onInvite,
+                    onAskAccept = onAskAccept,
+                    onDecline = onDecline,
+                    onRemove = onRemove,
+                    onTransfer = onTransfer,
+                    onAskLeave = onAskLeave,
+                )
             }
 
             item { SectionHeader(label = "Account", channel = colors.attention.base) }

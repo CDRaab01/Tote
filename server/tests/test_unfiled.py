@@ -144,13 +144,21 @@ async def test_an_unfiled_item_is_findable(auth_client):
 
 async def test_a_bin_that_is_not_yours_is_still_404(auth_client, raw_sql):
     """Optional does not mean unchecked."""
-    owner, tote = str(uuid.uuid4()), str(uuid.uuid4())
+    owner, elsewhere, tote = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
     await raw_sql(
         "INSERT INTO users (id, name, email) VALUES (:i, 'Other', :e)",
         i=owner,
         e=f"{owner[:8]}@example.com",
     )
-    await raw_sql("INSERT INTO totes (id, user_id, code) VALUES (:t, :u, 'ZZ9')", t=tote, u=owner)
+    await raw_sql(
+        "INSERT INTO households (id, owner_user_id) VALUES (:h, :u)", h=elsewhere, u=owner
+    )
+    await raw_sql(
+        "INSERT INTO totes (id, household_id, user_id, code) VALUES (:t, :h, :u, 'ZZ9')",
+        t=tote,
+        h=elsewhere,
+        u=owner,
+    )
 
     r = await auth_client.post(
         f"/drafts/{(await _draft(auth_client))['id']}/confirm",

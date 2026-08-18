@@ -90,8 +90,18 @@ data class ItemSheetState(
     val containers: List<ContainerDto> = emptyList(),
     val movements: List<MovementDto> = emptyList(),
     val historyLoaded: Boolean = false,
+    /**
+     * Member id -> display name, and **empty in a household of one**.
+     *
+     * Emptiness is the signal, not a separate flag: the history renders an actor only when it can
+     * name one, so a solo catalogue never grows a column of your own name repeated down the page.
+     */
+    val memberNames: Map<String, String> = emptyMap(),
     val busy: Boolean = false,
 ) {
+    /** Who did it, when that is worth saying — see [memberNames]. */
+    fun actorFor(userId: String?): String? = userId?.let { memberNames[it] }
+
     /** What a movement's tote id is called today — see [MovementDto]. */
     fun codeFor(toteId: String?): String? =
         toteId?.let { id -> bins.firstOrNull { it.id == id }?.code }
@@ -211,6 +221,18 @@ class ItemSheetViewModel @Inject constructor(
                     _state.value = _state.value.copy(movements = it, historyLoaded = true)
                 }
                 .onFailure { feedback.say(ApiErrors.message(it, "Couldn't load its history.")) }
+            // Fetched alongside rather than at construction: a name is only needed on the one
+            // face that shows it, and paying a round trip on every tap of an item row would
+            // charge everybody for the few who open the history. Silent on failure — a missing
+            // name costs a caption, not the history.
+            runCatching { repo.household() }
+                .getOrNull()
+                ?.takeIf { it.shared }
+                ?.let { household ->
+                    _state.value = _state.value.copy(
+                        memberNames = household.members.associate { it.userId to it.name }
+                    )
+                }
         }
     }
 

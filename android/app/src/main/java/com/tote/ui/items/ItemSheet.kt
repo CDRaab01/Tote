@@ -539,7 +539,11 @@ private fun HistoryFace(state: ItemSheetState, onMode: (SheetMode) -> Unit) {
                         movementLine(movement, state::codeFor),
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    Caption(text = movement.movedAt.take(10))
+                    Caption(
+                        text = state.actorFor(movement.movedByUserId)
+                            ?.let { "${'$'}{movement.movedAt.take(10)} · ${'$'}it" }
+                            ?: movement.movedAt.take(10)
+                    )
                     if (movement.note != null) {
                         Text(movement.note, style = MaterialTheme.typography.bodySmall)
                     }

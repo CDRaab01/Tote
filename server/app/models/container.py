@@ -38,8 +38,14 @@ class Container(Base):
     __tablename__ = "containers"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    # WHO MAY SEE THIS. The access check everywhere is `household_id == user.household_id`.
+    household_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    # WHO CREATED THIS — provenance only, never access. Nullable + SET NULL: a shared catalogue
+    # must survive the deletion of whichever member happened to enter the row.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
     # CASCADE, not SET NULL: a bag has no meaning outside the bin it is in. Its ITEMS survive —
     # `items.container_id` is SET NULL — so deleting a bin loses the grouping and never the

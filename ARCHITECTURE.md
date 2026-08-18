@@ -283,7 +283,7 @@ Two objects exist **only in the migration**, because SQLAlchemy cannot express t
 
 | Object | Why |
 |---|---|
-| `uq_totes_user_code_lower` | unique on `lower(code)` per user — the code is printed on an index card and written into an NFC tag, so "a14" and "A14" being two bins is a real-world ambiguity |
+| `uq_totes_household_code_lower` | unique on `lower(code)` per **household** (was per user until `0006`) — the code is printed on an index card and written into an NFC tag, so "a14" and "A14" being two bins is a real-world ambiguity |
 | `ix_items_search_vector` | GIN over a STORED generated `tsvector`; a btree cannot answer "does this document contain these lexemes" |
 
 Consequently **`conftest.py` builds the test schema with alembic, not `metadata.create_all`** —
@@ -298,6 +298,13 @@ table and a generated column cannot join, so category is a **filter**, not a sea
 `DEFAULT_CATEGORIES` is written **once, at first login**, and never looked at again. That is
 correct — the vocabulary belongs to the user and re-seeding would resurrect names they deleted —
 but it means adding a name to the tuple reaches new accounts and **nobody who already has one**.
+
+**Since `0006` the back-fill is per household, not per user.** A two-person household would
+otherwise get the seeded name twice — two rows a picker renders as one word, which is exactly the
+fragmentation the categories table exists to prevent, and the only place a seed addition can
+create a duplicate, because it is the one insert nobody types by hand.
+`tests/test_category_backfill.py` pins the household-shaped statement; it no longer executes
+`0004`'s own SQL, which is frozen history that runs before `household_id` exists.
 Which, on a single-household app, is nobody at all.
 
 So a new seed name is two changes: the tuple, and a data migration that back-fills every existing
@@ -487,9 +494,89 @@ scanning also reads as broken.
 
 ## Ownership
 
-Every route resolves rows scoped to the authenticated user and returns **404, not 403**, for
-someone else's — asserted across GET/PATCH/DELETE and `move`. 403 would let an authenticated user
-probe which ids exist and tell "not yours" apart from "does not exist".
+Every route resolves rows scoped to the caller's **household** and returns **404, not 403**, for
+another household's — asserted across GET/PATCH/DELETE and `move`. 403 would let an authenticated
+user probe which ids exist and tell "not yours" apart from "does not exist".
+
+**`household_id` is who may see a row. `user_id` is who created it. They are never the same
+question**, and the second must never be used for access: it is nullable with `ON DELETE SET
+NULL`, so a shared catalogue survives the deletion of whichever member happened to enter the row.
+
+## Household sharing
+
+Two people, one catalogue. Every user owns a **household of one** from first login
+(`services/suite_auth.py`), so there is no solo special case anywhere — the access check is always
+`household_id == user.household_id`, a single-column equality with the same query plan the
+per-user check had. `User.household_id` resolves through a `lazy="selectin"` relationship for the
+same reason `Item.apparel` has one: a lazy load under asyncio raises MissingGreenlet, and this is
+read on essentially every request.
+
+### Why this is not Cookbook's household
+
+Cookbook shares by **widening reads**: a recipe stays owned by its creator and co-members are
+allowed to see it. That works there because two "Groceries" lists are a nuisance and nothing more.
+
+It does not work here, because every namespace in Tote is attached to something you can hold. A
+tote `code` is written on an index card; an `nfc_tag_uid` **is** a specific sticker; a `Location`
+is a place in the house. Widening reads while leaving those unique per *user* would let two people
+own a bin "A14" and one physical tag claim two bins — the exact ambiguity `models/tote.py` was
+written to prevent, reintroduced by the act of sharing. `test_schema.py` pins it directly: two
+members of one household cannot both own `A14`.
+
+So the household **owns** the data. Migration `0006` moved `household_id` onto all six catalogue
+tables and rescoped all four uniqueness constraints onto it.
+
+### Accepting an invite is a merge, and there are two kinds of collision
+
+An invitee never joins from nowhere — they arrive with a catalogue of their own. Accepting moves
+their bins, items, people and ledger into the inviting household and deletes the one they came
+from. **There is no undo**, because after the merge the two people have been moving each other's
+things and there is no seam left to split along.
+
+| Collision | Answer | Why |
+|---|---|---|
+| Location / category **names** | folded silently into the target's row, FKs repointed | Two "Attic" rows, or the `DEFAULT_CATEGORIES` both accounts got at first login, are the *same real thing* recorded twice. Keeping both splits browse-by-location in half and puts one word twice in a filter. |
+| Tote **codes**, **NFC tags** | **refused** — 409 naming the codes | No rule the server could apply is right. Renaming silently makes a printed card lie about which box it is on; merging claims two real bins are one. A person has to walk to the attic. |
+
+**Merge what is a duplicate record; refuse what is a duplicate object.** The conflict list is
+recomputed on every read of `GET /household/invite` rather than stored at invite time — a cached
+refusal would keep refusing after somebody renamed the bin to clear it.
+
+### Consent, and leaving
+
+An invite is its own table (`household_invites`), not a member row carrying a `status` as in
+Cookbook: the invitee is already the active member of *their own* household and
+`household_members.user_id` is unique. Nothing is shared until they accept.
+
+**Leaving forfeits the catalogue** — the opposite of Cookbook, where leaving costs nothing because
+recipes were always yours. Here the household owns the bins, so walking out means walking out of
+the attic; the leaver gets a fresh empty household and nothing is copied back. The owner cannot
+leave a populated household at all (it would be ownerless); they transfer ownership first. Nothing
+ever deletes a populated `households` row — `owner_user_id` is `ON DELETE RESTRICT` precisely so a
+user deletion can never cascade into an entire household inventory.
+
+### What sharing added that did not exist before
+
+- **`movements.moved_by_user_id`.** "Who moved it" is a question that does not exist in a
+  one-person catalogue and is the first one asked in a shared one. Null on every row written
+  before `0006`, and rendered in the item sheet's history **only when the household is actually
+  shared** — otherwise it is your own name on every row.
+- **The overdue nudge fans out.** `POST /overdue/nudge` notifies every member's topic,
+  deduplicated (members with no override collapse to one deployment-topic push). Notifying only
+  whoever pressed the button means the drill is overdue for both of you and nags one of them.
+- **`nfc_uri_base` moved to `households`.** It was never read, so moving it was cheap — but
+  per-user it was wrong by construction: two members writing different bases produce tags that
+  open for one person and not the other, discoverable only by walking to the attic.
+- **The client empties its Room cache on any membership change**, rather than merely refreshing.
+  Membership alters the entire visible set, and Room is the offline read model — a departed member
+  would otherwise keep browsing bins they can no longer fetch, an attic that reads perfectly until
+  they tap something.
+
+### No per-object sharing, deliberately
+
+Cookbook layers a per-recipe `shared` opt-in on top of its household. There is no equivalent here
+and there should not be: a half-shared catalogue answers "where is the ratchet set" with
+"somewhere you cannot see", which is worse than not sharing at all. Membership is the only switch.
 
 ## Client
 

@@ -72,7 +72,7 @@ async def current_sizes(
 
 
 def fits_query(
-    user_id: uuid.UUID,
+    household_id: uuid.UUID,
     sizes: dict[str, PersonSize],
     tolerance: float = 1.0,
     garment_type: str | None = None,
@@ -112,7 +112,7 @@ def fits_query(
     # An INNER join: "what fits" is a question about things that have a size, so an item with no
     # apparel row is correctly absent rather than swept in by a null comparison.
     return (
-        item_query(user_id)
+        item_query(household_id)
         .join(ItemApparel, ItemApparel.item_id == Item.id)
         .where(or_(*clauses))
         .order_by(ItemApparel.size_ordinal, Item.name)

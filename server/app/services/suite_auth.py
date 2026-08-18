@@ -21,6 +21,7 @@ from app.models.category import DEFAULT_CATEGORIES, Category
 from app.models.user import User, UserSettings
 from app.schemas.auth import TokenResponse
 from app.security import create_access_token, create_refresh_token
+from app.services.household_service import create_household
 
 # Small in-process JWKS cache; refetched on TTL expiry or an unknown `kid` (key rotation).
 _JWKS_CACHE: dict = {"fetched_at": 0.0, "jwks": None}
@@ -87,15 +88,21 @@ async def suite_login(db: AsyncSession, suite_token: str) -> TokenResponse:
     user = result.scalar_one_or_none()
     if user is None:
         # First time in this app → link a fresh account by email. No password column exists
-        # (SSO-only); seed the per-user settings row AND the default categories alongside, so
-        # every reader has values to read and a brand-new account is immediately usable rather
-        # than presenting an empty category picker on the first item.
+        # (SSO-only); seed the household, the per-user settings row AND the default categories
+        # alongside, so every reader has values to read and a brand-new account is immediately
+        # usable rather than presenting an empty category picker on the first item.
         user = User(name=claims.get("name") or email.split("@")[0], email=email)
         db.add(user)
         await db.flush()
+        # A household of ONE, always — including for someone who will be invited into another
+        # one an hour later. It is what lets `user.household_id` be non-optional everywhere and
+        # keeps "solo" from being a special case the access checks have to remember.
+        household = await create_household(db, user.id)
         db.add(UserSettings(user_id=user.id))
         for order, name in enumerate(DEFAULT_CATEGORIES):
-            db.add(Category(user_id=user.id, name=name, sort_order=order))
+            db.add(
+                Category(household_id=household.id, user_id=user.id, name=name, sort_order=order)
+            )
         await db.commit()
         await db.refresh(user)
 

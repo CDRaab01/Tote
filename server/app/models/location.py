@@ -16,11 +16,18 @@ class Location(Base):
     """
 
     __tablename__ = "locations"
-    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_locations_user_name"),)
+    # Household-scoped: there is one attic, however many people put things in it.
+    __table_args__ = (UniqueConstraint("household_id", "name", name="uq_locations_household_name"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    # WHO MAY SEE THIS. The access check everywhere is `household_id == user.household_id`.
+    household_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    # WHO CREATED THIS — provenance only, never access. Nullable + SET NULL: a shared catalogue
+    # must survive the deletion of whichever member happened to enter the row.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
     name: Mapped[str] = mapped_column(String(80))
     parent_id: Mapped[uuid.UUID | None] = mapped_column(

@@ -54,7 +54,7 @@ def _photo_count():
     )
 
 
-def item_query(user_id: uuid.UUID) -> Select:
+def item_query(household_id: uuid.UUID) -> Select:
     """Items with their tote code and location name attached.
 
     Outer joins throughout: an item with no tote is a normal state (out for the holidays, lent),
@@ -65,7 +65,7 @@ def item_query(user_id: uuid.UUID) -> Select:
         select(Item, Tote.code, Location.name, _photo_count())
         .outerjoin(Tote, Item.current_tote_id == Tote.id)
         .outerjoin(Location, Tote.location_id == Location.id)
-        .where(Item.user_id == user_id)
+        .where(Item.household_id == household_id)
         # Drafts are excluded EVERYWHERE this query is used — search, tote contents, item lists.
         # The house rule is that nothing AI-generated enters the catalog without explicit
         # approval, and a draft turning up in search results would be exactly that. The review
@@ -163,13 +163,13 @@ async def attach_borrowers(db: AsyncSession, items: list[ItemOut]) -> None:
         item.loaned_to = by_item.get(item.id)
 
 
-async def tote_counts(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, int]:
+async def tote_counts(db: AsyncSession, household_id: uuid.UUID) -> dict[uuid.UUID, int]:
     """items currently in each tote, computed rather than stored."""
     rows = (
         await db.execute(
             select(Item.current_tote_id, func.count())
             .where(
-                Item.user_id == user_id,
+                Item.household_id == household_id,
                 Item.current_tote_id.is_not(None),
                 Item.is_draft.is_(False),
             )
@@ -179,7 +179,7 @@ async def tote_counts(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, i
     return {tote_id: n for tote_id, n in rows}
 
 
-async def out_counts(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, int]:
+async def out_counts(db: AsyncSession, household_id: uuid.UUID) -> dict[uuid.UUID, int]:
     """Per tote: how many items left it and have not come back.
 
     Derived from the ledger rather than from a column, using each item's LATEST movement. That
@@ -188,7 +188,11 @@ async def out_counts(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, in
     latest = (
         select(Movement.item_id, Movement.from_tote_id)
         .join(Item, Item.id == Movement.item_id)
-        .where(Item.user_id == user_id, Item.current_tote_id.is_(None), Item.status != "disposed")
+        .where(
+            Item.household_id == household_id,
+            Item.current_tote_id.is_(None),
+            Item.status != "disposed",
+        )
         .order_by(Movement.item_id, Movement.moved_at.desc(), Movement.created_at.desc())
         .distinct(Movement.item_id)
         .subquery()
@@ -203,15 +207,17 @@ async def out_counts(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, in
     return {tote_id: n for tote_id, n in rows}
 
 
-async def location_names(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, str]:
-    """Every location this user has, by id.
+async def location_names(db: AsyncSession, household_id: uuid.UUID) -> dict[uuid.UUID, str]:
+    """Every location this household has, by id.
 
     Fetched whole rather than joined per tote for the same reason the counts are: the list
     endpoint backs the browse-by-location screen, and a household has a handful of locations
     against however many bins. One small query beats a join repeated per row.
     """
     rows = (
-        await db.execute(select(Location.id, Location.name).where(Location.user_id == user_id))
+        await db.execute(
+            select(Location.id, Location.name).where(Location.household_id == household_id)
+        )
     ).all()
     return {location_id: name for location_id, name in rows}
 
@@ -223,9 +229,9 @@ async def to_tote_out(
     outs: dict | None = None,
     locations: dict | None = None,
 ) -> ToteOut:
-    counts = counts if counts is not None else await tote_counts(db, tote.user_id)
-    outs = outs if outs is not None else await out_counts(db, tote.user_id)
-    locations = locations if locations is not None else await location_names(db, tote.user_id)
+    counts = counts if counts is not None else await tote_counts(db, tote.household_id)
+    outs = outs if outs is not None else await out_counts(db, tote.household_id)
+    locations = locations if locations is not None else await location_names(db, tote.household_id)
     out = ToteOut.model_validate(tote)
     out.item_count = counts.get(tote.id, 0)
     out.out_count = outs.get(tote.id, 0)

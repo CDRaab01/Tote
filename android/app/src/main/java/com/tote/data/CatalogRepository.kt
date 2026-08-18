@@ -194,4 +194,35 @@ class CatalogRepository @Inject constructor(
         api.recordTagWrite(toteId, com.tote.data.remote.NfcWrite(uid)).also { refresh() }
 
     suspend fun resolveCode(code: String, tagUid: String? = null) = api.resolveCode(code, tagUid)
+
+    // --- Household sharing ------------------------------------------------------------------
+
+    suspend fun household() = api.household()
+
+    suspend fun invite(email: String) = api.inviteToHousehold(com.tote.data.remote.InviteRequest(email))
+
+    suspend fun myInvite() = api.myInvite()
+
+    /**
+     * Accept an invitation, merging this catalogue into theirs.
+     *
+     * The cache is **emptied and rebuilt**, not merely refreshed: every membership change alters
+     * the whole visible set, and Room is the offline read model. Leaving without clearing would
+     * leave a departed member browsing bins they can no longer fetch — an attic that reads
+     * perfectly until they tap something.
+     */
+    suspend fun acceptInvite() = api.acceptInvite().also { resetCache() }
+
+    suspend fun declineInvite() = api.declineInvite()
+
+    suspend fun transferOwnership(userId: String) = api.transferOwnership(userId)
+
+    suspend fun removeMember(userId: String) = api.removeMember(userId)
+
+    suspend fun leaveHousehold() = api.leaveHousehold().also { resetCache() }
+
+    private suspend fun resetCache() {
+        dao.replaceAll(emptyList(), emptyList())
+        refresh()
+    }
 }

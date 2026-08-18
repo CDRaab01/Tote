@@ -152,13 +152,21 @@ async def test_a_bag_can_be_renamed_but_never_relocated(auth_client):
 
 
 async def test_someone_else_s_bin_has_no_bags_you_can_reach(auth_client, raw_sql):
-    owner, tote = str(uuid.uuid4()), str(uuid.uuid4())
+    owner, elsewhere, tote = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
     await raw_sql(
         "INSERT INTO users (id, name, email) VALUES (:i, 'Other', :e)",
         i=owner,
         e=f"{owner[:8]}@example.com",
     )
-    await raw_sql("INSERT INTO totes (id, user_id, code) VALUES (:t, :u, 'ZZ9')", t=tote, u=owner)
+    await raw_sql(
+        "INSERT INTO households (id, owner_user_id) VALUES (:h, :u)", h=elsewhere, u=owner
+    )
+    await raw_sql(
+        "INSERT INTO totes (id, household_id, user_id, code) VALUES (:t, :h, :u, 'ZZ9')",
+        t=tote,
+        h=elsewhere,
+        u=owner,
+    )
 
     assert (await auth_client.get(f"/totes/{tote}/containers")).status_code == 404
     assert (

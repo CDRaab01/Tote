@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **313 server** (pytest, real Postgres) + **199 Android** (measured 2026-08-18) |
+| Tests | **339 server** (pytest, real Postgres) + **206 Android** (measured 2026-08-18) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -37,8 +37,9 @@ of which only a real phone can exercise. See the open items table.
    copy `android/local.properties` into it, and build a fresh `server/.venv` there — an editable
    install from another checkout silently shadows the code you are testing.
 2. **Alembic autogenerate will try to DROP two indexes, every single time.**
-   `ix_items_search_vector` (GIN full-text) and `uq_totes_user_code_lower` (unique on
-   `lower(code)`) are invisible to model metadata, so it proposes removing them. Accepting that
+   `ix_items_search_vector` (GIN full-text) and `uq_totes_household_code_lower` (unique on
+   `lower(code)`, per household since `0006`) are invisible to model metadata, so it proposes
+   removing them. Accepting that
    makes search sequential and lets two bins both be "A14". Delete those lines by hand. It also
    emits **unnamed foreign keys** that `downgrade` cannot then drop — name them.
 3. **Room has no destructive fallback.** Bumping `@Database(version=)` requires a migration in
@@ -245,8 +246,16 @@ holding in both arms; a QR on the same card costs nothing and reads from four fe
 
 - `users` — id, email, name, created_at. SSO find-or-create by email; **no password hash
   column** (SSO-only), mirror Magpie/Crate.
-- `totes` — id, user_id, **code** (short human label written on the index card, e.g. `A14`;
-  **unique per user**, case-insensitive), label, category_id, location_id (nullable),
+- `households` / `household_members` / `household_invites` — **the sharing unit, and the owning
+  scope of the entire catalogue** (migration `0006`). Every user gets a household of one at first
+  login, so `household_id` is never absent and there is no solo special case. On every catalogue
+  table below, **`household_id` is who may see the row and `user_id` is only who created it** —
+  the latter is nullable `ON DELETE SET NULL` and must never be used for access. Accepting an
+  invite MERGES two catalogues irreversibly: same-named locations/categories fold, colliding tote
+  codes and NFC tags refuse. See ARCHITECTURE.md, "Household sharing".
+- `totes` — id, household_id, user_id, **code** (short human label written on the index card,
+  e.g. `A14`; **unique per household**, case-insensitive), label, category_id, location_id
+  (nullable),
   notes, bin_kind (free text: "27gal clear", "banker box"), color, `nfc_tag_uid` (nullable),
   `nfc_written_at` (nullable), `card_printed_at` (nullable), archived (bool), created_at.
   **`item_count` is computed, never stored** — a denormalized count is the first thing to
@@ -280,7 +289,9 @@ holding in both arms; a QR on the same card costs nothing and reads from four fe
 - `movements` — **the ledger, and the reason this app is not a spreadsheet.** id, item_id,
   from_tote_id (nullable), to_tote_id (nullable), quantity, reason
   (`initial|moved|unpacked|repacked|outgrown|loaned|returned|disposed|corrected`), note,
-  person_id (nullable — who it was lent to, or who outgrew it), moved_at, created_at.
+  person_id (nullable — who it was lent to, or who outgrew it), **moved_by_user_id**
+  (nullable — which *member* did it, as opposed to who it was done for; a question that only
+  exists once the catalogue is shared), moved_at, created_at.
   `items.current_tote_id` and `items.status` are **derived state kept in sync by one
   service module** (`app/services/movement.py`); nothing else writes them directly.
 - `containers` — id, user_id, tote_id, name, notes, created_at. **Bags inside a bin** (migration
@@ -294,11 +305,13 @@ holding in both arms; a QR on the same card costs nothing and reads from four fe
   `size_system`, `size_ordinal`, `size_raw`, effective_from, notes. A history, not a current
   value: a child's size is a moving target and last winter's answer is what tells you which
   bin to open next winter.
-- `settings` — per-user: default location, NFC URI base (so a hostname change doesn't
-  require a code deploy), card layout preference, ntfy topic override. Seeded defaults.
+- `settings` — per-user: default location, card layout preference, ntfy topic override. Seeded
+  defaults. **The NFC URI base lives on `households`**, not here: a tag is a physical object no
+  deploy can patch, so the value baked into it must not vary by which member's phone wrote it.
 
 Constraints worth writing down as constraints, not conventions: `totes.code` unique per
-user (the code is printed on a physical card — a duplicate is a real-world ambiguity);
+**household** (the code is printed on a physical card — a duplicate is a real-world ambiguity, and
+per *user* two members of one house could each own an "A14");
 `items.current_tote_id` must be null whenever `status != 'stored'`, enforced in the movement
 service and asserted in tests.
 
@@ -724,7 +737,9 @@ leave the house together when they leave at all.
 The thing worth knowing: **adding a name to `DEFAULT_CATEGORIES` reaches new accounts and nobody
 else**, because the seed is written once at first login and never revisited. On a single-household
 app that means it reaches nobody. So a new seed name is always two changes — the tuple and a data
-migration (`0004`) back-filling existing users. Appended at the end of each user's own ordering
+migration (`0004`) back-filling existing accounts. **Since `0006` that back-fill is per HOUSEHOLD**
+— per user, a two-person household gets the name twice, which is the one duplicate a seed addition
+can create because nobody types it by hand. Appended at the end of each user's own ordering
 rather than slotted in (renumbering would rewrite an order they may have arranged), idempotent and
 case-insensitive (`uq_categories_user_name` would raise on a second pass, and "baby" typed by hand
 must not become a second row), and the downgrade only removes rows nothing was filed under.
@@ -1006,7 +1021,8 @@ lazy-list rows are never composed, and "no such node" reads exactly like the bug
 **Explicitly not v1:** multi-item detection from one bulk photo (the biggest future labor
 saver, deliberately deferred — it is new prompt ground and the one-photo-per-item path is
 proven); barcode/UPC lookup for boxed goods; value/insurance reporting and export;
-multi-user households with per-person permissions; a web client. **Post-v1 cross-app:** a
+**per-person permissions inside a household** (household sharing itself shipped in `0006` and is
+deliberately all-or-nothing — see ARCHITECTURE.md, "No per-object sharing"); a web client. **Post-v1 cross-app:** a
 `/cross-app/summary` endpoint feeding the Dragonfly weekly digest, and an **outgrown → Crate
 handoff** (an item marked outgrown offers "list it for sale", pushing name/photos/apparel
 attributes to Crate over `CROSS_APP_SECRET`) — which is the payoff for copying Crate's

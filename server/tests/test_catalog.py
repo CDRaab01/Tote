@@ -66,11 +66,16 @@ async def _second_user_token() -> str:
     from app.database import AsyncSessionLocal
     from app.models.user import User, UserSettings
     from app.security import create_access_token
+    from app.services.household_service import create_household
 
     async with AsyncSessionLocal() as db:
         other = User(name="Other", email=f"o-{uuid.uuid4().hex[:8]}@example.com")
         db.add(other)
         await db.flush()
+        # A household of one, exactly as a real first login gives them. Without it the account
+        # has no scope at all and every request 500s on `user.household_id` — which would make
+        # these isolation tests pass for entirely the wrong reason.
+        await create_household(db, other.id)
         db.add(UserSettings(user_id=other.id))
         await db.commit()
         return create_access_token(str(other.id))

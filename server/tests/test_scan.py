@@ -394,12 +394,17 @@ async def test_a_scan_into_someone_elses_tote_is_404(auth_client, client):
     from app.database import AsyncSessionLocal
     from app.models.user import User, UserSettings
     from app.security import create_access_token
+    from app.services.household_service import create_household
 
     tote = (await auth_client.post("/totes", json={"code": "Z09"})).json()
     async with AsyncSessionLocal() as db:
         other = User(name="O", email=f"o-{uuid.uuid4().hex[:8]}@e.com")
         db.add(other)
         await db.flush()
+        # A household of one, exactly as a real first login gives them. Without it the account
+        # has no scope at all and every request 500s on `user.household_id` — which would make
+        # these isolation tests pass for entirely the wrong reason.
+        await create_household(db, other.id)
         db.add(UserSettings(user_id=other.id))
         await db.commit()
         token = create_access_token(str(other.id))
@@ -426,6 +431,7 @@ async def test_another_users_draft_cannot_be_confirmed(auth_client, client, monk
     from app.database import AsyncSessionLocal
     from app.models.user import User, UserSettings
     from app.security import create_access_token
+    from app.services.household_service import create_household
 
     draft = (await _scan(auth_client, photo_bytes())).json()
     tote = (await auth_client.post("/totes", json={"code": "Y08"})).json()
@@ -434,6 +440,10 @@ async def test_another_users_draft_cannot_be_confirmed(auth_client, client, monk
         other = User(name="O", email=f"o-{uuid.uuid4().hex[:8]}@e.com")
         db.add(other)
         await db.flush()
+        # A household of one, exactly as a real first login gives them. Without it the account
+        # has no scope at all and every request 500s on `user.household_id` — which would make
+        # these isolation tests pass for entirely the wrong reason.
+        await create_household(db, other.id)
         db.add(UserSettings(user_id=other.id))
         await db.commit()
         token = create_access_token(str(other.id))
