@@ -989,6 +989,24 @@ tappable rather than only the content within its padding. The rule: **if a row n
 the tap belongs on the same modifier**, never on a clickable container underneath it, which cannot
 be reached and only re-creates the trap.
 
+### A loan ends with `returned`, wherever it is put back
+
+`returned` is in the server's inbound set and the item sheet has always rendered it as "Returned
+into A14" — but for a long time only the **person screen** ever sent it. A lent item appears in its
+bin under "Out of this tote" (`items_out` is every item whose last movement left this tote, which
+includes loans) with the same **Put back** button as anything else, and both that button and the
+sheet's move classified anything not `stored` as `repacked`.
+
+So the ordinary way a borrowed thing comes home — hand it back, open the bin, tap Put back —
+recorded it as though it had merely been unpacked and reshelved. Both rows land the item in the
+same place, and a year later they are not the same fact: **the `returned` row is the only record
+that a loan ever ended.** "Who had this and did it come back" is the question the people table
+exists for, and it was unanswerable from the ledger built to answer it.
+
+Both writers now classify on the item's own status — `stored` → `moved`, `loaned` → `returned`,
+otherwise `repacked` — and each has a test. Neither needs a round trip: the status is on the row
+that rendered the button.
+
 ### Gestures need a test that presses the pixels
 
 This class of bug has now shipped twice — the `currentToteId` guard above, and this one — and

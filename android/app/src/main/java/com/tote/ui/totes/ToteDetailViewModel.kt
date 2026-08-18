@@ -269,9 +269,14 @@ class ToteDetailViewModel @Inject constructor(
     /**
      * Which items are ticked, if any.
      *
-     * An EMPTY SET IS NOT THE SAME AS NOT SELECTING — empty means selection mode is off and the
-     * rows behave normally. Tracked as a nullable set rather than a boolean plus a set, so the
-     * two can never disagree about whether the screen is in selection mode.
+     * An EMPTY SET IS NOT THE SAME AS NOT SELECTING — **null** is off, and the rows behave
+     * normally; **empty** means the bar is up with nothing picked, which is a real and different
+     * state (the actions are visible and disabled). This comment used to assert the reverse,
+     * which is worse than no comment: it would talk the next change into cancelling with
+     * `emptySet()` and stranding the bar on screen over a selection of nothing.
+     *
+     * Tracked as a nullable set rather than a boolean plus a set, so the two can never disagree
+     * about whether the screen is selecting.
      */
     private val _selection = MutableStateFlow<Set<String>?>(null)
     val selection: StateFlow<Set<String>?> = _selection.asStateFlow()
@@ -503,12 +508,30 @@ class ToteDetailViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Put something back in this bin.
+     *
+     * **`returned` when a person had it, `repacked` otherwise.** Both land the item in the same
+     * place, and a year later they are not the same fact: "Dave gave the drill back" against "we
+     * reshelved it after unpacking the bin". The lent item is listed under "Out of this tote" with
+     * the same Put back button as everything else, so without this it was recorded as an ordinary
+     * repack and the loan had no ending — in the ledger the people table exists to keep.
+     *
+     * The status comes from the row already on screen rather than a round trip: this button is
+     * only ever rendered for an item in `itemsOut`, which is loaded with the bin.
+     */
     fun putBack(itemId: String) {
+        val out = (_state.value as? UiState.Success)?.data?.itemsOut.orEmpty()
+        val reason = if (out.firstOrNull { it.id == itemId }?.status == "loaned") {
+            "returned"
+        } else {
+            "repacked"
+        }
         viewModelScope.launch {
             runCatching {
                 repo.move(
                     itemId,
-                    com.tote.data.remote.MoveRequest(reason = "repacked", toToteId = toteId),
+                    com.tote.data.remote.MoveRequest(reason = reason, toToteId = toteId),
                 )
             }
                 .onSuccess { load() }
