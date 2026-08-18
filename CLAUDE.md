@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **311 server** (pytest, real Postgres) + **177 Android** (measured 2026-08-17) |
+| Tests | **311 server** (pytest, real Postgres) + **188 Android** (measured 2026-08-17) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -864,6 +864,27 @@ Measured while looking, and worth keeping: filing garments **grouped** (`Shorts 
 **36 s/garment** against **60 s** one row per garment — and that understates it, because the
 grouped rows came first, against the learning curve.
 
+
+**A loan had no ending in the ledger (#39).** Found by writing the tests `ToteDetailViewModel`
+never had — at 518 lines it was the largest in the app with zero coverage, and it is where the tap
+bug had just been found.
+
+A lent item shows in its bin under "Out of this tote" (`items_out` is anything whose last movement
+left this tote, loans included) with the same **Put back** button as everything else. Both that
+button and the item sheet's move classified anything not `stored` as `repacked`, so handing the
+drill back and putting it away recorded the same row as reshelving after an unpack. `returned` was
+a valid inbound reason the whole time, rendered by the sheet as "Returned into A14" — and only the
+person screen ever sent it. **The `returned` row is the only record that a loan ended**, which is
+the one question the people table exists to answer.
+
+Both writers now classify on the item's own status (`stored` → `moved`, `loaned` → `returned`,
+else `repacked`), each with a test. Also corrected here: `_selection`'s KDoc asserted the exact
+reverse of the invariant it was warning about ("empty means selection mode is off"), which would
+have talked the next change into cancelling with `emptySet()` and stranding the selection bar over
+nothing.
+
+Two static sweeps came back **clean** and are worth not repeating: no composable callback is
+declared-and-never-wired, and no clickable is nested inside a clickable container anywhere else.
 
 **Tapping an item in a bin did nothing (#38).** Owner-reported. The row had **two** click handlers
 stacked: `PanelCard(onClick = …)` for the tap and a `combinedClickable` on the inner `Row` for the

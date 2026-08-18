@@ -150,6 +150,25 @@ class ItemSheetViewModelTest {
     }
 
     @Test
+    fun `putting away something a person had is a return, not a repack`() = runTest {
+        // The sheet is reachable from a person's loans, so this is the ordinary way a borrowed
+        // thing comes home. Recorded as `repacked` it reads identically to reshelving after an
+        // unpack, and the loan has no ending anywhere in the ledger.
+        repo.stub { onBlocking { move(any(), any()) } doReturn movement("returned") }
+        val model = vm()
+        model.open(comforter.copy(status = "loaned", currentToteId = null))
+        dispatcher.scheduler.advanceUntilIdle()
+
+        model.moveTo("t2")
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val body = argumentCaptor<com.tote.data.remote.MoveRequest>()
+        verify(repo).move(eq("i1"), body.capture())
+        assertEquals("returned", body.firstValue.reason)
+        assertEquals("t2", body.firstValue.toToteId)
+    }
+
+    @Test
     fun `history is read once, on demand`() = runTest {
         repo.stub { onBlocking { movements(any()) } doReturn listOf(movement("initial")) }
         val model = vm()

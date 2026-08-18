@@ -259,13 +259,19 @@ class ItemSheetViewModel @Inject constructor(
     /**
      * Put this in a different bin.
      *
-     * `moved` for something already stored, `repacked` for something that is out — the ledger
-     * distinguishes "it changed bins" from "it came back", and collapsing them would make
-     * "unpack the Christmas bin, then put half of it somewhere else" unreadable a year later.
+     * `moved` for something already stored, `repacked` for something that is out, and
+     * **`returned` for something a person had** — the ledger distinguishes "it changed bins" from
+     * "it came back" from "Dave gave it back", and collapsing them would make "unpack the
+     * Christmas bin, then put half of it somewhere else" unreadable a year later. The loan case is
+     * the one that costs most: it is the only record that a lend ever ended.
      */
     fun moveTo(toteId: String) {
         val item = _state.value.item ?: return
-        val reason = if (item.status == "stored") "moved" else "repacked"
+        val reason = when (item.status) {
+            "stored" -> "moved"
+            "loaned" -> "returned"
+            else -> "repacked"
+        }
         val code = _state.value.codeFor(toteId) ?: "the bin"
         write("Couldn't move that.") {
             repo.move(item.id, MoveRequest(reason = reason, toToteId = toteId))
