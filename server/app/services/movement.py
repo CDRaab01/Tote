@@ -46,6 +46,26 @@ _OUTBOUND = {"unpacked", "outgrown", "loaned", "disposed"}
 # is the one place that difference is recoverable a year later.
 _UNFILED = {"catalogued"}
 
+
+def inbound_reason_for(status: str) -> str:
+    """Which inbound reason describes this item coming back.
+
+    One classifier, because there are four callers and they must agree: the bin's Put back button,
+    the item sheet's move, the bulk move, and the person screen's return. Three of them used to
+    read `"moved" if stored else "repacked"`, which quietly recorded a loan ending as an ordinary
+    reshelving — and the `returned` row is the only record that a loan ever ended, which is the
+    question the people table exists to answer.
+
+    `stored` means it is already in a bin and this is a relocation; `loaned` means a person had
+    it; anything else is out of a bin and coming back to one.
+    """
+    if status == "stored":
+        return "moved"
+    if status == "loaned":
+        return "returned"
+    return "repacked"
+
+
 # The status an outbound reason produces. `disposed` is terminal; the rest are recoverable.
 _OUT_STATUS = {
     "unpacked": "out",

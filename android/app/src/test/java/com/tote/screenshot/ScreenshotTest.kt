@@ -983,6 +983,68 @@ class ScreenshotTest {
         )
     }
 
+    /**
+     * A fully unpacked bin — the state the owner called "annoying to sort through".
+     *
+     * Everything is out, so the whole "In this tote" block is gone, the out rows are grouped by
+     * size in ladder order, and Select is up beside Repack all where it can still be reached.
+     */
+    @Test fun tote_detail_all_out_dark() = capture("tote_detail_all_out_dark", dark = true) {
+        ToteDetailContent(
+            tote = unpackedBin(),
+            onAddItem = {}, onUnpackAll = {}, onRepackAll = {}, onTakeOut = {}, onPutBack = {},
+        )
+    }
+
+    /** The same bin mid-selection: several picked to put back, which had no path at all. */
+    @Test fun tote_detail_all_out_selecting_dark() =
+        capture("tote_detail_all_out_selecting_dark", dark = true) {
+            ToteDetailContent(
+                tote = unpackedBin(),
+                onAddItem = {}, onUnpackAll = {}, onRepackAll = {}, onTakeOut = {}, onPutBack = {},
+                selection = setOf("a", "b"),
+            )
+        }
+
+    private fun unpackedBin() = ToteDetailDto(
+        id = "t1",
+        code = "A15",
+        label = "Baby clothes",
+        locationName = "Attic",
+        itemCount = 0,
+        outCount = 5,
+        nfcTagUid = "04A2",
+        nfcWrittenAt = "2026-08-15T10:00:00Z",
+        cardPrintedAt = "2026-08-15T10:00:00Z",
+        items = emptyList(),
+        itemsOut = listOf(
+            ItemDto(
+                id = "a", name = "Shirt", quantity = 1, status = "out",
+                description = "Yellow and green construction digger graphic",
+                apparel = ApparelDto(sizeRaw = "12m", sizeOrdinal = 1.0f),
+            ),
+            ItemDto(
+                id = "b", name = "Onesie", quantity = 1, status = "out",
+                description = "Red, printed text reading LADIES MAN",
+                apparel = ApparelDto(sizeRaw = "12m", sizeOrdinal = 1.0f),
+            ),
+            ItemDto(
+                id = "c", name = "Shorts", quantity = 6, status = "out",
+                description = "Navy blue with white stripes down the side",
+                apparel = ApparelDto(sizeRaw = "6m", sizeOrdinal = 0.5f),
+            ),
+            ItemDto(
+                id = "d", name = "Swim shirts", quantity = 2, status = "out",
+                description = "Long sleeved, blue",
+                apparel = ApparelDto(sizeRaw = "18m", sizeOrdinal = 1.5f),
+            ),
+            ItemDto(
+                id = "e", name = "Cordless drill", quantity = 1, status = "loaned",
+                loanedTo = "Dave",
+            ),
+        ),
+    )
+
     private fun sameNameBin() = ToteDetailDto(
         id = "t1",
         code = "A15",

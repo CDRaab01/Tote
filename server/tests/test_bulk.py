@@ -71,6 +71,29 @@ async def test_something_that_is_out_comes_back_as_a_repack_not_a_move(auth_clie
     assert r.json()[0]["reason"] == "repacked"
 
 
+async def test_something_a_person_had_comes_back_as_a_return(auth_client):
+    """The third site of the same defect, and the one that costs most.
+
+    `repacked` and `returned` both land the item in a bin, so nothing looks wrong. But the
+    `returned` row is the only record that a loan ever ENDED — "who had this and did it come
+    back" is the question the people table exists for, and flattening it into a reshelving makes
+    that unanswerable from the ledger built to answer it.
+    """
+    here, there = await _tote(auth_client, "A16"), await _tote(auth_client, "B03")
+    item = await _item(auth_client, "Cordless drill", here["id"])
+    person = (await auth_client.post("/people", json={"name": "Dave"})).json()
+    await auth_client.post(
+        f"/items/{item['id']}/move",
+        json={"reason": "loaned", "person_id": person["id"]},
+    )
+
+    r = await auth_client.post(
+        "/items/bulk-move", json={"item_ids": [item["id"]], "to_tote_id": there["id"]}
+    )
+    assert r.status_code == 200
+    assert r.json()[0]["reason"] == "returned"
+
+
 async def test_a_selection_can_land_straight_in_a_bag(auth_client):
     """The whole point of doing this after a batch of clothing: shoot eight onesies, then put
     them all in the 3-6M bag in one go."""

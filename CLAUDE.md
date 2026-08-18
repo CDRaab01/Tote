@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **311 server** (pytest, real Postgres) + **188 Android** (measured 2026-08-17) |
+| Tests | **312 server** (pytest, real Postgres) + **196 Android** (measured 2026-08-18) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -864,6 +864,34 @@ Measured while looking, and worth keeping: filing garments **grouped** (`Shorts 
 **36 s/garment** against **60 s** one row per garment — and that understates it, because the
 grouped rows came first, against the learning curve.
 
+
+**The bin screen when everything is out (#40).** Owner-reported: "annoying to sort through… it
+doesn't feel clean". Unpacking is a first-class operation, so this is a normal state, and it was
+the one the screen handled worst.
+
+**Selection was both unreachable and unwired.** The Select button was gated on `items.size > 1`,
+so it vanished at exactly the moment it was wanted — unpacking empties `items` and fills
+`itemsOut` — and the out rows had never had ticking wired at all. With everything out the only
+ways back were one row at a time or Repack all: **partial repack, the actual January workflow, had
+no path.** Select now counts both lists and sits beside Unpack/Repack all; the bar shows only the
+verbs that fit what is ticked (Move always, Take out or Put back never both, Bag only for things
+in the bin) and says why when a selection spans both.
+
+**The list is grouped by size, in ladder order** — because alphabetically **12m sorts before 6m**,
+which reintroduces one layer up the confusion the ladder exists to remove. Unsized things last,
+single-size lists left flat. Under a size heading the row drops its own size mark, and in "Out of
+this tote" it drops "Out since it was unpacked" — both are the heading repeated on every row, and
+dropping them gives the description room to be a sentence.
+
+**Less above the rows**: the whole "In this tote" block is skipped when the bin is empty and things
+are out of it, and a bin already tagged *and* carded gets one line instead of a panel with two
+buttons.
+
+Two things worth keeping: the `returned` bug had a **third** site (`bulk-move`), so the
+classification now lives once in `inbound_reason_for` and every caller reads it — building "put
+several back" on the old bulk path would have silently reintroduced #39. And three buttons in one
+weighted Row wrapped **"Unpack all" inside its own button**, which is the defect FlowRow was
+brought in for the first time; the action row is a FlowRow now.
 
 **A loan had no ending in the ledger (#39).** Found by writing the tests `ToteDetailViewModel`
 never had — at 518 lines it was the largest in the app with zero coverage, and it is where the tap

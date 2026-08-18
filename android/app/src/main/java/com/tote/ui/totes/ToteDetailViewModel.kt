@@ -337,6 +337,29 @@ class ToteDetailViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Put everything ticked back in this bin — the partial repack that had no path at all.
+     *
+     * `bulkMove` into this same tote, rather than a `repack` call: the server picks each item's
+     * inbound reason from its own status (`returned` for something a person had, `repacked`
+     * otherwise), which a bulk repack could not express. One request and therefore one reload,
+     * which is also the answer to the list moving under your finger — thirty-one Put back taps
+     * were thirty-one full re-reads of the bin.
+     */
+    fun putBackSelected() {
+        val ids = _selection.value.orEmpty().toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { repo.bulkMove(ids, toToteId = toteId) }
+                .onSuccess {
+                    _selection.value = null
+                    load()
+                    feedback.say("Put ${ids.size} back.")
+                }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't put those back.")) }
+        }
+    }
+
     /** Take everything ticked out of the bin — the partial unpack the API always supported. */
     fun unpackSelected() {
         val ids = _selection.value.orEmpty().toList()
