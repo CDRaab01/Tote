@@ -94,6 +94,25 @@ async def test_something_a_person_had_comes_back_as_a_return(auth_client):
     assert r.json()[0]["reason"] == "returned"
 
 
+async def test_filing_something_never_in_a_bin_is_a_move_not_a_repack(auth_client):
+    """The Totes tab's "Not in a bin" list is filed in bulk, so this is the common path.
+
+    `catalogued` deliberately leaves an item in no bin, and CLAUDE.md has always said filing it
+    later is an ordinary inbound `moved`. Classified only by status it read as `repacked` — "it
+    came back" — for something that had never been anywhere.
+    """
+    bin_ = await _tote(auth_client, "C01")
+    item = (await auth_client.post("/items", json={"name": "Onesie 12m", "quantity": 1})).json()
+    assert item["current_tote_id"] is None
+    assert item["out_reason"] == "unfiled"
+
+    r = await auth_client.post(
+        "/items/bulk-move", json={"item_ids": [item["id"]], "to_tote_id": bin_["id"]}
+    )
+    assert r.status_code == 200
+    assert r.json()[0]["reason"] == "moved"
+
+
 async def test_a_selection_can_land_straight_in_a_bag(auth_client):
     """The whole point of doing this after a batch of clothing: shoot eight onesies, then put
     them all in the 3-6M bag in one go."""

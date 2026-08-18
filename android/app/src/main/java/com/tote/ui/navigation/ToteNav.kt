@@ -49,6 +49,7 @@ import com.tote.util.FeedbackViewModel
 import com.tote.ui.settings.SettingsScreen
 import com.tote.ui.theme.ToteTheme
 import com.tote.ui.totes.ToteListScreen
+import com.tote.ui.totes.UnfiledScreen
 
 /**
  * Five tabs: Find, Totes, People, Catalogue, Review.
@@ -69,6 +70,7 @@ object Routes {
     const val CAPTURE = "capture"
     const val REVIEW = "review"
     const val SETTINGS = "settings"
+    const val UNFILED = "unfiled"
     const val TOTE_DETAIL = "totes/{toteId}?mismatch={mismatch}"
     const val PERSON_DETAIL = "people/{personId}"
 
@@ -255,7 +257,16 @@ fun ToteNavHost(
                 )
             }
             composable(Routes.TOTES) {
-                ToteListScreen(onOpenTote = { nav.navigate(Routes.toteDetail(it)) })
+                ToteListScreen(
+                    onOpenTote = { nav.navigate(Routes.toteDetail(it)) },
+                    onOpenUnfiledList = { nav.navigate(Routes.UNFILED) },
+                )
+            }
+            // Its own screen rather than an expanding section inside the bins list. Browsing
+            // bins and clearing loose ends are different jobs, and thirty-two rows unfolding
+            // above the bins made the tab useless for the first while doing the second badly.
+            composable(Routes.UNFILED) {
+                UnfiledScreen(onOpenTote = { nav.navigate(Routes.toteDetail(it)) })
             }
             composable(Routes.PEOPLE) {
                 PeopleScreen(onOpenPerson = { nav.navigate(Routes.personDetail(it)) })

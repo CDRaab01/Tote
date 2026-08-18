@@ -8,6 +8,7 @@ import com.tote.data.local.CachedTote
 import com.tote.data.remote.LocationDto
 import com.tote.data.remote.ToteCreate
 import com.tote.util.ApiErrors
+import com.tote.util.FeedbackBus
 import com.tote.util.UiState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -21,6 +22,8 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class ToteListViewModel @Inject constructor(
     private val repo: CatalogRepository,
+    // Filing a selection is a user-initiated write, so it speaks — success and failure both.
+    private val feedback: FeedbackBus,
 ) : ViewModel() {
 
     /** Backed by the cache, so the list is on screen instantly and survives a dead network. */
@@ -36,6 +39,55 @@ class ToteListViewModel @Inject constructor(
      */
     val unfiled: StateFlow<List<CachedItem>> =
         repo.cachedUnfiled.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Which loose ends are ticked, if any — null when not selecting, same shape as a bin's.
+     *
+     * Filing is the whole purpose of this list and it was the one thing it could not do in bulk.
+     * Thirty-two garments catalogued without a destination meant thirty-two trips through the
+     * item sheet, which is enough friction to stop anyone from deferring a destination again —
+     * and deferring is a feature this app deliberately added.
+     */
+    private val _unfiledSelection = MutableStateFlow<Set<String>?>(null)
+    val unfiledSelection: StateFlow<Set<String>?> = _unfiledSelection.asStateFlow()
+
+    fun beginFiling(itemId: String? = null) {
+        _unfiledSelection.value = setOfNotNull(itemId)
+    }
+
+    fun cancelFiling() {
+        _unfiledSelection.value = null
+    }
+
+    fun toggleUnfiled(itemId: String) {
+        val current = _unfiledSelection.value ?: return
+        _unfiledSelection.value =
+            if (itemId in current) current - itemId else current + itemId
+    }
+
+    fun selectAllUnfiled(ids: List<String>) {
+        _unfiledSelection.value = ids.toSet()
+    }
+
+    /**
+     * File everything ticked into one bin.
+     *
+     * `bulkMove`, so the server writes one ledger row per item and picks each reason itself —
+     * `moved` for something that was never in a bin, which is what all of these are.
+     */
+    fun fileSelected(toteId: String) {
+        val ids = _unfiledSelection.value.orEmpty().toList()
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { repo.bulkMove(ids, toToteId = toteId) }
+                .onSuccess {
+                    _unfiledSelection.value = null
+                    refresh()
+                    feedback.say("Filed ${ids.size} item${if (ids.size == 1) "" else "s"}.")
+                }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't file those.")) }
+        }
+    }
 
     /** Put away, not thrown away. Kept apart from the live list and collapsed by default. */
     val archived: StateFlow<List<CachedTote>> =

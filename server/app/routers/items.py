@@ -101,8 +101,12 @@ async def create_item(body: ItemIn, user: CurrentUser, db: Db):
         # item that appeared in a bin with no history would be the first hole in the ledger.
         await record_move(db, item=item, reason="initial", to_tote_id=tote_id)
     else:
-        item.status = "out"
-        item.out_reason = "other"
+        # And so is not filing it. This used to set the two fields by hand, which left an item
+        # with NO ledger row at all — the hole the branch above exists to prevent, dug by the
+        # other branch — and stamped `other` where the same state reached through review's
+        # confirm-without-a-bin is `unfiled`. Two ways into one state that disagreed about what
+        # the state was, which is why filing one of them later read as "it came back".
+        await record_move(db, item=item, reason="catalogued")
 
     await db.commit()
     return await _one(db, user.id, item.id)
@@ -225,7 +229,7 @@ async def bulk_move(body: BulkRelocateIn, user: CurrentUser, db: Db):
             await record_move(
                 db,
                 item=item,
-                reason=inbound_reason_for(item.status),
+                reason=inbound_reason_for(item.status, item.out_reason),
                 to_tote_id=body.to_tote_id,
                 note=body.note,
             )

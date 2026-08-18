@@ -989,6 +989,48 @@ tappable rather than only the content within its padding. The rule: **if a row n
 the tap belongs on the same modifier**, never on a clickable container underneath it, which cannot
 be reached and only re-creates the trap.
 
+### "Not in a bin" is a screen, not a section
+
+Confirming without a bin was added deliberately (deferring the destination at review is only
+reasonable if the deferred things visibly accumulate). The place they accumulated was a section
+that unfolded inside the Totes tab, and at the owner's real scale — **32 loose garments** — it was
+reported as *"I don't know what the items are. It's a shit of scrolling. I can't multi select."*
+Three separate faults:
+
+**The rows were drawn from the Room cache, which carried no photo count.** So `UnfiledRow` was a
+hand-rolled, stripped-down row: no thumbnail, no description, and a shouting
+`12M · CATALOGUED, NOT FILED` caption under every one. That is the list where rows are *hardest*
+to tell apart — no bin, no location, and six things honestly called "Onesie 12m" — and it was the
+only list with the least to tell them apart by. `CachedItem` now carries `photoCount` (**Room v5**,
+additive `ADD COLUMN … DEFAULT 0`), which also gives offline search results their pictures back.
+
+**There were two implementations of an item row and they had drifted.** `ItemRow` is now
+`ui/components/ItemRow.kt`, shared by a bin's contents, a bin's out-list and this screen. The
+bespoke one is gone.
+
+**It is its own route.** Browsing bins and clearing loose ends are different jobs, and thirty-two
+rows unfolding on top of the bins made the tab useless for the first while doing the second badly.
+The tab keeps a one-line count in the attention channel — a signal is exactly what belongs there —
+and it opens `UnfiledScreen`.
+
+**Filing is bulk.** Same selection model as a bin (long-press or Select), one verb — `File into…` —
+and one `bulkMove`, so the server writes one ledger row each in a single transaction. A per-row
+`File…` still opens the item sheet, which is where the photographs are and therefore the right
+place to settle "which of these six onesies is this one".
+
+### Two ways into "not in a bin" disagreed about what it was
+
+Found while wiring the above. `POST /items` with no `tote_id` set `status`/`out_reason` **by hand**
+and wrote **no ledger row at all** — the exact hole the branch immediately above it exists to
+prevent, dug by the other branch — and stamped `other`, where the same state reached through
+review's confirm-without-a-bin is `unfiled`.
+
+It now goes through `record_move(reason="catalogued")` like review does, so both paths produce one
+state with one history. That also fixed the reason on the way out: `inbound_reason_for` takes
+`out_reason` now, and something **never in a bin** is filed as `moved` rather than `repacked` —
+"it came back" is untrue of a thing that had never been anywhere, and CLAUDE.md has said filing
+later is an ordinary `moved` since the feature shipped.
+
 ### The bin screen when everything is out
 
 Unpacking a bin is a first-class operation, so "everything is out" is a normal state — and it was
