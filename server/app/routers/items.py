@@ -27,7 +27,7 @@ from app.security import CurrentUser
 from app.services import photo_store
 from app.services.apparel_write import apply_apparel
 from app.services.catalog import apply_size_filter, item_query, items_for, to_item_out
-from app.services.movement import record_move
+from app.services.movement import inbound_reason_for, record_move
 
 router = APIRouter(tags=["items"])
 
@@ -171,9 +171,10 @@ async def bulk_move(body: BulkRelocateIn, user: CurrentUser, db: Db):
     forty items moved individually is forty chances to half-succeed, leaving a selection the
     person believes is together and is not.
 
-    The reason is `moved` for something already stored and `repacked` for something that is out,
-    matched to the item — the same distinction the item sheet makes one at a time, because a year
-    later "it changed bins" and "it came back" are different facts.
+    The reason is matched to each item by `inbound_reason_for` — `moved` for something already
+    stored, `returned` for something a person had, `repacked` for anything else that is out. A
+    year later "it changed bins", "it came back" and "Dave gave it back" are different facts, and
+    the last of those is the only record that a loan ever ended.
     """
     tote = (
         await db.execute(select(Tote).where(Tote.id == body.to_tote_id, Tote.user_id == user.id))
@@ -224,7 +225,7 @@ async def bulk_move(body: BulkRelocateIn, user: CurrentUser, db: Db):
             await record_move(
                 db,
                 item=item,
-                reason="moved" if item.status == "stored" else "repacked",
+                reason=inbound_reason_for(item.status),
                 to_tote_id=body.to_tote_id,
                 note=body.note,
             )

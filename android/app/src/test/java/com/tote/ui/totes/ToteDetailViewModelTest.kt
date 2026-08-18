@@ -203,9 +203,29 @@ class ToteDetailViewModelTest {
         model.unpackSelected()
         dispatcher.scheduler.advanceUntilIdle()
 
+        model.putBackSelected()
+        dispatcher.scheduler.advanceUntilIdle()
         verify(repo, never()).bulkMove(any(), any(), any())
         verify(repo, never()).bulkBag(any(), any())
         verify(repo, never()).unpack(any(), any())
+    }
+
+    @Test
+    fun `putting a selection back sends them to THIS bin, in one request`() = runTest {
+        repo.stub { onBlocking { bulkMove(any(), any(), any()) } doReturn emptyList() }
+        val model = ready()
+        model.beginSelecting("i8")
+        model.toggleSelected("i9")
+        model.putBackSelected()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        // bulkMove into this same tote rather than `repack`, because the server picks each item's
+        // inbound reason from its own status — which is how the lent drill in this selection gets
+        // `returned` and the unpacked lights get `repacked`. One request, so one reload: thirty
+        // Put back taps used to be thirty full re-reads of the bin, which is what made the list
+        // move under your finger.
+        verify(repo).bulkMove(eq(listOf("i8", "i9")), eq("t1"), eq(null))
+        assertNull(model.selection.value)
     }
 
     // ---- failure is never silence ------------------------------------------------------------

@@ -989,6 +989,49 @@ tappable rather than only the content within its padding. The rule: **if a row n
 the tap belongs on the same modifier**, never on a clickable container underneath it, which cannot
 be reached and only re-creates the trap.
 
+### The bin screen when everything is out
+
+Unpacking a bin is a first-class operation, so "everything is out" is a normal state — and it was
+the state the screen handled worst. Owner-reported as "annoying to sort through… it doesn't feel
+clean". Four things compounded, and they are worth keeping apart because only one of them was a
+matter of taste:
+
+1. **Selection was unreachable and unusable.** The Select button was gated on `items.size > 1`, so
+   it vanished at exactly the moment it was wanted — unpacking empties `items` and fills
+   `itemsOut`. And the out rows had never had `selected`/`onToggle`/`onLongPress` wired at all. So
+   with everything out, the only ways back were one row at a time or **Repack all**. *Partial
+   repack — the actual January workflow, and the outgrown-clothes workflow — had no path.*
+   Select now counts both lists and lives beside Unpack/Repack all, where it applies to the bin
+   rather than to one section; the out rows tick like any other.
+2. **The verbs now depend on what is ticked.** A selection can span both lists, and the two
+   directions are mutually exclusive: something already out cannot be taken out, something in the
+   bin cannot be put back. The bar shows what fits, and for a selection spanning both shows only
+   **Move** — the one verb well defined for every item in it — and says why rather than leaving
+   two buttons mysteriously absent. `Bag…` requires everything ticked to be in the bin, because a
+   bag belongs to this tote and can only label what is in it.
+3. **The list is grouped by size**, in ladder order, whenever there is more than one size to tell
+   apart. This is not decoration: **alphabetically 12m sorts before 6m**, so a name-ordered bin of
+   clothes reintroduces one layer up the exact confusion the ladder exists to remove. `outBySize`
+   orders by the server's `size_ordinal` — displayed, never computed — puts unsized things last
+   under their own heading, and leaves a single-size list flat, the same rule as "Loose in the bin".
+   Under a size heading the row drops its own size mark, and inside "Out of this tote" it drops
+   "Out since it was unpacked": both are the heading above repeated on every row, and dropping them
+   gives the description the width to be a whole sentence.
+4. **The chrome above the rows is smaller.** The whole "In this tote" block — header, "Everything
+   is out" card and count — is skipped when the bin is empty and things are out of it, since the
+   section immediately below says all of it in full. And a bin that is already tagged *and* carded
+   gets a single line rather than a panel with two buttons: that state is finished work, and
+   rewriting a tag is rare. The loud panel stays for every unfinished state, where it is an
+   attention signal rather than furniture.
+
+The fifth complaint — the list moving under your finger — is mostly answered by (1): each
+`putBack` triggers a full `load()`, so thirty-one taps were thirty-one re-reads. `putBackSelected`
+is one request and one reload.
+
+**`putBackSelected` goes through `bulkMove` into this same tote, not `repack`.** The server picks
+each item's inbound reason from its own status, which is how a lent thing in that selection gets
+`returned` while an unpacked one gets `repacked` — a bulk repack could not express the difference.
+
 ### A loan ends with `returned`, wherever it is put back
 
 `returned` is in the server's inbound set and the item sheet has always rendered it as "Returned
@@ -1003,9 +1046,10 @@ same place, and a year later they are not the same fact: **the `returned` row is
 that a loan ever ended.** "Who had this and did it come back" is the question the people table
 exists for, and it was unanswerable from the ledger built to answer it.
 
-Both writers now classify on the item's own status — `stored` → `moved`, `loaned` → `returned`,
-otherwise `repacked` — and each has a test. Neither needs a round trip: the status is on the row
-that rendered the button.
+**There were three writers, not two.** `POST /items/bulk-move` carried the same
+`"moved" if stored else "repacked"`, so the fix now lives in one place — `inbound_reason_for` in
+`movement.py`, beside `_INBOUND`/`_OUTBOUND` — and every caller reads it. The two client sites
+classify identically and need no round trip: the status is on the row that rendered the button.
 
 ### Gestures need a test that presses the pixels
 
