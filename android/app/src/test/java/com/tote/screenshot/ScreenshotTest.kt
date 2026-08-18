@@ -43,6 +43,7 @@ import com.tote.ui.search.SearchContent
 import com.tote.ui.search.SearchUiState
 import com.tote.ui.totes.ToteDetailContent
 import com.tote.ui.totes.ToteListContent
+import com.tote.ui.totes.UnfiledContent
 import androidx.compose.foundation.layout.Column
 import com.tote.ui.components.PickerList
 import com.tote.ui.components.PickerField
@@ -870,23 +871,20 @@ class ScreenshotTest {
      * an object you have already photographed and named.
      */
     @Test fun totes_unfiled_dark() = capture("totes_unfiled_dark", dark = true) {
-        ToteListContent(
-            totes = totes,
-            onOpenTote = {},
-            onNewTote = {},
-            unfiled = listOf(
-                CachedItem(
-                    id = "u1", name = "Sleepsuit", description = null, notes = null, quantity = 6,
-                    status = "out", currentToteId = null, toteCode = null, locationName = null,
-                    isOverdue = false, sizeRaw = "3-6M",
-                ),
-                CachedItem(
-                    id = "u2", name = "Snow boots", description = null, notes = null, quantity = 1,
-                    status = "loaned", currentToteId = null, toteCode = null, locationName = null,
-                    isOverdue = false,
-                ),
-            ),
-        )
+        ToteListContent(totes = totes, onOpenTote = {}, onNewTote = {}, unfiled = loose)
+    }
+
+    /** The screen the count opens: the loose ends, readable, and selectable in bulk. */
+    @Test fun unfiled_dark() = capture("unfiled_dark", dark = true) {
+        UnfiledContent(unfiled = loose)
+    }
+
+    @Test fun unfiled_selecting_dark() = capture("unfiled_selecting_dark", dark = true) {
+        UnfiledContent(unfiled = loose, selection = setOf("u1", "u2", "u3"))
+    }
+
+    @Test fun unfiled_empty_dark() = capture("unfiled_empty_dark", dark = true) {
+        UnfiledContent(unfiled = emptyList())
     }
 
 
@@ -1042,6 +1040,29 @@ class ScreenshotTest {
                 id = "e", name = "Cordless drill", quantity = 1, status = "loaned",
                 loanedTo = "Dave",
             ),
+        ),
+    )
+
+    private val loose = listOf(
+        CachedItem(
+            "u1", "Hoodie", "Grey, zip front with a bear face on the hood", null, 1,
+            "out", null, null, null, false, "12m", 1,
+        ),
+        CachedItem(
+            "u2", "Hoodie", "Navy, pullover with a kangaroo pocket", null, 2,
+            "out", null, null, null, false, "6m", 1,
+        ),
+        CachedItem(
+            "u3", "Onesie", "White with yellow ducks around the collar", null, 1,
+            "out", null, null, null, false, "12m", 1,
+        ),
+        CachedItem(
+            "u4", "Onesie", "Red, printed text reading LADIES MAN", null, 1,
+            "out", null, null, null, false, "12m", 0,
+        ),
+        CachedItem(
+            "u5", "Cordless drill", "Yellow case, two batteries", null, 1,
+            "loaned", null, null, null, false, null, 1,
         ),
     )
 

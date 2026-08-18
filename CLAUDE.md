@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **312 server** (pytest, real Postgres) + **196 Android** (measured 2026-08-18) |
+| Tests | **313 server** (pytest, real Postgres) + **199 Android** (measured 2026-08-18) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -864,6 +864,29 @@ Measured while looking, and worth keeping: filing garments **grouped** (`Shorts 
 **36 s/garment** against **60 s** one row per garment — and that understates it, because the
 grouped rows came first, against the learning curve.
 
+
+**"Not in a bin" is a screen now (#41).** Owner-reported at real scale — 32 loose garments — as
+"I don't know what the items are. It's a shit of scrolling. I can't multi select." Three faults,
+one per complaint.
+
+**The rows came from the Room cache, which carried no photo count**, so the section drew its own
+stripped-down row: no thumbnail, no description, and a shouting `12M · CATALOGUED, NOT FILED` under
+every one. The list where rows are hardest to tell apart had the least to tell them apart by.
+`CachedItem` gains `photoCount` (**Room v5**, additive `ADD COLUMN … DEFAULT 0`), which also gives
+offline search results their pictures back — and `ItemRow` moved to `ui/components/`, because there
+were two implementations of an item row and they had drifted.
+
+**It is its own route.** Browsing bins and clearing loose ends are different jobs; thirty-two rows
+unfolding above the bins made the tab useless for the first while doing the second badly. The tab
+keeps a one-line count in the attention channel and opens `UnfiledScreen`.
+
+**Filing is bulk** — same selection model as a bin, one verb (`File into…`), one `bulkMove`.
+
+Found while wiring it: **`POST /items` with no bin wrote no ledger row at all** — the hole the
+branch directly above it exists to prevent — and stamped `out_reason = "other"` where the same
+state reached through review is `unfiled`. Both paths go through `record_move("catalogued")` now,
+and `inbound_reason_for` takes `out_reason`, so filing something **never in a bin** is `moved`, not
+`repacked`: "it came back" is untrue of a thing that had never been anywhere.
 
 **The bin screen when everything is out (#40).** Owner-reported: "annoying to sort through… it
 doesn't feel clean". Unpacking is a first-class operation, so this is a normal state, and it was

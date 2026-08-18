@@ -98,6 +98,7 @@ class CatalogRepository @Inject constructor(
         isOverdue = isOverdue,
         // So "4T" finds the coat offline, which is the one place someone types it.
         sizeRaw = apparel?.sizeRaw,
+        photoCount = photoCount,
     )
 
     /**

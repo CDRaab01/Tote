@@ -48,6 +48,16 @@ data class CachedItem(
      * comparing against a stale copy of a ladder it does not implement.
      */
     val sizeRaw: String? = null,
+    /**
+     * How many photographs the item has, so a cached row can draw its thumbnail.
+     *
+     * Not the photographs themselves — those stream from the server and a bin screen without
+     * signal shows the placeholder. What this buys is that every list built from the cache
+     * looks like the ones built from the API: the unfiled list on the Totes tab had no pictures
+     * at all, and neither did offline search results, so exactly where two rows are hardest to
+     * tell apart (no bin, no location, same name) they were also hardest to recognise.
+     */
+    val photoCount: Int = 0,
 )
 
 @Entity(tableName = "cached_totes")
@@ -154,7 +164,7 @@ interface CatalogDao {
  */
 @Database(
     entities = [CachedItem::class, CachedTote::class, CaptureQueueEntity::class],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class ToteDatabase : RoomDatabase() {

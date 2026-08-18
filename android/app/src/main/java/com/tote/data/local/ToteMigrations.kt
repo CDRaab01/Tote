@@ -100,6 +100,21 @@ object ToteMigrations {
     }
 
     /**
+     * v5 — the photo count on cached items, so a cached row can draw its thumbnail.
+     *
+     * `cached_items` is the disposable half of this database and could in principle be rebuilt,
+     * but additive is still right: a rebuild empties the offline catalogue until the next
+     * successful sync, and the attic is precisely where that sync cannot happen.
+     *
+     * NOT NULL with a default of 0, which is also the honest value — every row already cached
+     * was written before the count was carried, and 0 renders the placeholder rather than a
+     * broken image.
+     */
+    private val MIGRATION_4_5 = Migration(4, 5) { db ->
+        db.execSQL("ALTER TABLE `cached_items` ADD COLUMN `photoCount` INTEGER NOT NULL DEFAULT 0")
+    }
+
+    /**
      * Passed to `Room.databaseBuilder(...).addMigrations(*ALL)`.
      *
      * Order does not matter to Room — it finds a path through the graph — but keeping them in
@@ -109,5 +124,6 @@ object ToteMigrations {
         MIGRATION_1_2,
         MIGRATION_2_3,
         MIGRATION_3_4,
+        MIGRATION_4_5,
     )
 }

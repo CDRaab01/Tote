@@ -47,7 +47,7 @@ _OUTBOUND = {"unpacked", "outgrown", "loaned", "disposed"}
 _UNFILED = {"catalogued"}
 
 
-def inbound_reason_for(status: str) -> str:
+def inbound_reason_for(status: str, out_reason: str | None = None) -> str:
     """Which inbound reason describes this item coming back.
 
     One classifier, because there are four callers and they must agree: the bin's Put back button,
@@ -57,12 +57,16 @@ def inbound_reason_for(status: str) -> str:
     question the people table exists to answer.
 
     `stored` means it is already in a bin and this is a relocation; `loaned` means a person had
-    it; anything else is out of a bin and coming back to one.
+    it; `unfiled` means it was never in a bin at all, so it is not coming *back* to anything and
+    filing it is an ordinary `moved` — the `_UNFILED` docstring has always said so. Anything else
+    came out of a bin and is going back.
     """
     if status == "stored":
         return "moved"
     if status == "loaned":
         return "returned"
+    if out_reason == "unfiled":
+        return "moved"
     return "repacked"
 
 
