@@ -93,9 +93,9 @@ _OUT_REASON = {
 }
 
 
-async def _owned_tote(db: AsyncSession, user_id: uuid.UUID, tote_id: uuid.UUID) -> Tote:
+async def _owned_tote(db: AsyncSession, household_id: uuid.UUID, tote_id: uuid.UUID) -> Tote:
     tote = (
-        await db.execute(select(Tote).where(Tote.id == tote_id, Tote.user_id == user_id))
+        await db.execute(select(Tote).where(Tote.id == tote_id, Tote.household_id == household_id))
     ).scalar_one_or_none()
     if tote is None:
         # 404 rather than 403 for someone else's tote: an authenticated user should not be able
@@ -115,6 +115,7 @@ async def record_move(
     expected_back: datetime.date | None = None,
     moved_at: datetime.datetime | None = None,
     quantity: int | None = None,
+    moved_by_user_id: uuid.UUID | None = None,
 ) -> Movement:
     """Append a ledger row and bring the item's derived state in line with it.
 
@@ -127,7 +128,7 @@ async def record_move(
                 http_status.HTTP_422_UNPROCESSABLE_ENTITY,
                 f"reason '{reason}' puts an item into a tote, so to_tote_id is required",
             )
-        await _owned_tote(db, item.user_id, to_tote_id)
+        await _owned_tote(db, item.household_id, to_tote_id)
         new_tote_id: uuid.UUID | None = to_tote_id
         new_status = "stored"
         new_out_reason = None
@@ -170,6 +171,9 @@ async def record_move(
         reason=reason,
         person_id=person_id,
         note=note,
+        # Which member did it, as distinct from `person_id` — who it was done *for*. Optional
+        # so a caller that genuinely has no actor records a null rather than inventing one.
+        moved_by_user_id=moved_by_user_id,
         # A caller may backdate: you catalogue the Christmas unpack in January, and the ledger
         # should say when it happened, not when you got round to recording it.
         moved_at=moved_at or datetime.datetime.now(datetime.UTC),
@@ -192,10 +196,11 @@ async def record_move(
 async def unpack_tote(
     db: AsyncSession,
     *,
-    user_id: uuid.UUID,
+    household_id: uuid.UUID,
     tote_id: uuid.UUID,
     item_ids: list[uuid.UUID] | None = None,
     note: str | None = None,
+    moved_by_user_id: uuid.UUID | None = None,
 ) -> list[Movement]:
     """Take everything (or a selection) out of a tote in one operation.
 
@@ -203,21 +208,27 @@ async def unpack_tote(
     individual edits would mean nobody does it, and a catalog nobody updates is worse than no
     catalog — it is a catalog you trust and shouldn't.
     """
-    await _owned_tote(db, user_id, tote_id)
-    query = select(Item).where(Item.user_id == user_id, Item.current_tote_id == tote_id)
+    await _owned_tote(db, household_id, tote_id)
+    query = select(Item).where(Item.household_id == household_id, Item.current_tote_id == tote_id)
     if item_ids is not None:
         query = query.where(Item.id.in_(item_ids))
     items = (await db.execute(query)).scalars().all()
-    return [await record_move(db, item=i, reason="unpacked", note=note) for i in items]
+    return [
+        await record_move(
+            db, item=i, reason="unpacked", note=note, moved_by_user_id=moved_by_user_id
+        )
+        for i in items
+    ]
 
 
 async def repack_tote(
     db: AsyncSession,
     *,
-    user_id: uuid.UUID,
+    household_id: uuid.UUID,
     tote_id: uuid.UUID,
     item_ids: list[uuid.UUID] | None = None,
     note: str | None = None,
+    moved_by_user_id: uuid.UUID | None = None,
 ) -> list[Movement]:
     """Put items back into a tote.
 
@@ -226,16 +237,16 @@ async def repack_tote(
     does not sweep up every loose item in the house, which is what a naive "all items with no
     tote" query would do.
     """
-    await _owned_tote(db, user_id, tote_id)
+    await _owned_tote(db, household_id, tote_id)
 
     if item_ids is not None:
-        query = select(Item).where(Item.user_id == user_id, Item.id.in_(item_ids))
+        query = select(Item).where(Item.household_id == household_id, Item.id.in_(item_ids))
         items = (await db.execute(query)).scalars().all()
     else:
         latest = (
             select(Movement.item_id, Movement.from_tote_id)
             .join(Item, Item.id == Movement.item_id)
-            .where(Item.user_id == user_id, Item.current_tote_id.is_(None))
+            .where(Item.household_id == household_id, Item.current_tote_id.is_(None))
             .order_by(Movement.item_id, Movement.moved_at.desc(), Movement.created_at.desc())
             .distinct(Movement.item_id)
             .subquery()
@@ -250,6 +261,13 @@ async def repack_tote(
         )
 
     return [
-        await record_move(db, item=i, reason="repacked", to_tote_id=tote_id, note=note)
+        await record_move(
+            db,
+            item=i,
+            reason="repacked",
+            to_tote_id=tote_id,
+            note=note,
+            moved_by_user_id=moved_by_user_id,
+        )
         for i in items
     ]

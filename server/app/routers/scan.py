@@ -35,11 +35,11 @@ Db = Annotated[AsyncSession, Depends(get_db)]
 MAX_PHOTOS = 8
 
 
-async def _owned_draft(db: AsyncSession, user_id: uuid.UUID, draft_id: uuid.UUID) -> Item:
+async def _owned_draft(db: AsyncSession, household_id: uuid.UUID, draft_id: uuid.UUID) -> Item:
     item = (
         await db.execute(
             select(Item).where(
-                Item.id == draft_id, Item.user_id == user_id, Item.is_draft.is_(True)
+                Item.id == draft_id, Item.household_id == household_id, Item.is_draft.is_(True)
             )
         )
     ).scalar_one_or_none()
@@ -94,7 +94,9 @@ async def scan(
     if capture_id is not None:
         existing = (
             await db.execute(
-                select(Item).where(Item.user_id == user.id, Item.capture_id == capture_id)
+                select(Item).where(
+                    Item.household_id == user.household_id, Item.capture_id == capture_id
+                )
             )
         ).scalar_one_or_none()
         if existing is not None:
@@ -112,7 +114,9 @@ async def scan(
 
     if tote_id is not None:
         found = (
-            await db.execute(select(Tote).where(Tote.id == tote_id, Tote.user_id == user.id))
+            await db.execute(
+                select(Tote).where(Tote.id == tote_id, Tote.household_id == user.household_id)
+            )
         ).scalar_one_or_none()
         if found is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Tote not found")
@@ -138,7 +142,9 @@ async def scan(
     if category_id is not None:
         owned = (
             await db.execute(
-                select(Category).where(Category.id == category_id, Category.user_id == user.id)
+                select(Category).where(
+                    Category.id == category_id, Category.household_id == user.household_id
+                )
             )
         ).scalar_one_or_none()
         if owned is None:
@@ -146,6 +152,7 @@ async def scan(
 
     item = await scan_photos(
         db,
+        household_id=user.household_id,
         user_id=user.id,
         photos=payload,
         tote_id=tote_id,
@@ -164,7 +171,9 @@ async def scan(
         await db.rollback()
         existing = (
             await db.execute(
-                select(Item).where(Item.user_id == user.id, Item.capture_id == capture_id)
+                select(Item).where(
+                    Item.household_id == user.household_id, Item.capture_id == capture_id
+                )
             )
         ).scalar_one_or_none()
         if existing is None:
@@ -182,7 +191,7 @@ async def list_drafts(user: CurrentUser, db: Db):
         (
             await db.execute(
                 select(Item)
-                .where(Item.user_id == user.id, Item.is_draft.is_(True))
+                .where(Item.household_id == user.household_id, Item.is_draft.is_(True))
                 .order_by(Item.created_at)
             )
         )
@@ -200,7 +209,7 @@ async def confirm(draft_id: uuid.UUID, body: DraftConfirm, user: CurrentUser, db
     edits in the body win over whatever the model said — every field is overwritten, not merged,
     so a corrected name cannot be quietly reverted by a later re-read of the draft.
     """
-    item = await _owned_draft(db, user.id, draft_id)
+    item = await _owned_draft(db, user.household_id, draft_id)
 
     item.name = body.name.strip()
     item.description = body.description
@@ -227,10 +236,11 @@ async def confirm(draft_id: uuid.UUID, body: DraftConfirm, user: CurrentUser, db
         item=item,
         reason="initial" if body.tote_id is not None else "catalogued",
         to_tote_id=body.tote_id,
+        moved_by_user_id=user.id,
     )
     await db.commit()
 
-    row = (await db.execute(item_query(user.id).where(Item.id == item.id))).one()
+    row = (await db.execute(item_query(user.household_id).where(Item.id == item.id))).one()
     return to_item_out(*row)
 
 
@@ -241,7 +251,7 @@ async def discard(draft_id: uuid.UUID, user: CurrentUser, db: Db):
     The files are deleted too. Leaving them would accumulate orphaned JPEGs on the volume with no
     row pointing at them — invisible until the disk fills, and impossible to attribute afterwards.
     """
-    item = await _owned_draft(db, user.id, draft_id)
+    item = await _owned_draft(db, user.household_id, draft_id)
     item_id = item.id
     await db.delete(item)
     await db.commit()
@@ -259,7 +269,9 @@ async def item_photo(
     than showing a broken frame.
     """
     owned = (
-        await db.execute(select(Item.id).where(Item.id == item_id, Item.user_id == user.id))
+        await db.execute(
+            select(Item.id).where(Item.id == item_id, Item.household_id == user.household_id)
+        )
     ).scalar_one_or_none()
     if owned is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Item not found")

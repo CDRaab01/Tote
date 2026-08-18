@@ -33,12 +33,12 @@ logger = logging.getLogger(__name__)
 SCAN_UNAVAILABLE = "identify_unavailable"
 
 
-async def _categories_for(db: AsyncSession, user_id: uuid.UUID) -> list[str]:
+async def _categories_for(db: AsyncSession, household_id: uuid.UUID) -> list[str]:
     rows = (
         (
             await db.execute(
                 select(Category.name)
-                .where(Category.user_id == user_id)
+                .where(Category.household_id == household_id)
                 .order_by(Category.sort_order)
             )
         )
@@ -51,6 +51,7 @@ async def _categories_for(db: AsyncSession, user_id: uuid.UUID) -> list[str]:
 async def scan_photos(
     db: AsyncSession,
     *,
+    household_id: uuid.UUID,
     user_id: uuid.UUID,
     photos: list[tuple[bytes, str]],
     tote_id: uuid.UUID | None = None,
@@ -84,6 +85,9 @@ async def scan_photos(
     question beats a broad one, and no question at all beats a narrow one nobody needed to ask.
     """
     item = Item(
+        # Scope and provenance are different things now: the household is who may see this
+        # draft, `user_id` is which member pressed the shutter.
+        household_id=household_id,
         user_id=user_id,
         capture_id=capture_id,
         # The person's own words when they gave them, otherwise a placeholder replaced by
@@ -157,13 +161,13 @@ async def scan_photos(
             if described is not None:
                 item.description = described.description
         await _read_the_label(
-            db, item, urls, user_id=user_id, category_id=category_id, client=client
+            db, item, urls, household_id=household_id, category_id=category_id, client=client
         )
         item.draft_tote_id = tote_id
         item.processed_at = _now()
         return item
 
-    categories = await _categories_for(db, user_id)
+    categories = await _categories_for(db, household_id)
 
     try:
         draft = await identify_item(urls, categories, client=client)
@@ -189,7 +193,9 @@ async def scan_photos(
     if draft.category:
         match = (
             await db.execute(
-                select(Category).where(Category.user_id == user_id, Category.name == draft.category)
+                select(Category).where(
+                    Category.household_id == household_id, Category.name == draft.category
+                )
             )
         ).scalar_one_or_none()
         if match is not None:
@@ -207,7 +213,7 @@ async def scan_photos(
     #    is deliberately NO retry against the cleaned copy on a null — measured, it recovers the
     #    failing image two runs in three and answers a *wrong size* the third.
     await _read_the_label(
-        db, item, urls, user_id=user_id, category_name=draft.category, client=client
+        db, item, urls, household_id=household_id, category_name=draft.category, client=client
     )
 
     # The destination is remembered but NOT applied: an item only enters a tote when a human
@@ -223,7 +229,7 @@ async def _read_the_label(
     item: Item,
     urls: list[str],
     *,
-    user_id: uuid.UUID,
+    household_id: uuid.UUID,
     category_name: str | None = None,
     category_id: uuid.UUID | None = None,
     client=None,
@@ -247,61 +253,9 @@ async def _read_the_label(
     if category_name is None and category_id is not None:
         category_name = (
             await db.execute(
-                select(Category.name).where(Category.id == category_id, Category.user_id == user_id)
-            )
-        ).scalar_one_or_none()
-
-    if not looks_like_clothing(item.name, category_name):
-        return
-
-    try:
-        label = await read_label(urls, client=client)
-    except HTTPException as e:
-        logger.warning("label pass unavailable for item %s: %s", item.id, e.detail)
-        label = None
-    except Exception:
-        logger.exception("label pass failed for item %s", item.id)
-        label = None
-    if label is None:
-        return
-
-    apparel = apparel_from_label(item.id, label)
-    if apparel is not None:
-        # Through the relationship: `delete-orphan` would remove a standalone row on the next
-        # flush, so the size would vanish between the scan and the review screen.
-        item.apparel = apparel
-
-
-async def _read_the_label(
-    db: AsyncSession,
-    item: Item,
-    urls: list[str],
-    *,
-    user_id: uuid.UUID,
-    category_name: str | None = None,
-    category_id: uuid.UUID | None = None,
-    client=None,
-) -> None:
-    """If this looks like clothing, ask the label what size it is — a SECOND, narrow call.
-
-    Its own try/except, and that is the entire point of the shape. A 503 from this call reaching
-    the outer handler would rewrite a perfectly good identification as `identify_unavailable`,
-    turning "we could not read the tag" into "we could not see the photo". Crate learned this the
-    hard way; do not flatten these two handlers together.
-
-    The ORIGINALS go to the model, never the cleaned copies: background removal is unpredictable
-    on labels and once decided a woven brand tab was "the subject". And there is deliberately NO
-    retry against the cleaned copy on a null — measured, it recovers the failing image two runs in
-    three and answers a *wrong size* the third.
-
-    The gate takes a category **name** on the identified path (the model answers in names) and a
-    category **id** on the named-by-hand path (a picker answers in ids). Resolving the id here
-    rather than making the caller do it keeps the gate's one rule in one place.
-    """
-    if category_name is None and category_id is not None:
-        category_name = (
-            await db.execute(
-                select(Category.name).where(Category.id == category_id, Category.user_id == user_id)
+                select(Category.name).where(
+                    Category.id == category_id, Category.household_id == household_id
+                )
             )
         ).scalar_one_or_none()
 

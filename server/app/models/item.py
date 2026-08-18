@@ -31,14 +31,24 @@ OUT_REASONS = ("unpacked", "outgrown", "loaned", "in_use", "unfiled", "other")
 
 class Item(Base):
     __tablename__ = "items"
-    # Per user, not global: capture ids are generated on the phone, and one household's client
-    # must never be able to collide with another's. Postgres treats NULLs as distinct in a
-    # unique constraint, so every manually-added item (capture_id NULL) is unaffected.
-    __table_args__ = (UniqueConstraint("user_id", "capture_id", name="uq_items_user_capture"),)
+    # Per household, not global: capture ids are generated on the phone, and one household's
+    # clients must never be able to collide with another's. Postgres treats NULLs as distinct in
+    # a unique constraint, so every manually-added item (capture_id NULL) is unaffected. Household
+    # scope is also what makes the replay guard work once two phones file into one catalogue —
+    # the very case idempotency was added for.
+    __table_args__ = (
+        UniqueConstraint("household_id", "capture_id", name="uq_items_household_capture"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    # WHO MAY SEE THIS. The access check everywhere is `household_id == user.household_id`.
+    household_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    # WHO CREATED THIS — provenance only, never access. Nullable + SET NULL: a shared catalogue
+    # must survive the deletion of whichever member happened to enter the row.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
     name: Mapped[str] = mapped_column(String(160))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

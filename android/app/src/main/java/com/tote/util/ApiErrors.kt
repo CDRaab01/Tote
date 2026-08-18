@@ -1,5 +1,9 @@
 package com.tote.util
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import retrofit2.HttpException
 
 /**
@@ -38,6 +42,34 @@ object ApiErrors {
                 else -> d.toString()
             }
         }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * The blocking physical objects from a refused household merge, keyed by kind.
+     *
+     * `/household/accept` answers a 409 whose `detail` is an OBJECT rather than the usual
+     * sentence — `{"message": …, "conflicts": {"tote_codes": ["a14"]}}` — because "you both have
+     * a bin A14" is only actionable if it names A14. [detail] would flatten that to a JSON blob,
+     * so this reads the structure instead. Empty for every other error, which is what lets a
+     * caller tell a merge conflict apart from an ordinary failure.
+     *
+     * Consumes the one-shot error body, so call this BEFORE [detail] on the same throwable.
+     *
+     * Parsed with kotlinx.serialization rather than `org.json` like [detail] beside it, and that
+     * is deliberate: `unitTests.isReturnDefaultValues = true` stubs the whole `org.json` package
+     * to return nulls on the JVM, so an org.json parser cannot be tested here at all — it returns
+     * empty in every unit test and looks like it works. [detail] has that problem today and no
+     * test; this must not acquire it, because the codes it extracts are the entire message.
+     */
+    fun conflicts(t: Throwable): Map<String, List<String>> {
+        val body = (t as? HttpException)?.response()?.errorBody()?.string() ?: return emptyMap()
+        return runCatching {
+            Json.parseToJsonElement(body)
+                .jsonObject["detail"]!!
+                .jsonObject["conflicts"]!!
+                .jsonObject
+                .mapValues { (_, values) -> values.jsonArray.map { it.jsonPrimitive.content } }
+        }.getOrDefault(emptyMap())
     }
 
     /**

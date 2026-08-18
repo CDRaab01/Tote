@@ -30,11 +30,22 @@ DEFAULT_CATEGORIES = (
 
 class Category(Base):
     __tablename__ = "categories"
-    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_categories_user_name"),)
+    # Scoped to the household, not the creator: the vocabulary is the household's, and two
+    # "Christmas / seasonal decor" rows would appear the moment a second member's first login
+    # seeded DEFAULT_CATEGORIES.
+    __table_args__ = (
+        UniqueConstraint("household_id", "name", name="uq_categories_household_name"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    # WHO MAY SEE THIS. The access check everywhere is `household_id == user.household_id`.
+    household_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    # WHO CREATED THIS — provenance only, never access. Nullable + SET NULL: a shared catalogue
+    # must survive the deletion of whichever member happened to enter the row.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
     name: Mapped[str] = mapped_column(String(80))
     icon: Mapped[str | None] = mapped_column(String(48), nullable=True)

@@ -34,17 +34,17 @@ router = APIRouter(tags=["items"])
 Db = Annotated[AsyncSession, Depends(get_db)]
 
 
-async def _owned_item(db: AsyncSession, user_id: uuid.UUID, item_id: uuid.UUID) -> Item:
+async def _owned_item(db: AsyncSession, household_id: uuid.UUID, item_id: uuid.UUID) -> Item:
     item = (
-        await db.execute(select(Item).where(Item.id == item_id, Item.user_id == user_id))
+        await db.execute(select(Item).where(Item.id == item_id, Item.household_id == household_id))
     ).scalar_one_or_none()
     if item is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Item not found")
     return item
 
 
-async def _one(db: AsyncSession, user_id: uuid.UUID, item_id: uuid.UUID) -> ItemOut:
-    row = (await db.execute(item_query(user_id).where(Item.id == item_id))).one_or_none()
+async def _one(db: AsyncSession, household_id: uuid.UUID, item_id: uuid.UUID) -> ItemOut:
+    row = (await db.execute(item_query(household_id).where(Item.id == item_id))).one_or_none()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Item not found")
     return to_item_out(*row)
@@ -61,7 +61,7 @@ async def list_items(
     limit: int = Query(default=200, le=500),
     offset: int = Query(default=0, ge=0),
 ):
-    query = item_query(user.id)
+    query = item_query(user.household_id)
     if tote_id:
         query = query.where(Item.current_tote_id == tote_id)
     if category_id:
@@ -85,36 +85,38 @@ async def create_item(body: ItemIn, user: CurrentUser, db: Db):
         found = (
             await db.execute(
                 select(Category).where(
-                    Category.id == data["category_id"], Category.user_id == user.id
+                    Category.id == data["category_id"], Category.household_id == user.household_id
                 )
             )
         ).scalar_one_or_none()
         if found is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found")
 
-    item = Item(user_id=user.id, **data)
+    item = Item(user_id=user.id, household_id=user.household_id, **data)
     db.add(item)
     await db.flush()
 
     if tote_id:
         # Filing an item is a movement like any other, so it gets an `initial` ledger row. An
         # item that appeared in a bin with no history would be the first hole in the ledger.
-        await record_move(db, item=item, reason="initial", to_tote_id=tote_id)
+        await record_move(
+            db, item=item, reason="initial", to_tote_id=tote_id, moved_by_user_id=user.id
+        )
     else:
         # And so is not filing it. This used to set the two fields by hand, which left an item
         # with NO ledger row at all — the hole the branch above exists to prevent, dug by the
         # other branch — and stamped `other` where the same state reached through review's
         # confirm-without-a-bin is `unfiled`. Two ways into one state that disagreed about what
         # the state was, which is why filing one of them later read as "it came back".
-        await record_move(db, item=item, reason="catalogued")
+        await record_move(db, item=item, reason="catalogued", moved_by_user_id=user.id)
 
     await db.commit()
-    return await _one(db, user.id, item.id)
+    return await _one(db, user.household_id, item.id)
 
 
 @router.get("/items/{item_id}", response_model=ItemOut)
 async def get_item(item_id: uuid.UUID, user: CurrentUser, db: Db):
-    return await _one(db, user.id, item_id)
+    return await _one(db, user.household_id, item_id)
 
 
 @router.patch("/items/{item_id}", response_model=ItemOut)
@@ -125,13 +127,14 @@ async def patch_item(item_id: uuid.UUID, body: ItemPatch, user: CurrentUser, db:
     from the ledger and have exactly one writer. Moving an item goes through POST
     /items/{id}/move so it always leaves a trace.
     """
-    item = await _owned_item(db, user.id, item_id)
+    item = await _owned_item(db, user.household_id, item_id)
     updates = body.model_dump(exclude_unset=True)
     if updates.get("category_id"):
         found = (
             await db.execute(
                 select(Category).where(
-                    Category.id == updates["category_id"], Category.user_id == user.id
+                    Category.id == updates["category_id"],
+                    Category.household_id == user.household_id,
                 )
             )
         ).scalar_one_or_none()
@@ -145,7 +148,7 @@ async def patch_item(item_id: uuid.UUID, body: ItemPatch, user: CurrentUser, db:
             await db.execute(
                 select(Container).where(
                     Container.id == updates["container_id"],
-                    Container.user_id == user.id,
+                    Container.household_id == user.household_id,
                     Container.tote_id == item.current_tote_id,
                 )
             )
@@ -162,7 +165,7 @@ async def patch_item(item_id: uuid.UUID, body: ItemPatch, user: CurrentUser, db:
     if apparel_updates is not None:
         await apply_apparel(db, item, apparel_updates)
     await db.commit()
-    return await _one(db, user.id, item_id)
+    return await _one(db, user.household_id, item_id)
 
 
 @router.post("/items/bulk-move", response_model=list[MovementOut])
@@ -181,7 +184,9 @@ async def bulk_move(body: BulkRelocateIn, user: CurrentUser, db: Db):
     the last of those is the only record that a loan ever ended.
     """
     tote = (
-        await db.execute(select(Tote).where(Tote.id == body.to_tote_id, Tote.user_id == user.id))
+        await db.execute(
+            select(Tote).where(Tote.id == body.to_tote_id, Tote.household_id == user.household_id)
+        )
     ).scalar_one_or_none()
     if tote is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tote not found")
@@ -192,7 +197,7 @@ async def bulk_move(body: BulkRelocateIn, user: CurrentUser, db: Db):
             await db.execute(
                 select(Container).where(
                     Container.id == body.container_id,
-                    Container.user_id == user.id,
+                    Container.household_id == user.household_id,
                     # Against the DESTINATION, not where the items are now: a bag in any other
                     # bin is the contradiction the container model exists to prevent.
                     Container.tote_id == body.to_tote_id,
@@ -210,7 +215,7 @@ async def bulk_move(body: BulkRelocateIn, user: CurrentUser, db: Db):
             await db.execute(
                 select(Item).where(
                     Item.id.in_(body.item_ids),
-                    Item.user_id == user.id,
+                    Item.household_id == user.household_id,
                     Item.is_draft.is_(False),
                 )
             )
@@ -232,6 +237,7 @@ async def bulk_move(body: BulkRelocateIn, user: CurrentUser, db: Db):
                 reason=inbound_reason_for(item.status, item.out_reason),
                 to_tote_id=body.to_tote_id,
                 note=body.note,
+                moved_by_user_id=user.id,
             )
         )
         # After the move, because `record_move` clears container_id on the way in — the
@@ -258,7 +264,7 @@ async def bulk_bag(body: BulkBagIn, user: CurrentUser, db: Db):
         container = (
             await db.execute(
                 select(Container).where(
-                    Container.id == body.container_id, Container.user_id == user.id
+                    Container.id == body.container_id, Container.household_id == user.household_id
                 )
             )
         ).scalar_one_or_none()
@@ -270,7 +276,7 @@ async def bulk_bag(body: BulkBagIn, user: CurrentUser, db: Db):
             await db.execute(
                 select(Item).where(
                     Item.id.in_(body.item_ids),
-                    Item.user_id == user.id,
+                    Item.household_id == user.household_id,
                     Item.is_draft.is_(False),
                 )
             )
@@ -298,7 +304,7 @@ async def delete_item(item_id: uuid.UUID, user: CurrentUser, db: Db):
     For "we no longer own this", the right operation is a `disposed` movement, which keeps the
     history. Delete is for a row created by mistake.
     """
-    item = await _owned_item(db, user.id, item_id)
+    item = await _owned_item(db, user.household_id, item_id)
     await db.delete(item)
     await db.commit()
     # The rows cascade; the FILES do not. Until this call existed, deleting an item left its
@@ -310,7 +316,7 @@ async def delete_item(item_id: uuid.UUID, user: CurrentUser, db: Db):
 
 @router.post("/items/{item_id}/move", response_model=MovementOut)
 async def move_item(item_id: uuid.UUID, body: MoveIn, user: CurrentUser, db: Db):
-    item = await _owned_item(db, user.id, item_id)
+    item = await _owned_item(db, user.household_id, item_id)
     movement = await record_move(
         db,
         item=item,
@@ -318,6 +324,7 @@ async def move_item(item_id: uuid.UUID, body: MoveIn, user: CurrentUser, db: Db)
         to_tote_id=body.to_tote_id,
         person_id=body.person_id,
         note=body.note,
+        moved_by_user_id=user.id,
         expected_back=body.expected_back,
         moved_at=body.moved_at,
     )
@@ -329,7 +336,7 @@ async def move_item(item_id: uuid.UUID, body: MoveIn, user: CurrentUser, db: Db)
 @router.get("/items/{item_id}/movements", response_model=list[MovementOut])
 async def item_movements(item_id: uuid.UUID, user: CurrentUser, db: Db):
     """The item's whole history, newest first — "where was this last year"."""
-    await _owned_item(db, user.id, item_id)
+    await _owned_item(db, user.household_id, item_id)
     rows = (
         (
             await db.execute(
@@ -364,7 +371,7 @@ async def search(
     rank = func.ts_rank(Item.search_vector, tsquery)
     rows = (
         await db.execute(
-            item_query(user.id)
+            item_query(user.household_id)
             .add_columns(rank)
             .where(Item.search_vector.op("@@")(tsquery))
             .order_by(rank.desc(), Item.name)

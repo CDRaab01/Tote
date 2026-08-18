@@ -364,6 +364,14 @@ data class MovementDto(
     val quantity: Int = 1,
     val reason: String,
     @SerialName("person_id") val personId: String? = null,
+    /**
+     * Which member did it — as opposed to [personId], who it was done *for*.
+     *
+     * Null on every row written before sharing existed, and on anything the server does on
+     * nobody's behalf. Render it only in a shared household: in a household of one it is always
+     * your own name, on every row.
+     */
+    @SerialName("moved_by_user_id") val movedByUserId: String? = null,
     val note: String? = null,
     @SerialName("moved_at") val movedAt: String,
 )

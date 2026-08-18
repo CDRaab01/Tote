@@ -48,6 +48,11 @@ import androidx.compose.foundation.layout.Column
 import com.tote.ui.components.PickerList
 import com.tote.ui.components.PickerField
 import com.tote.ui.components.PickerOption
+import com.tote.data.remote.HouseholdDto
+import com.tote.data.remote.HouseholdMemberDto
+import com.tote.data.remote.InviteDto
+import com.tote.data.remote.MergePreviewDto
+import com.tote.ui.settings.HouseholdState
 import com.tote.ui.settings.SettingsContent
 import com.tote.ui.settings.SettingsState
 import com.tote.ui.theme.ToteTheme
@@ -643,6 +648,86 @@ class ScreenshotTest {
             hasNfc = false,
         )
     }
+
+    // The household states, in both themes. The invitation card is the one screen in the app
+    // that must persuade somebody NOT to tap a button, and the conflict notice speaks in the
+    // attention channel over a panel — the exact combination that produced three contrast bugs
+    // visible only in a PNG.
+    private val settings = SettingsState(
+        email = "cdraab01@gmail.com",
+        version = "1.0.26",
+        serverUrl = "https://dragonfly.tail2ce561.ts.net:8448",
+    )
+
+    private val soloHousehold = HouseholdState(
+        household = HouseholdDto(
+            householdId = "h1",
+            members = listOf(HouseholdMemberDto("u1", "Chris", "cdraab01@gmail.com", true)),
+            youAreOwner = true,
+            shared = false,
+        ),
+        loaded = true,
+    )
+
+    private fun invitation(conflicts: Map<String, List<String>> = emptyMap()) = soloHousehold.copy(
+        invite = InviteDto(
+            householdId = "h2",
+            invitedByName = "Sam",
+            invitedByEmail = "sam@example.com",
+            preview = MergePreviewDto(totes = 4, items = 37, people = 2, conflicts = conflicts),
+        )
+    )
+
+    private val sharedHousehold = HouseholdState(
+        household = HouseholdDto(
+            householdId = "h1",
+            members = listOf(
+                HouseholdMemberDto("u1", "Chris", "cdraab01@gmail.com", true),
+                HouseholdMemberDto("u2", "Sam", "sam@example.com", false),
+            ),
+            youAreOwner = true,
+            shared = true,
+        ),
+        loaded = true,
+    )
+
+    @Test fun settings_household_invite_dark() =
+        capture("settings_household_invite_dark", dark = true) {
+            SettingsContent(state = settings, onSignOut = {}, household = invitation())
+        }
+
+    @Test fun settings_household_invite_light() =
+        capture("settings_household_invite_light", dark = false) {
+            SettingsContent(state = settings, onSignOut = {}, household = invitation())
+        }
+
+    @Test fun settings_household_conflict_dark() =
+        capture("settings_household_conflict_dark", dark = true) {
+            SettingsContent(
+                state = settings,
+                onSignOut = {},
+                household = invitation(mapOf("tote_codes" to listOf("a14", "b02"))),
+            )
+        }
+
+    @Test fun settings_household_conflict_light() =
+        capture("settings_household_conflict_light", dark = false) {
+            SettingsContent(
+                state = settings,
+                onSignOut = {},
+                household = invitation(mapOf("tote_codes" to listOf("a14", "b02"))),
+            )
+        }
+
+    @Test fun settings_household_shared_dark() =
+        capture("settings_household_shared_dark", dark = true) {
+            SettingsContent(state = settings, onSignOut = {}, household = sharedHousehold)
+        }
+
+    @Test fun settings_household_shared_light() =
+        capture("settings_household_shared_light", dark = false) {
+            SettingsContent(state = settings, onSignOut = {}, household = sharedHousehold)
+        }
 
     @Test fun settings_dark() = capture("settings_dark", dark = true) {
         SettingsContent(

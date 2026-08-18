@@ -2,6 +2,7 @@
 
 from app.models.category import DEFAULT_CATEGORIES, Category
 from app.models.container import Container
+from app.models.household import Household, HouseholdInvite, HouseholdMember
 from app.models.item import (
     ITEM_CONDITIONS,
     ITEM_STATUSES,
@@ -25,6 +26,9 @@ __all__ = [
     "OUT_REASONS",
     "Category",
     "Container",
+    "Household",
+    "HouseholdInvite",
+    "HouseholdMember",
     "Item",
     "ItemApparel",
     "ItemPhoto",

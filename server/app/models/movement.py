@@ -53,6 +53,14 @@ class Movement(Base):
     person_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("people.id", ondelete="SET NULL"), nullable=True
     )
+    # Who *did* it, as opposed to who it was done for. A question that does not exist in a
+    # one-person catalogue and is the first one asked in a shared one: the ledger could always
+    # say a bin was repacked in March and never who repacked it. Null for every row written
+    # before migration 0006, and for anything the server does on nobody's behalf — a null here
+    # means "not recorded", never "the system".
+    moved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Separate from created_at on purpose: you catalogue the Christmas unpack in January, and
     # the ledger should say when it happened, not when you got round to recording it.

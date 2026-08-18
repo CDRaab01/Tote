@@ -389,6 +389,9 @@ class MovementOut(BaseModel):
     quantity: int
     reason: str
     person_id: uuid.UUID | None
+    # Who it was done FOR (`person_id`, the lendee) and who DID it are different questions, and
+    # only the second one appears when a catalogue is shared.
+    moved_by_user_id: uuid.UUID | None
     note: str | None
     moved_at: datetime.datetime
 

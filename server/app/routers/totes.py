@@ -46,21 +46,23 @@ Db = Annotated[AsyncSession, Depends(get_db)]
 DUPLICATE_CODE = "A tote with that code already exists (codes are case-insensitive)"
 
 
-async def _owned_tote(db: AsyncSession, user_id: uuid.UUID, tote_id: uuid.UUID) -> Tote:
+async def _owned_tote(db: AsyncSession, household_id: uuid.UUID, tote_id: uuid.UUID) -> Tote:
     tote = (
-        await db.execute(select(Tote).where(Tote.id == tote_id, Tote.user_id == user_id))
+        await db.execute(select(Tote).where(Tote.id == tote_id, Tote.household_id == household_id))
     ).scalar_one_or_none()
     if tote is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tote not found")
     return tote
 
 
-async def _check_refs(db: AsyncSession, user_id: uuid.UUID, updates: dict) -> None:
+async def _check_refs(db: AsyncSession, household_id: uuid.UUID, updates: dict) -> None:
     for field, model in (("category_id", Category), ("location_id", Location)):
         ref = updates.get(field)
         if ref:
             found = (
-                await db.execute(select(model).where(model.id == ref, model.user_id == user_id))
+                await db.execute(
+                    select(model).where(model.id == ref, model.household_id == household_id)
+                )
             ).scalar_one_or_none()
             if found is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, f"{model.__name__} not found")
@@ -74,7 +76,7 @@ async def list_totes(
     category_id: uuid.UUID | None = None,
     include_archived: bool = Query(default=False),
 ):
-    query = select(Tote).where(Tote.user_id == user.id)
+    query = select(Tote).where(Tote.household_id == user.household_id)
     if location_id:
         query = query.where(Tote.location_id == location_id)
     if category_id:
@@ -85,16 +87,16 @@ async def list_totes(
 
     # Counts fetched once for the whole list rather than per row: this endpoint backs the
     # browse-by-location screen, and a per-tote count query would be a clean N+1.
-    counts = await tote_counts(db, user.id)
-    outs = await out_counts(db, user.id)
-    locations = await location_names(db, user.id)
+    counts = await tote_counts(db, user.household_id)
+    outs = await out_counts(db, user.household_id)
+    locations = await location_names(db, user.household_id)
     return [await to_tote_out(db, t, counts, outs, locations) for t in rows]
 
 
 @router.post("", response_model=ToteOut, status_code=status.HTTP_201_CREATED)
 async def create_tote(body: ToteIn, user: CurrentUser, db: Db):
-    await _check_refs(db, user.id, body.model_dump())
-    tote = Tote(user_id=user.id, **body.model_dump())
+    await _check_refs(db, user.household_id, body.model_dump())
+    tote = Tote(user_id=user.id, household_id=user.household_id, **body.model_dump())
     db.add(tote)
     try:
         await db.commit()
@@ -109,15 +111,15 @@ async def create_tote(body: ToteIn, user: CurrentUser, db: Db):
 
 @router.get("/{tote_id}", response_model=ToteDetail)
 async def get_tote(tote_id: uuid.UUID, user: CurrentUser, db: Db):
-    tote = await _owned_tote(db, user.id, tote_id)
+    tote = await _owned_tote(db, user.household_id, tote_id)
     base = await to_tote_out(db, tote)
     detail = ToteDetail(**base.model_dump())
 
     # The bags in this bin. An empty list is the ordinary answer — most bins are not subdivided.
-    detail.containers = await containers_for(db, user.id, tote_id)
+    detail.containers = await containers_for(db, user.household_id, tote_id)
 
     detail.items = await items_for(
-        db, item_query(user.id).where(Item.current_tote_id == tote_id).order_by(Item.name)
+        db, item_query(user.household_id).where(Item.current_tote_id == tote_id).order_by(Item.name)
     )
 
     # Items whose LAST movement left this tote and have not returned. Shown rather than hidden:
@@ -127,7 +129,7 @@ async def get_tote(tote_id: uuid.UUID, user: CurrentUser, db: Db):
         select(Movement.item_id, Movement.from_tote_id)
         .join(Item, Item.id == Movement.item_id)
         .where(
-            Item.user_id == user.id,
+            Item.household_id == user.household_id,
             Item.current_tote_id.is_(None),
             Item.status != "disposed",
         )
@@ -142,16 +144,16 @@ async def get_tote(tote_id: uuid.UUID, user: CurrentUser, db: Db):
     )
     if out_ids:
         detail.items_out = await items_for(
-            db, item_query(user.id).where(Item.id.in_(out_ids)).order_by(Item.name)
+            db, item_query(user.household_id).where(Item.id.in_(out_ids)).order_by(Item.name)
         )
     return detail
 
 
 @router.patch("/{tote_id}", response_model=ToteOut)
 async def patch_tote(tote_id: uuid.UUID, body: TotePatch, user: CurrentUser, db: Db):
-    tote = await _owned_tote(db, user.id, tote_id)
+    tote = await _owned_tote(db, user.household_id, tote_id)
     updates = body.model_dump(exclude_unset=True)
-    await _check_refs(db, user.id, updates)
+    await _check_refs(db, user.household_id, updates)
     if updates.get("code"):
         updates["code"] = updates["code"].strip()
     for k, v in updates.items():
@@ -172,7 +174,7 @@ async def delete_tote(tote_id: uuid.UUID, user: CurrentUser, db: Db):
     Throwing a bin away must not erase the record of what was in it. Archiving (PATCH archived)
     is usually what someone actually wants; delete is for a bin created by mistake.
     """
-    tote = await _owned_tote(db, user.id, tote_id)
+    tote = await _owned_tote(db, user.household_id, tote_id)
     await db.delete(tote)
     await db.commit()
 
@@ -181,7 +183,12 @@ async def delete_tote(tote_id: uuid.UUID, user: CurrentUser, db: Db):
 async def unpack(tote_id: uuid.UUID, body: BulkMoveIn, user: CurrentUser, db: Db):
     """Take everything (or a selection) out, in one transaction and one ledger row per item."""
     moves = await unpack_tote(
-        db, user_id=user.id, tote_id=tote_id, item_ids=body.item_ids, note=body.note
+        db,
+        household_id=user.household_id,
+        tote_id=tote_id,
+        item_ids=body.item_ids,
+        note=body.note,
+        moved_by_user_id=user.id,
     )
     await db.commit()
     return [MovementOut.model_validate(m) for m in moves]
@@ -191,7 +198,12 @@ async def unpack(tote_id: uuid.UUID, body: BulkMoveIn, user: CurrentUser, db: Db
 async def repack(tote_id: uuid.UUID, body: BulkMoveIn, user: CurrentUser, db: Db):
     """Put back what came out of here — not every loose item in the house."""
     moves = await repack_tote(
-        db, user_id=user.id, tote_id=tote_id, item_ids=body.item_ids, note=body.note
+        db,
+        household_id=user.household_id,
+        tote_id=tote_id,
+        item_ids=body.item_ids,
+        note=body.note,
+        moved_by_user_id=user.id,
     )
     await db.commit()
     return [MovementOut.model_validate(m) for m in moves]
@@ -204,7 +216,7 @@ async def tote_card(tote_id: uuid.UUID, user: CurrentUser, db: Db):
     Rendered server-side so there is exactly one layout: the card is a physical object, and two
     renderers would eventually disagree in a way only discoverable in an attic.
     """
-    tote = await _owned_tote(db, user.id, tote_id)
+    tote = await _owned_tote(db, user.household_id, tote_id)
 
     location = None
     if tote.location_id:
@@ -217,7 +229,7 @@ async def tote_card(tote_id: uuid.UUID, user: CurrentUser, db: Db):
             await db.execute(select(Category.name).where(Category.id == tote.category_id))
         ).scalar_one_or_none()
 
-    counts = await tote_counts(db, user.id)
+    counts = await tote_counts(db, user.household_id)
     pdf = render_card(
         tote,
         location=location,
@@ -240,11 +252,11 @@ async def record_tag_write(tote_id: uuid.UUID, body: NfcWriteIn, user: CurrentUs
     """Record that a physical tag now carries this tote.
 
     Called AFTER the client has written the tag, never before: if the write failed, the database
-    must not claim a tag exists that does not. The uid is unique per user, so re-using one tag
-    for a second bin is a 409 rather than a silent reassignment that would leave two bins
-    pointing at one tag.
+    must not claim a tag exists that does not. The uid is unique per household, so re-using one
+    tag for a second bin is a 409 rather than a silent reassignment that would leave two bins
+    pointing at one tag — including when the second bin is the other member's.
     """
-    tote = await _owned_tote(db, user.id, tote_id)
+    tote = await _owned_tote(db, user.household_id, tote_id)
     tote.nfc_tag_uid = body.tag_uid
     tote.nfc_written_at = datetime.datetime.now(datetime.UTC)
     try:
@@ -276,7 +288,8 @@ async def resolve_code(
     tote = (
         await db.execute(
             select(Tote).where(
-                Tote.user_id == user.id, func.lower(Tote.code) == code.strip().lower()
+                Tote.household_id == user.household_id,
+                func.lower(Tote.code) == code.strip().lower(),
             )
         )
     ).scalar_one_or_none()

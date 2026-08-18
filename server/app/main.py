@@ -13,6 +13,7 @@ from app.limiter import limiter
 from app.routers import (
     catalog,
     containers,
+    household,
     items,
     people,
     public,
@@ -105,6 +106,7 @@ app.include_router(containers.router)
 app.include_router(public.router)
 app.include_router(scan.router)
 app.include_router(people.router)
+app.include_router(household.router)
 
 
 @app.get("/health", tags=["health"])

@@ -226,16 +226,20 @@ async def test_an_empty_selection_is_refused_rather_than_treated_as_everything(a
 
 async def test_someone_else_s_items_are_not_movable(auth_client, raw_sql):
     there = await _tote(auth_client, "B02")
-    owner, item = str(uuid.uuid4()), str(uuid.uuid4())
+    owner, other_household, item = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
     await raw_sql(
         "INSERT INTO users (id, name, email) VALUES (:i, 'Other', :e)",
         i=owner,
         e=f"{owner[:8]}@example.com",
     )
     await raw_sql(
-        "INSERT INTO items (id, user_id, name, quantity, status) "
-        "VALUES (:i, :u, 'Theirs', 1, 'out')",
+        "INSERT INTO households (id, owner_user_id) VALUES (:h, :u)", h=other_household, u=owner
+    )
+    await raw_sql(
+        "INSERT INTO items (id, household_id, user_id, name, quantity, status) "
+        "VALUES (:i, :h, :u, 'Theirs', 1, 'out')",
         i=item,
+        h=other_household,
         u=owner,
     )
 

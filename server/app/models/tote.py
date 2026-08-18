@@ -11,20 +11,31 @@ class Tote(Base):
     """A physical storage bin.
 
     `code` is the short label written on the index card and encoded in the NFC tag ("A14"). It
-    is unique per user and compared case-insensitively, because a duplicate is not a database
-    inconvenience — it is two bins in an attic that claim to be the same bin. The uniqueness is
-    enforced on lower(code) by migration 0001, not by this class, so "a14" and "A14" collide.
+    is unique **per household** and compared case-insensitively, because a duplicate is not a
+    database inconvenience — it is two bins in an attic that claim to be the same bin. The
+    uniqueness is enforced on lower(code) by migration 0001 (rescoped by 0006), not by this
+    class, so "a14" and "A14" collide.
 
     `item_count` is deliberately absent: it is computed on read. A stored count is the first
     thing to drift, and here the drift is visible on a printed card and a written tag.
     """
 
     __tablename__ = "totes"
-    __table_args__ = (UniqueConstraint("user_id", "nfc_tag_uid", name="uq_totes_user_tag"),)
+    # Household-scoped: one physical sticker belongs to one bin. Per-user, two members could
+    # each claim the same tag and a tap would have two answers.
+    __table_args__ = (
+        UniqueConstraint("household_id", "nfc_tag_uid", name="uq_totes_household_tag"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    # WHO MAY SEE THIS. The access check everywhere is `household_id == user.household_id`.
+    household_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("households.id", ondelete="CASCADE"), index=True
+    )
+    # WHO CREATED THIS — provenance only, never access. Nullable + SET NULL: a shared catalogue
+    # must survive the deletion of whichever member happened to enter the row.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
     code: Mapped[str] = mapped_column(String(16))
     label: Mapped[str | None] = mapped_column(String(120), nullable=True)
@@ -41,7 +52,7 @@ class Tote(Base):
     color: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # The tag's HARDWARE uid, captured at write time. This is what lets Tote say "this tag
     # belongs to A14, but you are holding B03's card" instead of trusting whatever the tag
-    # claims. Unique per user: one physical tag cannot belong to two bins.
+    # claims. Unique per household: one physical tag cannot belong to two bins.
     nfc_tag_uid: Mapped[str | None] = mapped_column(String(32), nullable=True)
     nfc_written_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

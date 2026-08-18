@@ -31,7 +31,7 @@ from app.schemas.people import (
     PersonSizeOut,
 )
 from app.security import CurrentUser
-from app.services import ntfy
+from app.services import household_service, ntfy
 from app.services.catalog import item_query, items_for, local_today
 from app.services.fits import current_sizes, fits_query
 from app.services.movement import record_move
@@ -43,9 +43,11 @@ router = APIRouter(tags=["people"])
 Db = Annotated[AsyncSession, Depends(get_db)]
 
 
-async def _owned(db: AsyncSession, user_id: uuid.UUID, person_id: uuid.UUID) -> Person:
+async def _owned(db: AsyncSession, household_id: uuid.UUID, person_id: uuid.UUID) -> Person:
     person = (
-        await db.execute(select(Person).where(Person.id == person_id, Person.user_id == user_id))
+        await db.execute(
+            select(Person).where(Person.id == person_id, Person.household_id == household_id)
+        )
     ).scalar_one_or_none()
     if person is None:
         # 404 rather than 403, so an authenticated user cannot probe which ids exist.
@@ -87,7 +89,7 @@ async def _on_loan_count(db: AsyncSession, person: Person) -> int:
                 & (Movement.reason == "loaned"),
             )
             .where(
-                Item.user_id == person.user_id,
+                Item.household_id == person.household_id,
                 Item.status == "loaned",
                 Movement.person_id == person.id,
             )
@@ -101,7 +103,11 @@ async def _on_loan_count(db: AsyncSession, person: Person) -> int:
 @router.get("/people", response_model=list[PersonOut])
 async def list_people(user: CurrentUser, db: Db):
     rows = (
-        (await db.execute(select(Person).where(Person.user_id == user.id).order_by(Person.name)))
+        (
+            await db.execute(
+                select(Person).where(Person.household_id == user.household_id).order_by(Person.name)
+            )
+        )
         .scalars()
         .all()
     )
@@ -110,7 +116,7 @@ async def list_people(user: CurrentUser, db: Db):
 
 @router.post("/people", response_model=PersonOut, status_code=status.HTTP_201_CREATED)
 async def create_person(body: PersonIn, user: CurrentUser, db: Db):
-    person = Person(user_id=user.id, **body.model_dump())
+    person = Person(user_id=user.id, household_id=user.household_id, **body.model_dump())
     db.add(person)
     await db.commit()
     await db.refresh(person)
@@ -119,12 +125,12 @@ async def create_person(body: PersonIn, user: CurrentUser, db: Db):
 
 @router.get("/people/{person_id}", response_model=PersonOut)
 async def get_person(person_id: uuid.UUID, user: CurrentUser, db: Db):
-    return await _to_person_out(db, await _owned(db, user.id, person_id))
+    return await _to_person_out(db, await _owned(db, user.household_id, person_id))
 
 
 @router.patch("/people/{person_id}", response_model=PersonOut)
 async def patch_person(person_id: uuid.UUID, body: PersonPatch, user: CurrentUser, db: Db):
-    person = await _owned(db, user.id, person_id)
+    person = await _owned(db, user.household_id, person_id)
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(person, k, v)
     await db.commit()
@@ -139,7 +145,7 @@ async def delete_person(person_id: uuid.UUID, user: CurrentUser, db: Db):
     ledger keeps the event. A loan that happened still happened, and erasing it to tidy up a
     contact list would put a hole in the one record this app promises never to have holes in.
     """
-    person = await _owned(db, user.id, person_id)
+    person = await _owned(db, user.household_id, person_id)
     await db.delete(person)
     await db.commit()
 
@@ -154,7 +160,7 @@ async def list_sizes(person_id: uuid.UUID, user: CurrentUser, db: Db):
     Deliberately the full list: "what size was she last winter" is the question that tells you
     which bin to open this winter, and it is unanswerable from a current value.
     """
-    await _owned(db, user.id, person_id)
+    await _owned(db, user.household_id, person_id)
     rows = (
         (
             await db.execute(
@@ -181,7 +187,7 @@ async def add_size(person_id: uuid.UUID, body: PersonSizeIn, user: CurrentUser, 
     and a garment's size are placed on the same ladder by the same code. An unparseable reading
     is stored with a null index and still counts as a record of what was said.
     """
-    await _owned(db, user.id, person_id)
+    await _owned(db, user.household_id, person_id)
     reading = parse_size(body.size_raw)
     row = PersonSize(
         person_id=person_id,
@@ -200,7 +206,7 @@ async def add_size(person_id: uuid.UUID, body: PersonSizeIn, user: CurrentUser, 
 
 @router.delete("/people/{person_id}/sizes/{size_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_size(person_id: uuid.UUID, size_id: uuid.UUID, user: CurrentUser, db: Db):
-    await _owned(db, user.id, person_id)
+    await _owned(db, user.household_id, person_id)
     row = (
         await db.execute(
             select(PersonSize).where(PersonSize.id == size_id, PersonSize.person_id == person_id)
@@ -229,7 +235,7 @@ async def fits(
     on, and a client must say so rather than rendering "nothing fits" — one of those sentences is
     a reason to stop looking and the other is a reason to go and read a tag.
     """
-    person = await _owned(db, user.id, person_id)
+    person = await _owned(db, user.household_id, person_id)
     sizes = await current_sizes(db, person.id)
 
     if not sizes:
@@ -240,7 +246,7 @@ async def fits(
             tolerance=tolerance,
         )
 
-    query = fits_query(user.id, sizes, tolerance=tolerance, garment_type=garment_type)
+    query = fits_query(user.household_id, sizes, tolerance=tolerance, garment_type=garment_type)
     if query is None:
         return FitsOut(
             answered=False,
@@ -270,7 +276,7 @@ async def fits(
 @router.get("/people/{person_id}/on-loan", response_model=list[ItemOut])
 async def on_loan(person_id: uuid.UUID, user: CurrentUser, db: Db):
     """What this person currently has of yours."""
-    await _owned(db, user.id, person_id)
+    await _owned(db, user.household_id, person_id)
     newest = (
         select(Movement.item_id, func.max(Movement.moved_at).label("at"))
         .where(Movement.reason == "loaned")
@@ -278,7 +284,7 @@ async def on_loan(person_id: uuid.UUID, user: CurrentUser, db: Db):
         .subquery()
     )
     query = (
-        item_query(user.id)
+        item_query(user.household_id)
         .join(newest, newest.c.item_id == Item.id)
         .join(
             Movement,
@@ -304,9 +310,15 @@ async def outgrown(person_id: uuid.UUID, body: OutgrownIn, user: CurrentUser, db
     packed these away" and "she grew out of these" is the difference between a bin to re-open and
     a bin to pass on.
     """
-    person = await _owned(db, user.id, person_id)
+    person = await _owned(db, user.household_id, person_id)
     rows = (
-        (await db.execute(select(Item).where(Item.user_id == user.id, Item.id.in_(body.item_ids))))
+        (
+            await db.execute(
+                select(Item).where(
+                    Item.household_id == user.household_id, Item.id.in_(body.item_ids)
+                )
+            )
+        )
         .scalars()
         .all()
     )
@@ -319,7 +331,14 @@ async def outgrown(person_id: uuid.UUID, body: OutgrownIn, user: CurrentUser, db
     for item in rows:
         # Out of the wearing pile...
         movements.append(
-            await record_move(db, item=item, reason="outgrown", person_id=person.id, note=body.note)
+            await record_move(
+                db,
+                item=item,
+                reason="outgrown",
+                person_id=person.id,
+                note=body.note,
+                moved_by_user_id=user.id,
+            )
         )
         # ...and straight into the bin, so the run never rests in the contradictory state of
         # being outgrown and nowhere.
@@ -331,6 +350,7 @@ async def outgrown(person_id: uuid.UUID, body: OutgrownIn, user: CurrentUser, db
                 to_tote_id=body.tote_id,
                 person_id=person.id,
                 note=body.note,
+                moved_by_user_id=user.id,
             )
         )
     await db.commit()
@@ -350,7 +370,7 @@ async def nudge_overdue(user: CurrentUser, db: Db):
     channel that is quietly broken is indistinguishable from one with nothing to say, and that is
     the failure this endpoint's response shape exists to prevent.
     """
-    items = await _overdue_items(db, user.id)
+    items = await _overdue_items(db, user.household_id)
     if not items:
         return {"overdue": 0, "sent": False, "reason": "nothing_overdue"}
 
@@ -366,17 +386,28 @@ async def nudge_overdue(user: CurrentUser, db: Db):
     # The per-user override lives on `user_settings`, NOT on `users` — reading it off the user
     # 500'd in production while every test passed, because the test environment has no ntfy
     # configured and so never reached this line at all. See the test that now does.
-    override = (
-        await db.execute(select(UserSettings.ntfy_topic).where(UserSettings.user_id == user.id))
-    ).scalar_one_or_none()
-
-    sent = await ntfy.send(
-        title,
-        message,
-        topic=override or None,
-        priority=4,
-        tags=["hourglass_flowing_sand"],
+    # Fanned out across the household, deduplicated. The overdue set is household-wide, so
+    # notifying only whoever pressed the button means the drill is overdue for both of you and
+    # nags exactly one. Members with no override share the deployment topic, which collapses to
+    # a single `None` here rather than sending one identical push per member.
+    ids = await household_service.member_ids(db, user.household_id)
+    overrides = (
+        (await db.execute(select(UserSettings.ntfy_topic).where(UserSettings.user_id.in_(ids))))
+        .scalars()
+        .all()
     )
+    topics = {t or None for t in overrides} or {None}
+
+    # `or sent`, not `and`: one member's misconfigured topic must not report the whole nudge as
+    # failed when the other member's push landed.
+    sent = False
+    for topic in topics:
+        sent = (
+            await ntfy.send(
+                title, message, topic=topic, priority=4, tags=["hourglass_flowing_sand"]
+            )
+            or sent
+        )
     return {
         "overdue": len(items),
         "sent": sent,
@@ -385,9 +416,9 @@ async def nudge_overdue(user: CurrentUser, db: Db):
     }
 
 
-async def _overdue_items(db: AsyncSession, user_id: uuid.UUID) -> list[ItemOut]:
+async def _overdue_items(db: AsyncSession, household_id: uuid.UUID) -> list[ItemOut]:
     query = (
-        item_query(user_id)
+        item_query(household_id)
         .where(
             Item.expected_back.is_not(None),
             Item.status.in_(("out", "loaned")),
@@ -405,4 +436,4 @@ async def overdue(user: CurrentUser, db: Db):
     The date comparison uses the household's local today, not UTC — the container runs UTC and
     the house does not, so without that an item due today reads as overdue from 7pm local.
     """
-    return await _overdue_items(db, user.id)
+    return await _overdue_items(db, user.household_id)

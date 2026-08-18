@@ -172,15 +172,20 @@ async def test_a_category_that_is_not_yours_is_404(auth_client, raw_sql):
     """Ownership, not merely existence. The id is real and resolves — to somebody else's row."""
     import uuid
 
-    owner, category = str(uuid.uuid4()), str(uuid.uuid4())
+    owner, elsewhere, category = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
     await raw_sql(
         "INSERT INTO users (id, name, email) VALUES (:i, 'Other', :e)",
         i=owner,
         e=f"{owner[:8]}@example.com",
     )
     await raw_sql(
-        "INSERT INTO categories (id, user_id, name, sort_order) VALUES (:c, :u, 'Theirs', 0)",
+        "INSERT INTO households (id, owner_user_id) VALUES (:h, :u)", h=elsewhere, u=owner
+    )
+    await raw_sql(
+        "INSERT INTO categories (id, household_id, user_id, name, sort_order)"
+        " VALUES (:c, :h, :u, 'Theirs', 0)",
         c=category,
+        h=elsewhere,
         u=owner,
     )
 

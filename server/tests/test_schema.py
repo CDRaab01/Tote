@@ -11,43 +11,95 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 
-async def _user(raw_sql) -> str:
-    uid = str(uuid.uuid4())
+async def _user(raw_sql) -> tuple[str, str]:
+    """A user and the household of one they get at first login. Returns `(user_id, household_id)`.
+
+    Both, because the two ids now mean different things at this level: rows are scoped by
+    household and attributed to a user, and a test that conflates them would pass while the
+    constraint it is checking sat on the wrong column.
+    """
+    uid, hid = str(uuid.uuid4()), str(uuid.uuid4())
     await raw_sql(
         "INSERT INTO users (id, name, email) VALUES (:i, 'T', :e)",
         i=uid,
         e=f"{uid[:8]}@example.com",
     )
+    await raw_sql("INSERT INTO households (id, owner_user_id) VALUES (:h, :u)", h=hid, u=uid)
+    await raw_sql(
+        "INSERT INTO household_members (id, household_id, user_id) VALUES (:i, :h, :u)",
+        i=str(uuid.uuid4()),
+        h=hid,
+        u=uid,
+    )
+    return uid, hid
+
+
+async def _join(raw_sql, household_id: str) -> str:
+    """A SECOND user inside an existing household — the case the rescoped constraints exist for."""
+    uid = str(uuid.uuid4())
+    await raw_sql(
+        "INSERT INTO users (id, name, email) VALUES (:i, 'T2', :e)",
+        i=uid,
+        e=f"{uid[:8]}@example.com",
+    )
+    await raw_sql(
+        "INSERT INTO household_members (id, household_id, user_id) VALUES (:i, :h, :u)",
+        i=str(uuid.uuid4()),
+        h=household_id,
+        u=uid,
+    )
     return uid
 
 
-async def test_tote_code_is_unique_per_user_case_insensitively(raw_sql):
+async def test_tote_code_is_unique_per_household_case_insensitively(raw_sql):
     """The code is printed on a physical index card and encoded in an NFC tag. Two bins in an
     attic that both claim to be "a14" is a real-world ambiguity, not a tidiness issue — so the
     uniqueness is on lower(code), enforced by the database rather than by a service that could
     be bypassed."""
-    uid = await _user(raw_sql)
+    uid, hid = await _user(raw_sql)
     await raw_sql(
-        "INSERT INTO totes (id, user_id, code) VALUES (:i, :u, 'A14')",
+        "INSERT INTO totes (id, household_id, user_id, code) VALUES (:i, :h, :u, 'A14')",
         i=str(uuid.uuid4()),
+        h=hid,
         u=uid,
     )
     with pytest.raises(IntegrityError):
         await raw_sql(
-            "INSERT INTO totes (id, user_id, code) VALUES (:i, :u, 'a14')",
+            "INSERT INTO totes (id, household_id, user_id, code) VALUES (:i, :h, :u, 'a14')",
             i=str(uuid.uuid4()),
+            h=hid,
             u=uid,
         )
 
 
-async def test_two_users_may_each_have_a_tote_a14(raw_sql):
-    """Uniqueness is per user, not global — the codes are handwritten on cards in one house."""
-    a, b = await _user(raw_sql), await _user(raw_sql)
-    for owner in (a, b):
+async def test_two_members_of_one_household_cannot_both_own_a14(raw_sql):
+    """**The reason the constraint moved.** Per user, this insert succeeded and two bins in the
+    same attic both answered to A14 — the exact ambiguity the case-insensitive index above
+    exists to prevent, reintroduced by the act of sharing."""
+    uid, hid = await _user(raw_sql)
+    partner = await _join(raw_sql, hid)
+    await raw_sql(
+        "INSERT INTO totes (id, household_id, user_id, code) VALUES (:i, :h, :u, 'A14')",
+        i=str(uuid.uuid4()),
+        h=hid,
+        u=uid,
+    )
+    with pytest.raises(IntegrityError):
         await raw_sql(
-            "INSERT INTO totes (id, user_id, code) VALUES (:i, :u, 'A14')",
+            "INSERT INTO totes (id, household_id, user_id, code) VALUES (:i, :h, :u, 'a14')",
             i=str(uuid.uuid4()),
-            u=owner,
+            h=hid,
+            u=partner,
+        )
+
+
+async def test_two_households_may_each_have_a_tote_a14(raw_sql):
+    """Uniqueness is per household, not global — the codes are handwritten on cards in one house."""
+    for _, hid in (await _user(raw_sql), await _user(raw_sql)):
+        await raw_sql(
+            "INSERT INTO totes (id, household_id, code) VALUES (:i, :h, 'A14')",
+            i=str(uuid.uuid4()),
+            h=hid,
         )
 
 
@@ -55,12 +107,13 @@ async def test_search_vector_is_generated_and_matches_words_from_every_source_co
     """`search_vector` is a STORED generated column, so it must populate on INSERT with no
     application code involved — and it must cover name, description AND notes, since "where is
     the ratchet set" is as likely to hit a note as a title."""
-    uid = await _user(raw_sql)
+    uid, hid = await _user(raw_sql)
     item = str(uuid.uuid4())
     await raw_sql(
-        "INSERT INTO items (id, user_id, name, description, notes, quantity, status)"
-        " VALUES (:i, :u, 'Ratchet set', '3/8 inch drive', 'borrowed from Dave', 1, 'stored')",
+        "INSERT INTO items (id, household_id, user_id, name, description, notes, quantity, status)"
+        " VALUES (:i, :h, :u, 'Ratchet set', '3/8 inch drive', 'borrowed from Dave', 1, 'stored')",
         i=item,
+        h=hid,
         u=uid,
     )
     for term in ("ratchet", "drive", "borrowed"):
@@ -85,12 +138,13 @@ async def test_search_vector_follows_an_update(raw_sql):
     obvious alternative implementation — a trigger, or application code — is the one that
     silently goes stale, and a stale search index on the app's primary query path would look
     like "the item isn't in the catalog"."""
-    uid = await _user(raw_sql)
+    uid, hid = await _user(raw_sql)
     item = str(uuid.uuid4())
     await raw_sql(
-        "INSERT INTO items (id, user_id, name, quantity, status)"
-        " VALUES (:i, :u, 'Placeholder', 1, 'stored')",
+        "INSERT INTO items (id, household_id, user_id, name, quantity, status)"
+        " VALUES (:i, :h, :u, 'Placeholder', 1, 'stored')",
         i=item,
+        h=hid,
         u=uid,
     )
     await raw_sql("UPDATE items SET name = 'Soldering iron' WHERE id = :i", i=item)
@@ -116,13 +170,19 @@ async def test_deleting_a_tote_does_not_delete_its_items(raw_sql):
     """`items.current_tote_id` is ON DELETE SET NULL, not CASCADE. Throwing a bin away must not
     erase the record of what was in it — the item becomes "not in any tote", which is a true
     statement and a recoverable one."""
-    uid = await _user(raw_sql)
+    uid, hid = await _user(raw_sql)
     tote, item = str(uuid.uuid4()), str(uuid.uuid4())
-    await raw_sql("INSERT INTO totes (id, user_id, code) VALUES (:i, :u, 'Z01')", i=tote, u=uid)
     await raw_sql(
-        "INSERT INTO items (id, user_id, name, quantity, status, current_tote_id)"
-        " VALUES (:i, :u, 'Tree stand', 1, 'stored', :t)",
+        "INSERT INTO totes (id, household_id, user_id, code) VALUES (:i, :h, :u, 'Z01')",
+        i=tote,
+        h=hid,
+        u=uid,
+    )
+    await raw_sql(
+        "INSERT INTO items (id, household_id, user_id, name, quantity, status, current_tote_id)"
+        " VALUES (:i, :h, :u, 'Tree stand', 1, 'stored', :t)",
         i=item,
+        h=hid,
         u=uid,
         t=tote,
     )

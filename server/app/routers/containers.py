@@ -25,9 +25,9 @@ router = APIRouter(tags=["containers"])
 Db = Annotated[AsyncSession, Depends(get_db)]
 
 
-async def _owned_tote(db: Db, user_id: uuid.UUID, tote_id: uuid.UUID) -> Tote:
+async def _owned_tote(db: Db, household_id: uuid.UUID, tote_id: uuid.UUID) -> Tote:
     tote = (
-        await db.execute(select(Tote).where(Tote.id == tote_id, Tote.user_id == user_id))
+        await db.execute(select(Tote).where(Tote.id == tote_id, Tote.household_id == household_id))
     ).scalar_one_or_none()
     if tote is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tote not found")
@@ -35,15 +35,15 @@ async def _owned_tote(db: Db, user_id: uuid.UUID, tote_id: uuid.UUID) -> Tote:
 
 
 async def _owned_container(
-    db: Db, user_id: uuid.UUID, tote_id: uuid.UUID, container_id: uuid.UUID
+    db: Db, household_id: uuid.UUID, tote_id: uuid.UUID, container_id: uuid.UUID
 ) -> Container:
-    await _owned_tote(db, user_id, tote_id)
+    await _owned_tote(db, household_id, tote_id)
     container = (
         await db.execute(
             select(Container).where(
                 Container.id == container_id,
                 Container.tote_id == tote_id,
-                Container.user_id == user_id,
+                Container.household_id == household_id,
             )
         )
     ).scalar_one_or_none()
@@ -72,12 +72,12 @@ async def container_counts(db: Db, tote_id: uuid.UUID) -> dict[uuid.UUID, int]:
     return {container_id: n for container_id, n in rows}
 
 
-async def containers_for(db: Db, user_id: uuid.UUID, tote_id: uuid.UUID) -> list[ContainerOut]:
+async def containers_for(db: Db, household_id: uuid.UUID, tote_id: uuid.UUID) -> list[ContainerOut]:
     rows = (
         (
             await db.execute(
                 select(Container)
-                .where(Container.tote_id == tote_id, Container.user_id == user_id)
+                .where(Container.tote_id == tote_id, Container.household_id == household_id)
                 .order_by(Container.name)
             )
         )
@@ -95,8 +95,8 @@ async def containers_for(db: Db, user_id: uuid.UUID, tote_id: uuid.UUID) -> list
 
 @router.get("/totes/{tote_id}/containers", response_model=list[ContainerOut])
 async def list_containers(tote_id: uuid.UUID, user: CurrentUser, db: Db):
-    await _owned_tote(db, user.id, tote_id)
-    return await containers_for(db, user.id, tote_id)
+    await _owned_tote(db, user.household_id, tote_id)
+    return await containers_for(db, user.household_id, tote_id)
 
 
 @router.post(
@@ -105,9 +105,13 @@ async def list_containers(tote_id: uuid.UUID, user: CurrentUser, db: Db):
     status_code=status.HTTP_201_CREATED,
 )
 async def create_container(tote_id: uuid.UUID, body: ContainerIn, user: CurrentUser, db: Db):
-    await _owned_tote(db, user.id, tote_id)
+    await _owned_tote(db, user.household_id, tote_id)
     container = Container(
-        user_id=user.id, tote_id=tote_id, name=body.name.strip(), notes=body.notes
+        user_id=user.id,
+        household_id=user.household_id,
+        tote_id=tote_id,
+        name=body.name.strip(),
+        notes=body.notes,
     )
     db.add(container)
     await db.commit()
@@ -125,7 +129,7 @@ async def patch_container(
     db: Db,
 ):
     """Rename a bag or change what it says it holds. Deliberately cannot move it between bins."""
-    container = await _owned_container(db, user.id, tote_id, container_id)
+    container = await _owned_container(db, user.household_id, tote_id, container_id)
     updates = body.model_dump(exclude_unset=True)
     if updates.get("name"):
         updates["name"] = updates["name"].strip()
@@ -147,6 +151,6 @@ async def delete_container(tote_id: uuid.UUID, container_id: uuid.UUID, user: Cu
     this bin, loose. That is the same promise `current_tote_id` makes when a tote is deleted, and
     it is the reason emptying a bag is a safe thing to do without a confirmation dialog.
     """
-    container = await _owned_container(db, user.id, tote_id, container_id)
+    container = await _owned_container(db, user.household_id, tote_id, container_id)
     await db.delete(container)
     await db.commit()
