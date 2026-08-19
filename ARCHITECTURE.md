@@ -590,6 +590,22 @@ user deletion can never cascade into an entire household inventory.
   would otherwise keep browsing bins they can no longer fetch, an attic that reads perfectly until
   they tap something.
 
+### Finding out you have been invited
+
+Settings is reached through one icon on the Find hero — deliberately, since it is an escape
+hatch rather than a daily destination. That is fine for a sign-out button and wrong for an
+invitation, which somebody else starts and which goes stale while it waits, so sharing shipped
+with no way to discover you had been invited at all. `InviteBadgeViewModel` puts the app's
+standard rose attention mark on that icon, the same channel as drafts on Review and stuck
+uploads on Catalogue.
+
+Both the badge and the Settings section follow one rule, and it is the app's oldest: **a failed
+request is not an answer.** Neither clears a known invitation on failure — `HouseholdViewModel`
+kept the household half on error and assigned the invitation half unconditionally, so a single
+dropped request deleted a real invitation off the screen, healed on the next success, and read
+as a flicker rather than an error. `HouseholdState.reachable` now carries the difference so the
+section can say it is showing what it last read.
+
 ### No per-object sharing, deliberately
 
 Cookbook layers a per-recipe `shared` opt-in on top of its household. There is no equivalent here

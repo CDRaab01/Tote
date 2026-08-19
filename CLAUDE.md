@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **343 server** (pytest, real Postgres) + **208 Android** (measured 2026-08-19) |
+| Tests | **343 server** (pytest, real Postgres) + **221 Android** (measured 2026-08-19) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task

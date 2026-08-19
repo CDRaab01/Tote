@@ -18,6 +18,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -55,6 +57,7 @@ private const val OVERDUE_SHOWN = 3
 fun SearchScreen(
     onOpenTote: (String) -> Unit,
     onOpenSettings: () -> Unit = {},
+    hasInvite: Boolean = false,
     viewModel: SearchViewModel = hiltViewModel(),
     itemSheet: ItemSheetViewModel = hiltViewModel(),
 ) {
@@ -69,6 +72,7 @@ fun SearchScreen(
         onQueryChange = viewModel::onQueryChange,
         onOpenItem = itemSheet::open,
         onOpenSettings = onOpenSettings,
+        hasInvite = hasInvite,
     )
 
     // A hit opens the item, not the bin. Tapping one used to be guarded on `currentToteId`, so a
@@ -93,6 +97,7 @@ fun SearchContent(
     onOpenItem: (ItemDto) -> Unit,
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
+    hasInvite: Boolean = false,
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -115,12 +120,28 @@ fun SearchContent(
                         // sixth tab because a bottom bar carries five, and because the screen
                         // behind it is an escape hatch — reached when something is wrong, not
                         // in the course of using the app.
-                        IconButton(onClick = onOpenSettings) {
-                            Icon(
-                                Icons.Filled.Settings,
-                                contentDescription = "Settings",
-                                tint = androidx.compose.ui.graphics.Color.White,
-                            )
+                        BadgedBox(
+                            badge = {
+                                // Rose, the attention channel, like drafts and stuck uploads —
+                                // an invitation is the one thing behind this door that somebody
+                                // else started and that goes stale while it waits.
+                                if (hasInvite) {
+                                    Badge(
+                                        containerColor = ToteTheme.colors.attention.base,
+                                        contentColor = ToteTheme.colors.attention.on,
+                                    )
+                                }
+                            }
+                        ) {
+                            IconButton(onClick = onOpenSettings) {
+                                Icon(
+                                    Icons.Filled.Settings,
+                                    contentDescription =
+                                        if (hasInvite) "Settings — an invitation is waiting"
+                                        else "Settings",
+                                    tint = androidx.compose.ui.graphics.Color.White,
+                                )
+                            }
                         }
                     }
                     Spacer(Modifier.height(spacing.xs))

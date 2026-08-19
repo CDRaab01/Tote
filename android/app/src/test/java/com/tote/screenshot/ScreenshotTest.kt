@@ -128,6 +128,20 @@ class ScreenshotTest {
         SearchContent(SearchUiState(totes = 14, items = 213, out = 6), {}, {})
     }
 
+    // The mark on the door to Settings. Only a rendered frame proves a badge is actually
+    // positioned on the icon rather than clipped by the hero it sits in.
+    @Test fun search_invite_waiting_dark() = capture("search_invite_waiting_dark", dark = true) {
+        SearchContent(
+            SearchUiState(totes = 14, items = 213, out = 6), {}, {}, hasInvite = true,
+        )
+    }
+
+    @Test fun search_invite_waiting_light() = capture("search_invite_waiting_light", dark = false) {
+        SearchContent(
+            SearchUiState(totes = 14, items = 213, out = 6), {}, {}, hasInvite = true,
+        )
+    }
+
     @Test fun search_results_dark() = capture("search_results_dark", dark = true) {
         SearchContent(SearchUiState(query = "ratchet", searched = true, results = hits), {}, {})
     }

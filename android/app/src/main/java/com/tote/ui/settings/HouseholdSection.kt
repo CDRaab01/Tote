@@ -108,6 +108,12 @@ fun HouseholdSection(
             Caption(text = if (state.loaded) "Can't reach Tote." else "Reading…")
             return@PanelCard
         }
+        if (!state.reachable) {
+            // Holding a previous answer is right — it beats blanking the screen — but saying so
+            // is what stops it being mistaken for a current one.
+            Caption(text = "Can't reach Tote — showing what was last read.")
+            Spacer(Modifier.height(spacing.sm))
+        }
 
         if (household.shared) {
             household.members.forEach { member ->
