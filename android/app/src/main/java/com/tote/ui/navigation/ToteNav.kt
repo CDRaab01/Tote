@@ -42,7 +42,9 @@ import com.tote.ui.capture.CaptureScreen
 import com.tote.ui.people.PeopleScreen
 import com.tote.ui.people.PersonDetailScreen
 import com.tote.ui.review.ReviewScreen
+import com.tote.ui.components.RefreshOnResume
 import com.tote.ui.review.DraftBadgeViewModel
+import com.tote.ui.settings.InviteBadgeViewModel
 import com.tote.ui.search.SearchScreen
 import com.tote.ui.totes.ToteDetailScreen
 import com.tote.util.FeedbackViewModel
@@ -93,6 +95,7 @@ fun ToteNavHost(
     onIntentConsumed: () -> Unit = {},
     tapRouter: TapRouter = hiltViewModel(),
     draftBadge: DraftBadgeViewModel = hiltViewModel(),
+    inviteBadge: InviteBadgeViewModel = hiltViewModel(),
     feedback: FeedbackViewModel = hiltViewModel(),
 ) {
     val nav = rememberNavController()
@@ -112,6 +115,10 @@ fun ToteNavHost(
     val pendingDrafts by draftBadge.pending.collectAsStateWithLifecycle()
     val stuckCaptures by draftBadge.stuck.collectAsStateWithLifecycle()
     val tapTarget by tapRouter.target.collectAsStateWithLifecycle()
+    val hasInvite by inviteBadge.hasInvite.collectAsStateWithLifecycle()
+
+    // An invitation arrives while the app is closed, so this cannot be a one-time load.
+    RefreshOnResume(inviteBadge::refresh)
 
     LaunchedEffect(launchIntent) {
         if (launchIntent != null) {
@@ -254,6 +261,7 @@ fun ToteNavHost(
                 SearchScreen(
                     onOpenTote = { nav.navigate(Routes.toteDetail(it)) },
                     onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+                    hasInvite = hasInvite,
                 )
             }
             composable(Routes.TOTES) {

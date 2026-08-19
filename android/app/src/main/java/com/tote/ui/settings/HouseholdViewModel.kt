@@ -20,6 +20,9 @@ data class HouseholdState(
     /** An invitation waiting for THIS account, with its live merge preview. */
     val invite: InviteDto? = null,
     val loaded: Boolean = false,
+    /** False when the last refresh could not reach the server, so the screen can say so rather
+     *  than presenting what it happens to still be holding as current. */
+    val reachable: Boolean = true,
     /** Set when the server refused a merge. Names the physical things blocking it. */
     val conflicts: Map<String, List<String>> = emptyMap(),
     val inviteEmail: String = "",
@@ -55,15 +58,23 @@ class HouseholdViewModel @Inject constructor(
      * The invite's conflict list is recomputed server-side on every read, which is the whole
      * reason this is a refresh and not a one-time load: renaming a colliding bin has to actually
      * clear the block, and a cached refusal would keep refusing a merge that is now fine.
+     *
+     * **A failure is not an answer.** This used to defend the household half and assign the
+     * invitation half unconditionally, so one dropped request deleted a real, outstanding
+     * invitation off the screen — and since this runs on every resume it was easy to hit and
+     * healed itself on the next success, which made it read as a flicker rather than an error.
+     * That is the app's oldest rule, broken again: a screen must never report "nothing" when it
+     * means "could not find out".
      */
     fun refresh() {
         viewModelScope.launch {
-            val household = runCatching { repo.household() }.getOrNull()
-            val invite = runCatching { repo.myInvite() }.getOrNull()
+            val household = runCatching { repo.household() }
+            val invite = runCatching { repo.myInvite() }
             _state.value = _state.value.copy(
-                household = household ?: _state.value.household,
-                invite = invite,
+                household = household.getOrNull() ?: _state.value.household,
+                invite = if (invite.isSuccess) invite.getOrNull() else _state.value.invite,
                 loaded = true,
+                reachable = household.isSuccess && invite.isSuccess,
             )
         }
     }

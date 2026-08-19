@@ -8,6 +8,7 @@ import com.tote.data.remote.MergePreviewDto
 import com.tote.util.FeedbackBus
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
@@ -178,6 +179,49 @@ class HouseholdViewModelTest {
         assertTrue(model.state.value.conflicts.isEmpty())
         assertEquals(true, model.state.value.household?.shared)
         assertNull(model.state.value.invite)
+    }
+
+    @Test
+    fun `a dropped request does not delete a waiting invitation`() = runTest {
+        // The bug: `invite` was assigned unconditionally, so one failed call cleared a real
+        // invitation off the screen — on a refresh that runs on every resume.
+        var reachable = true
+        repo.stub {
+            onBlocking { myInvite() } doAnswer {
+                if (reachable) invite() else throw java.io.IOException("no route")
+            }
+        }
+        val model = vm()
+        dispatcher.scheduler.advanceUntilIdle()
+        assertNotNull(model.state.value.invite)
+
+        reachable = false
+        model.refresh()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertNotNull(model.state.value.invite)
+        // ...and the screen knows it is showing something it could not re-check.
+        assertFalse(model.state.value.reachable)
+    }
+
+    @Test
+    fun `a declined invitation really is gone`() = runTest {
+        // The other side of the same coin: keeping the previous value on FAILURE must not turn
+        // into keeping it when the server genuinely answers "there is none".
+        var declined = false
+        repo.stub {
+            onBlocking { myInvite() } doAnswer { if (declined) null else invite() }
+        }
+        val model = vm()
+        dispatcher.scheduler.advanceUntilIdle()
+        assertNotNull(model.state.value.invite)
+
+        declined = true
+        model.refresh()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertNull(model.state.value.invite)
+        assertTrue(model.state.value.reachable)
     }
 
     @Test
