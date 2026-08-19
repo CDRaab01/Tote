@@ -227,6 +227,73 @@ async def test_a_merged_item_is_findable_by_search(auth_client, other_client):
     assert [h["item"]["name"] for h in hits] == ["Soldering iron"]
 
 
+# --- Pending invitations, from the sender's side -------------------------------------------
+
+
+async def test_the_sender_can_see_the_invitation_they_sent(auth_client, other_client):
+    """Without this the roster looked exactly as it had before, so the only way to find out
+    whether you had invited anybody was to ask them."""
+    before = (await auth_client.get("/household")).json()
+    assert before["pending"] == []
+
+    await _invite(auth_client, await _email_of(other_client))
+
+    after = (await auth_client.get("/household")).json()
+    assert [p["email"] for p in after["pending"]] == [await _email_of(other_client)]
+    # A pending invitee is NOT a member and shares nothing.
+    assert len(after["members"]) == 1
+    assert after["shared"] is False
+
+
+async def test_accepting_moves_them_from_pending_into_the_roster(auth_client, other_client):
+    await _invite(auth_client, await _email_of(other_client))
+    assert (await other_client.post("/household/accept")).status_code == 200
+
+    got = (await auth_client.get("/household")).json()
+    assert got["pending"] == []
+    assert len(got["members"]) == 2
+    assert got["shared"] is True
+
+
+async def test_an_invitation_can_be_taken_back(auth_client, other_client):
+    """An email is free text matched against accounts, so a typo sent a standing invitation to
+    whoever owns that address — and only they could end it."""
+    await _invite(auth_client, await _email_of(other_client))
+    assert (await other_client.get("/household/invite")).json() is not None
+
+    r = await auth_client.delete(f"/household/invites/{other_client.user_id}")
+    assert r.status_code == 204
+
+    assert (await other_client.get("/household/invite")).json() is None
+    assert (await auth_client.get("/household")).json()["pending"] == []
+
+
+async def test_a_revoked_invitation_cannot_then_be_accepted(auth_client, other_client):
+    await _invite(auth_client, await _email_of(other_client))
+    await auth_client.delete(f"/household/invites/{other_client.user_id}")
+
+    assert (await other_client.post("/household/accept")).status_code == 404
+
+
+async def test_you_cannot_revoke_an_invitation_from_another_household(
+    auth_client, other_client, third_client
+):
+    """Scoped to the caller's own household — an owner withdraws their own offer, not somebody
+    else's."""
+    await _invite(auth_client, await _email_of(third_client))
+
+    r = await other_client.delete(f"/household/invites/{third_client.user_id}")
+    assert r.status_code == 404
+    # Untouched.
+    assert (await third_client.get("/household/invite")).json() is not None
+
+
+async def test_revoking_something_that_was_never_sent_is_404(auth_client, other_client):
+    assert (
+        await auth_client.delete(f"/household/invites/{other_client.user_id}")
+    ).status_code == 404
+
+
 # --- Not stranding the people you leave behind --------------------------------------------
 
 

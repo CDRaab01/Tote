@@ -148,6 +148,53 @@ async def invite_by_email(db: AsyncSession, inviter: User, email: str) -> User:
     return target
 
 
+async def pending_invites(db: AsyncSession, household_id: uuid.UUID) -> list[User]:
+    """Everyone this household has invited who has not answered.
+
+    Its own query rather than a flag on the member list, because a pending invitee is **not** a
+    member — they share nothing until they accept, and a shape that makes them look like one is
+    how a roster starts claiming somebody is in a household they have not joined.
+    """
+    return list(
+        (
+            await db.execute(
+                select(User)
+                .join(HouseholdInvite, HouseholdInvite.invited_user_id == User.id)
+                .where(HouseholdInvite.household_id == household_id)
+                .order_by(HouseholdInvite.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def revoke_invite(db: AsyncSession, requester: User, invited_user_id: uuid.UUID) -> None:
+    """Take back an invitation you sent.
+
+    Only the invitee could end one before this, by declining. An email address is free text
+    matched against accounts, so a typo sent a real, standing invitation to whoever owns that
+    address — with no way for the sender to withdraw it.
+    """
+    household = await household_of(db, requester.id)
+    if household.owner_user_id != requester.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the household owner can invite")
+    invite = (
+        await db.execute(
+            select(HouseholdInvite).where(
+                HouseholdInvite.invited_user_id == invited_user_id,
+                # Scoped to the caller's household: an owner may withdraw their own offer and
+                # not somebody else's.
+                HouseholdInvite.household_id == household.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if invite is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No invitation to that person")
+    await db.delete(invite)
+    await db.commit()
+
+
 async def invite_for(db: AsyncSession, user_id: uuid.UUID) -> HouseholdInvite | None:
     return (
         await db.execute(select(HouseholdInvite).where(HouseholdInvite.invited_user_id == user_id))

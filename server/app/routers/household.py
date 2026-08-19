@@ -24,6 +24,7 @@ from app.schemas.household import (
     InviteOut,
     InviteRequest,
     MergePreview,
+    PendingInviteOut,
 )
 from app.security import CurrentUser
 from app.services import household_service as hh
@@ -36,6 +37,7 @@ Db = Annotated[AsyncSession, Depends(get_db)]
 async def _snapshot(db: AsyncSession, user) -> HouseholdOut:
     household = await hh.household_of(db, user.id)
     people = await hh.members(db, household.id)
+    invited = await hh.pending_invites(db, household.id)
     return HouseholdOut(
         household_id=household.id,
         members=[
@@ -47,7 +49,10 @@ async def _snapshot(db: AsyncSession, user) -> HouseholdOut:
             )
             for m in people
         ],
+        pending=[PendingInviteOut(user_id=p.id, name=p.name, email=p.email) for p in invited],
         you_are_owner=(household.owner_user_id == user.id),
+        # Members only. An outstanding invitation shares nothing, so a household with one member
+        # and one invitation is not a shared catalogue and must not start showing "who moved it".
         shared=len(people) > 1,
     )
 
@@ -99,6 +104,12 @@ async def accept(user: CurrentUser, db: Db):
 @router.post("/decline", status_code=status.HTTP_204_NO_CONTENT)
 async def decline(user: CurrentUser, db: Db):
     await hh.decline_invite(db, user.id)
+
+
+@router.delete("/invites/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke(user_id: uuid.UUID, user: CurrentUser, db: Db):
+    """Withdraw an invitation you sent. Distinct from removing a member, which they are not."""
+    await hh.revoke_invite(db, user, user_id)
 
 
 @router.post("/transfer/{user_id}", response_model=HouseholdOut)
