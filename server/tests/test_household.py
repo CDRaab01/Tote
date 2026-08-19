@@ -227,6 +227,66 @@ async def test_a_merged_item_is_findable_by_search(auth_client, other_client):
     assert [h["item"]["name"] for h in hits] == ["Soldering iron"]
 
 
+# --- Not stranding the people you leave behind --------------------------------------------
+
+
+async def test_joining_is_refused_while_others_share_your_household(
+    auth_client, other_client, third_client
+):
+    """**The bug this guard exists for**, exactly as it was reproduced.
+
+    A merge re-parents the source household and deletes it, which CASCADEs `household_members` —
+    so anybody still in it loses their membership row. `User.household_id` is deliberately
+    non-defensive, so that is not a degraded catalogue, it is every endpoint 500ing for them
+    forever, with no way back in through the app.
+    """
+    # other_client owns a household; third_client joins it.
+    await _invite(other_client, await _email_of(third_client))
+    assert (await third_client.post("/household/accept")).status_code == 200
+
+    # Now auth_client invites the owner of that populated household.
+    await _invite(auth_client, await _email_of(other_client))
+
+    r = await other_client.post("/household/accept")
+    assert r.status_code == 409
+    assert r.json()["detail"]["conflicts"]["household_members"] == ["Test"]
+
+    # And the person who would have been stranded still has a working session.
+    assert (await third_client.get("/household")).status_code == 200
+    assert (await third_client.get("/totes")).status_code == 200
+
+
+async def test_the_preview_names_who_you_would_strand(auth_client, other_client, third_client):
+    """Shown before the button, not after it — the same rule as the bin-code conflicts."""
+    await _invite(other_client, await _email_of(third_client))
+    assert (await third_client.post("/household/accept")).status_code == 200
+    await _invite(auth_client, await _email_of(other_client))
+
+    preview = (await other_client.get("/household/invite")).json()["preview"]
+    assert preview["conflicts"]["household_members"] == ["Test"]
+
+
+async def test_leaving_first_clears_the_block(auth_client, other_client, third_client):
+    """The stated fix has to actually work: the co-member leaves, and the merge proceeds."""
+    await _invite(other_client, await _email_of(third_client))
+    assert (await third_client.post("/household/accept")).status_code == 200
+    await _invite(auth_client, await _email_of(other_client))
+    assert (await other_client.post("/household/accept")).status_code == 409
+
+    assert (await third_client.post("/household/leave")).status_code == 204
+
+    assert (await other_client.get("/household/invite")).json()["preview"]["conflicts"] == {}
+    assert (await other_client.post("/household/accept")).status_code == 200
+
+
+async def test_a_solo_household_is_never_blocked_by_this(auth_client, other_client):
+    """The guard must not fire on the ordinary two-person case, which is the whole feature."""
+    await _invite(auth_client, await _email_of(other_client))
+    preview = (await other_client.get("/household/invite")).json()["preview"]
+    assert "household_members" not in preview["conflicts"]
+    assert (await other_client.post("/household/accept")).status_code == 200
+
+
 # --- Living in a shared household ---------------------------------------------------------
 
 

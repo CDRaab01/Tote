@@ -205,14 +205,21 @@ private fun EmailText(email: String) {
 @Composable
 private fun ConflictNotice(conflicts: Map<String, List<String>>) {
     val spacing = ToteTheme.spacing
+    // Two unrelated reasons a merge can be blocked, and they need different sentences. Naming
+    // the heading after the labels case — the common one — while showing the members case
+    // underneath it would tell somebody their bins collide when they do not.
+    val stranding = conflicts["household_members"].orEmpty()
+    val labels = conflicts.filterKeys { it != "household_members" }
+
     Text(
-        "You both use the same labels",
+        if (labels.isEmpty()) "Your household isn't just you" else "You both use the same labels",
         style = MaterialTheme.typography.titleSmall,
         color = ToteTheme.colors.attention.base,
         fontWeight = FontWeight.SemiBold,
     )
     Spacer(Modifier.height(spacing.xs))
-    conflicts.forEach { (kind, values) ->
+
+    labels.forEach { (kind, values) ->
         val what = when (kind) {
             "tote_codes" -> "Bin codes"
             "nfc_tags" -> "NFC tags"
@@ -223,13 +230,31 @@ private fun ConflictNotice(conflicts: Map<String, List<String>>) {
             style = MaterialTheme.typography.bodyMedium,
         )
     }
-    Spacer(Modifier.height(spacing.xs))
-    Text(
-        "Rename or re-tag one side first. Tote won't pick for you — the codes are written on " +
-            "the cards and tags on the actual bins.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    if (labels.isNotEmpty()) {
+        Spacer(Modifier.height(spacing.xs))
+        Text(
+            "Rename or re-tag one side first. Tote won't pick for you — the codes are written " +
+                "on the cards and tags on the actual bins.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+
+    if (stranding.isNotEmpty()) {
+        if (labels.isNotEmpty()) Spacer(Modifier.height(spacing.sm))
+        Text(
+            "You share it with ${stranding.joinToString(" and ")}.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(Modifier.height(spacing.xs))
+        Text(
+            "Joining would take your catalogue with you and leave them without one, so it can " +
+                "only be done from a household that is just you. Leave yours first, or have " +
+                "them leave.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 /** Both irreversible actions, each stating what it costs rather than asking "are you sure". */
