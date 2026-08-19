@@ -542,6 +542,24 @@ things and there is no seam left to split along.
 recomputed on every read of `GET /household/invite` rather than stored at invite time — a cached
 refusal would keep refusing after somebody renamed the bin to clear it.
 
+### A merge may never strand somebody
+
+An invitee's household might not be just them, and if it is not, the merge is catastrophic for
+whoever else is in it: re-parenting the data and deleting the source household CASCADEs
+`household_members`, so anybody still in that household loses their membership row. That is not a
+lost catalogue — `User.household_id` is deliberately non-defensive, so it raises, and **every
+endpoint 500s for them permanently**. They cannot sign their way out either, because
+`suite_login` only creates a household on the branch that handles a new account.
+
+So `merge_conflicts` reports the other members as a blocker alongside the duplicate codes and
+tags, and the merge refuses: **you may only join another household from one that is just you.**
+That is the same rule that stops an owner leaving a populated household, reached from the other
+side — a household is never left ownerless, and never left memberless either.
+
+Two belts, because the failure is unrecoverable. The guard above is the fix; `suite_login` also
+restores a missing household for an existing account, so anyone who somehow reaches that state
+can walk out of it by signing in.
+
 ### Consent, and leaving
 
 An invite is its own table (`household_invites`), not a member row carrying a `status` as in

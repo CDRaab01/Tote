@@ -105,6 +105,15 @@ async def suite_login(db: AsyncSession, suite_token: str) -> TokenResponse:
             )
         await db.commit()
         await db.refresh(user)
+    elif user.membership is None:
+        # A household is an invariant, not a feature: `User.household_id` raises without one and
+        # every endpoint 500s. Signing in is the one action a person in that state can still
+        # perform, so it is the only place the invariant can be restored — the branch above only
+        # runs for accounts that do not exist yet. Belt and braces behind the guard in
+        # `merge_conflicts`, which is what stops anyone arriving here in the first place.
+        await create_household(db, user.id)
+        await db.commit()
+        await db.refresh(user)
 
     return TokenResponse(
         access_token=create_access_token(str(user.id)),

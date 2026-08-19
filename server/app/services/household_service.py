@@ -166,12 +166,17 @@ async def decline_invite(db: AsyncSession, user_id: uuid.UUID) -> None:
 
 
 async def merge_conflicts(
-    db: AsyncSession, source_id: uuid.UUID, target_id: uuid.UUID
+    db: AsyncSession, source_id: uuid.UUID, target_id: uuid.UUID, joiner_id: uuid.UUID
 ) -> dict[str, list[str]]:
     """What a human has to resolve before these two catalogues can become one.
 
-    Only physical identity is reported: codes and tags. Duplicate location and category *names*
-    are not conflicts — they are the same real thing recorded twice, and the merge folds them.
+    Two unrelated kinds of blocker, both reported here because both have the same consequence —
+    the merge cannot run and a person has to go and do something first:
+
+    * **Physical identity.** Duplicate tote codes and NFC tags. Duplicate location and category
+      *names* are deliberately absent: they are the same real thing recorded twice, and the merge
+      folds them.
+    * **You are not alone in your own household.** See ``_members_you_would_strand``.
     """
     codes = await _overlap(db, Tote, Tote.code, source_id, target_id, lower=True)
     tags = await _overlap(db, Tote, Tote.nfc_tag_uid, source_id, target_id)
@@ -179,6 +184,7 @@ async def merge_conflicts(
     # alternative to a clear 409 is a unique-violation 500 halfway through re-parenting a
     # catalogue, and this is the one operation in the app with no undo.
     captures = await _overlap(db, Item, Item.capture_id, source_id, target_id)
+    stranded = await _members_you_would_strand(db, source_id, joiner_id)
 
     conflicts: dict[str, list[str]] = {}
     if codes:
@@ -187,7 +193,44 @@ async def merge_conflicts(
         conflicts["nfc_tags"] = tags
     if captures:
         conflicts["capture_ids"] = captures
+    if stranded:
+        conflicts["household_members"] = stranded
     return conflicts
+
+
+async def _members_you_would_strand(
+    db: AsyncSession, source_id: uuid.UUID, joiner_id: uuid.UUID
+) -> list[str]:
+    """Everyone else in the household the joiner is about to leave, by name.
+
+    **The bug this exists to prevent.** A merge re-parents the source household's data and then
+    deletes the source row, which CASCADEs ``household_members`` — so anybody still in it loses
+    their membership entirely. They are not merely dropped from a catalogue: ``User.household_id``
+    is deliberately non-defensive, so it raises, and *every endpoint 500s for them, permanently*.
+    Nor can they sign their way out of it, because ``suite_login`` only creates a household on the
+    branch that handles a new account, and they already exist.
+
+    So a person may only join another household when theirs is just them. That is the same rule
+    that already stops an owner leaving a populated household, reached from the other side: a
+    household is never left ownerless, and never left memberless either.
+
+    Named rather than counted, because "leave the household you share with Alex first" is
+    actionable and "you have 1 other member" is a puzzle.
+    """
+    return sorted(
+        (
+            await db.execute(
+                select(User.name)
+                .join(HouseholdMember, HouseholdMember.user_id == User.id)
+                .where(
+                    HouseholdMember.household_id == source_id,
+                    User.id != joiner_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
 
 
 async def _overlap(
@@ -236,14 +279,13 @@ async def accept_invite(db: AsyncSession, user: User) -> Household:
     if source.id == target_id:
         raise HTTPException(status.HTTP_409_CONFLICT, "You're already in that household")
 
-    conflicts = await merge_conflicts(db, source.id, target_id)
+    conflicts = await merge_conflicts(db, source.id, target_id, user.id)
     if conflicts:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             {
                 "message": (
-                    "Both catalogues use the same bin codes or tags. Rename or re-tag one side, "
-                    "then accept again."
+                    "This merge can't run yet — see `conflicts` for what has to be resolved first."
                 ),
                 "conflicts": conflicts,
             },

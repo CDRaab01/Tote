@@ -79,7 +79,7 @@ async def my_invite(user: CurrentUser, db: Db):
     source = await hh.household_of(db, user.id)
     inviter = await db.get(User, invite.invited_by_user_id)
     counts = await hh.merge_preview(db, source.id)
-    conflicts = await hh.merge_conflicts(db, source.id, invite.household_id)
+    conflicts = await hh.merge_conflicts(db, source.id, invite.household_id, user.id)
     return InviteOut(
         household_id=invite.household_id,
         invited_by_name=inviter.name if inviter else "",

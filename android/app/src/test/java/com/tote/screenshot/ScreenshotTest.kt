@@ -719,6 +719,24 @@ class ScreenshotTest {
             )
         }
 
+    @Test fun settings_household_stranding_dark() =
+        capture("settings_household_stranding_dark", dark = true) {
+            SettingsContent(
+                state = settings,
+                onSignOut = {},
+                household = invitation(mapOf("household_members" to listOf("Alex"))),
+            )
+        }
+
+    @Test fun settings_household_stranding_light() =
+        capture("settings_household_stranding_light", dark = false) {
+            SettingsContent(
+                state = settings,
+                onSignOut = {},
+                household = invitation(mapOf("household_members" to listOf("Alex"))),
+            )
+        }
+
     @Test fun settings_household_shared_dark() =
         capture("settings_household_shared_dark", dark = true) {
             SettingsContent(state = settings, onSignOut = {}, household = sharedHousehold)

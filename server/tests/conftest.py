@@ -126,6 +126,14 @@ async def _make_auth_client(client):
 
 
 @pytest_asyncio.fixture
+async def third_client():
+    """A THIRD account. Needed because stranding a co-member takes three people: one to own a
+    household, one already in it, and one inviting the owner away from it."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield await _make_auth_client(c)
+
+
+@pytest_asyncio.fixture
 async def other_client():
     """A SECOND signed-in account with its own household.
 
