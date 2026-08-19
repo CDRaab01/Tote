@@ -71,6 +71,7 @@ fun SettingsScreen(
         onDecline = householdViewModel::decline,
         onRemove = householdViewModel::remove,
         onTransfer = householdViewModel::transfer,
+        onRevoke = householdViewModel::revoke,
         onAskLeave = householdViewModel::askLeave,
     )
 
@@ -94,6 +95,7 @@ fun SettingsContent(
     onDecline: () -> Unit = {},
     onRemove: (String) -> Unit = {},
     onTransfer: (String) -> Unit = {},
+    onRevoke: (String) -> Unit = {},
     onAskLeave: () -> Unit = {},
 ) {
     val colors = ToteTheme.colors
@@ -143,6 +145,7 @@ fun SettingsContent(
                     onDecline = onDecline,
                     onRemove = onRemove,
                     onTransfer = onTransfer,
+                    onRevoke = onRevoke,
                     onAskLeave = onAskLeave,
                 )
             }

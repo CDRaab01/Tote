@@ -215,6 +215,8 @@ class CatalogRepository @Inject constructor(
 
     suspend fun declineInvite() = api.declineInvite()
 
+    suspend fun revokeInvite(userId: String) = api.revokeInvite(userId)
+
     suspend fun transferOwnership(userId: String) = api.transferOwnership(userId)
 
     suspend fun removeMember(userId: String) = api.removeMember(userId)

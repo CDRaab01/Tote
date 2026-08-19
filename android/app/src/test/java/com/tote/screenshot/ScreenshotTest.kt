@@ -52,6 +52,7 @@ import com.tote.data.remote.HouseholdDto
 import com.tote.data.remote.HouseholdMemberDto
 import com.tote.data.remote.InviteDto
 import com.tote.data.remote.MergePreviewDto
+import com.tote.data.remote.PendingInviteDto
 import com.tote.ui.settings.HouseholdState
 import com.tote.ui.settings.SettingsContent
 import com.tote.ui.settings.SettingsState
@@ -731,6 +732,27 @@ class ScreenshotTest {
                 onSignOut = {},
                 household = invitation(mapOf("tote_codes" to listOf("a14", "b02"))),
             )
+        }
+
+    private val invitationSent = HouseholdState(
+        household = HouseholdDto(
+            householdId = "h1",
+            members = listOf(HouseholdMemberDto("u1", "Chris", "cdraab01@gmail.com", true)),
+            pending = listOf(PendingInviteDto("u2", "Sam", "sam@example.com")),
+            youAreOwner = true,
+            shared = false,
+        ),
+        loaded = true,
+    )
+
+    @Test fun settings_household_pending_dark() =
+        capture("settings_household_pending_dark", dark = true) {
+            SettingsContent(state = settings, onSignOut = {}, household = invitationSent)
+        }
+
+    @Test fun settings_household_pending_light() =
+        capture("settings_household_pending_light", dark = false) {
+            SettingsContent(state = settings, onSignOut = {}, household = invitationSent)
         }
 
     @Test fun settings_household_stranding_dark() =

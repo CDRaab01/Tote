@@ -10,9 +10,26 @@ class HouseholdMemberOut(BaseModel):
     is_owner: bool
 
 
+class PendingInviteOut(BaseModel):
+    """Somebody who has been invited and has not answered yet.
+
+    Deliberately not a `HouseholdMemberOut` with a flag: a pending invitee is not a member and
+    shares nothing, and giving them the same shape is how a client ends up rendering them in the
+    roster as though they were already in.
+    """
+
+    user_id: uuid.UUID
+    name: str
+    email: str
+
+
 class HouseholdOut(BaseModel):
     household_id: uuid.UUID
     members: list[HouseholdMemberOut]
+    # Invitations sent and not yet answered. Without this the sender had no evidence at all that
+    # they had invited anybody: the roster looked exactly as it did before, so the only way to
+    # find out whether an invitation existed was to ask the person it was sent to.
+    pending: list[PendingInviteOut] = []
     you_are_owner: bool
     # More than one member — the catalogue is actually being shared. The client uses this to
     # decide whether "who moved it" is worth showing at all: in a household of one the answer is

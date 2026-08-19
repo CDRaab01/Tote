@@ -134,6 +134,18 @@ class HouseholdViewModel @Inject constructor(
         }
     }
 
+    /** Take back an invitation you sent. */
+    fun revoke(userId: String) {
+        viewModelScope.launch {
+            runCatching { repo.revokeInvite(userId) }
+                .onSuccess {
+                    feedback.say("Invitation withdrawn.")
+                    refresh()
+                }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't withdraw that.")) }
+        }
+    }
+
     fun decline() {
         viewModelScope.launch {
             runCatching { repo.declineInvite() }

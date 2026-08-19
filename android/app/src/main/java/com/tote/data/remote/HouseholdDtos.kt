@@ -20,10 +20,25 @@ data class HouseholdMemberDto(
     @SerialName("is_owner") val isOwner: Boolean,
 )
 
+/**
+ * Somebody invited who has not answered yet.
+ *
+ * Deliberately not a member with a flag: they share nothing until they accept, and a shape that
+ * makes them look like a member is how a roster starts claiming somebody has joined.
+ */
+@Serializable
+data class PendingInviteDto(
+    @SerialName("user_id") val userId: String,
+    val name: String,
+    val email: String,
+)
+
 @Serializable
 data class HouseholdDto(
     @SerialName("household_id") val householdId: String,
     val members: List<HouseholdMemberDto>,
+    /** Invitations sent from this household and not yet answered. */
+    val pending: List<PendingInviteDto> = emptyList(),
     @SerialName("you_are_owner") val youAreOwner: Boolean,
     /**
      * More than one member — the catalogue is genuinely being shared.

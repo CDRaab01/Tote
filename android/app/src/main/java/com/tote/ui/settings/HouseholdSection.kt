@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -40,6 +41,7 @@ fun HouseholdSection(
     onDecline: () -> Unit,
     onRemove: (String) -> Unit,
     onTransfer: (String) -> Unit,
+    onRevoke: (String) -> Unit,
     onAskLeave: () -> Unit,
 ) {
     val colors = ToteTheme.colors
@@ -115,7 +117,10 @@ fun HouseholdSection(
             Spacer(Modifier.height(spacing.sm))
         }
 
-        if (household.shared) {
+        // Members render whenever there is anybody to place them against — shared, or with an
+        // invitation outstanding. Skipping them while an invite was pending left the card opening
+        // on the invitee with no owner above them, which reads as though THEY are the household.
+        if (household.shared || household.pending.isNotEmpty()) {
             household.members.forEach { member ->
                 Column(Modifier.fillMaxWidth()) {
                     Text(
@@ -136,7 +141,7 @@ fun HouseholdSection(
                 }
                 Spacer(Modifier.height(spacing.sm))
             }
-        } else {
+        } else if (household.pending.isEmpty()) {
             Text(
                 "This catalogue is yours alone. Invite someone and you'll both see every bin, " +
                     "every item and every move — there's no half-sharing.",
@@ -144,6 +149,32 @@ fun HouseholdSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(spacing.md))
+        }
+
+        // Invitations sent and unanswered. They are NOT in the roster above, because they share
+        // nothing until they accept — but the sender needs evidence the invitation exists at
+        // all, and a way to take it back when the address was a typo.
+        household.pending.forEach { invitee ->
+            Column(Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(invitee.name, style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.width(spacing.sm))
+                    Text(
+                        "INVITED",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = ToteTheme.colors.attention.base,
+                    )
+                }
+                EmailText(invitee.email)
+                if (household.youAreOwner) {
+                    Row {
+                        TextButton(onClick = { onRevoke(invitee.userId) }) {
+                            Text("Withdraw")
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(spacing.sm))
         }
 
         // Only the owner can invite, so showing the field to everybody would be an invitation to

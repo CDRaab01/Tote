@@ -278,6 +278,10 @@ interface ApiService {
     @POST("household/decline")
     suspend fun declineInvite()
 
+    /** Withdraw an invitation you sent. Distinct from removing a member, which they are not. */
+    @DELETE("household/invites/{userId}")
+    suspend fun revokeInvite(@Path("userId") userId: String)
+
     @POST("household/transfer/{userId}")
     suspend fun transferOwnership(@Path("userId") userId: String): HouseholdDto
 

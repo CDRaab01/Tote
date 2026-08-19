@@ -590,6 +590,19 @@ user deletion can never cascade into an entire household inventory.
   would otherwise keep browsing bins they can no longer fetch, an attic that reads perfectly until
   they tap something.
 
+### An invitation is visible from both ends, and revocable
+
+`HouseholdOut.pending` carries invitations sent and unanswered. It is a **separate list from
+`members`**, not a member row with a flag: a pending invitee shares nothing, and giving them the
+member shape is how a roster starts claiming somebody has joined a household they have not.
+`shared` counts members only, so a household with one member and one invitation is still not a
+shared catalogue and does not start showing "who moved it".
+
+`DELETE /household/invites/{user_id}` withdraws one, owner-only and scoped to the caller's own
+household. Before it, only the invitee could end an invitation by declining — and since an email
+address is free text matched against accounts, a typo sent a real standing invitation to whoever
+owns that address with no way to take it back.
+
 ### Finding out you have been invited
 
 Settings is reached through one icon on the Find hero — deliberately, since it is an escape
