@@ -42,6 +42,10 @@ import com.tote.ui.capture.CaptureScreen
 import com.tote.ui.people.PeopleScreen
 import com.tote.ui.people.PersonDetailScreen
 import com.tote.ui.review.ReviewScreen
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import com.tote.ui.components.RefreshOnResume
 import com.tote.ui.review.DraftBadgeViewModel
 import com.tote.ui.settings.InviteBadgeViewModel
@@ -119,6 +123,20 @@ fun ToteNavHost(
 
     // An invitation arrives while the app is closed, so this cannot be a one-time load.
     RefreshOnResume(inviteBadge::refresh)
+
+    // The draft badge's interval poll, gated on the app actually being in front of somebody.
+    // It used to be a bare `while (true)` in the ViewModel's scope, which is not lifecycle-aware
+    // and so kept polling for the life of the process. `repeatOnLifecycle` cancels the loop when
+    // the app drops below RESUMED and starts a fresh one when it comes back.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                delay(DraftBadgeViewModel.REFRESH_INTERVAL_MS)
+                draftBadge.refresh()
+            }
+        }
+    }
 
     LaunchedEffect(launchIntent) {
         if (launchIntent != null) {

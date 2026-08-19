@@ -461,6 +461,29 @@ catalog — it is one you trust and shouldn't.
 - **`item_ids: null` means everything; `[]` is an explicit selection of nothing.** Conflating
   them would let a UI bug empty a whole bin.
 
+## Refreshing the snapshot
+
+`CatalogRepository.refresh()` is the client's one expensive call — three endpoints and a full
+Room `replaceAll` — and it runs after **every** write, so two properties matter.
+
+**The three calls are concurrent.** They do not depend on one another, and in series they were
+three times the latency on the path every write takes.
+
+**Concurrent callers collapse into one.** Every tab refreshes in its ViewModel's `init` and again
+on its first resume (both deliberate, both paid for in bugs), so opening a screen fetched the
+whole catalogue twice within milliseconds; a double-tapped pull-to-refresh did the same. A caller
+that finds a refresh already running returns instead of starting a second — the one in flight is
+about to write the same rows, and Room's flows push them out regardless of who asked.
+
+`force = true` is for **writes**, which must observe their own change and therefore wait for the
+lock rather than skipping. Every `.also { refresh(...) }` on a write path passes it.
+
+Still linear in the whole catalogue, and knowingly: a write downloads every item, not the one
+that changed. That is ~31 KB at 43 items and ~585 KB at 800. Patching the cache locally instead
+was considered and rejected — bin counts are derived server-side precisely because a stored count
+is the first thing to drift, and reconstructing them on the client would reintroduce that. The
+real fix is a conditional fetch, which needs server support.
+
 ## Read side
 
 `app/services/catalog.py` owns the joins so that "which bin, and where is it" is answered one
