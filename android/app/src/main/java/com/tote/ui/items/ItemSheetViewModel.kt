@@ -212,6 +212,9 @@ class ItemSheetViewModel @Inject constructor(
      * Loaded on demand, not with the sheet: most opens are to lend, move or read, and a second
      * round trip on every tap of an item row would be paid by everyone for the few who ask.
      */
+    /** Whether the household roster has been read this session — see [loadHistory]. */
+    private var rosterLoaded = false
+
     fun loadHistory() {
         val item = _state.value.item ?: return
         if (_state.value.historyLoaded) return
@@ -225,6 +228,12 @@ class ItemSheetViewModel @Inject constructor(
             // face that shows it, and paying a round trip on every tap of an item row would
             // charge everybody for the few who open the history. Silent on failure — a missing
             // name costs a caption, not the history.
+            //
+            // Once per ViewModel, not once per item: the guard above only stops a re-fetch for
+            // the SAME item, so opening five histories made five identical calls for a roster
+            // that does not change while the sheet is alive.
+            if (rosterLoaded) return@launch
+            rosterLoaded = true
             runCatching { repo.household() }
                 .getOrNull()
                 ?.takeIf { it.shared }

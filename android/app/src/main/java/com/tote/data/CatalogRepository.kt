@@ -15,6 +15,10 @@ import com.tote.data.remote.MovementDto
 import com.tote.data.remote.ToteCreate
 import com.tote.data.remote.ToteDetailDto
 import javax.inject.Inject
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 
@@ -35,6 +39,9 @@ class CatalogRepository @Inject constructor(
     private val api: ApiService,
     private val dao: CatalogDao,
 ) {
+    /** Held for the duration of a catalogue fetch — see [refresh]. */
+    private val refreshLock = Mutex()
+
     val cachedTotes: Flow<List<CachedTote>> = dao.totes()
 
     /** Bins put away rather than thrown away — shown collapsed, never mixed in with the live ones. */
@@ -49,16 +56,48 @@ class CatalogRepository @Inject constructor(
 
     suspend fun categories(): List<CategoryDto> = api.categories()
 
-    /** Pull the whole catalog and replace the snapshot. Small data; one round trip each. */
-    suspend fun refresh() {
+    /**
+     * Pull the whole catalog and replace the snapshot.
+     *
+     * **Concurrent callers collapse into one.** Every tab refreshes in its ViewModel's `init`
+     * and again on its first resume, so opening a screen used to fetch the whole catalogue
+     * twice within milliseconds; a double-tapped pull-to-refresh did the same. A caller that
+     * finds a refresh already running now returns instead of starting a second — the one in
+     * flight is about to write the same rows, and Room's flows push them out regardless of who
+     * asked.
+     *
+     * `force` is for **writes**, which must see their own change and therefore wait for the
+     * lock rather than skipping.
+     */
+    suspend fun refresh(force: Boolean = false) {
+        if (force) {
+            refreshLock.withLock { fetchAll() }
+        } else {
+            if (!refreshLock.tryLock()) return
+            try {
+                fetchAll()
+            } finally {
+                refreshLock.unlock()
+            }
+        }
+    }
+
+    private suspend fun fetchAll() = coroutineScope {
+        // Concurrent, not sequential. Three round trips in series is three times the latency for
+        // no reason — they do not depend on one another, and this runs after every write.
+        val totesCall = async { api.totes(includeArchived = true) }
+        val itemsCall = async { api.items() }
+        // Its own runCatching, and it must not take the catalogue down with it: the names are a
+        // fallback for a client running against an older server than itself.
+        val namesCall = async { runCatching { api.locations() }.getOrDefault(emptyList()) }
+
         // Archived included: an archived bin is still a physical box that can turn up in an attic,
         // and a snapshot that drops it makes "where did A14 go" unanswerable offline. The screens
         // filter; the cache holds everything.
-        val totes = api.totes(includeArchived = true)
-        val items = api.items()
+        val totes = totesCall.await()
+        val items = itemsCall.await()
         val locationsByTote = totes.associate { it.id to it.locationId }
-        val locationNames = runCatching { api.locations().associate { it.id to it.name } }
-            .getOrDefault(emptyMap())
+        val locationNames = namesCall.await().associate { it.id to it.name }
 
         dao.replaceAll(
             totes = totes.map {
@@ -135,12 +174,12 @@ class CatalogRepository @Inject constructor(
 
     suspend fun tote(id: String): ToteDetailDto = api.tote(id)
 
-    suspend fun createTote(body: ToteCreate) = api.createTote(body).also { refresh() }
+    suspend fun createTote(body: ToteCreate) = api.createTote(body).also { refresh(force = true) }
 
     suspend fun patchTote(id: String, body: com.tote.data.remote.TotePatch) =
-        api.patchTote(id, body).also { refresh() }
+        api.patchTote(id, body).also { refresh(force = true) }
 
-    suspend fun deleteTote(id: String) = api.deleteTote(id).also { refresh() }
+    suspend fun deleteTote(id: String) = api.deleteTote(id).also { refresh(force = true) }
 
     suspend fun createContainer(toteId: String, name: String, notes: String?) =
         api.createContainer(toteId, com.tote.data.remote.ContainerIn(name.trim(), notes))
@@ -158,20 +197,20 @@ class CatalogRepository @Inject constructor(
     suspend fun createLocation(name: String): LocationDto =
         api.createLocation(com.tote.data.remote.LocationIn(name.trim()))
 
-    suspend fun createItem(body: ItemCreate) = api.createItem(body).also { refresh() }
+    suspend fun createItem(body: ItemCreate) = api.createItem(body).also { refresh(force = true) }
 
-    suspend fun patchItem(id: String, body: ItemUpdate) = api.patchItem(id, body).also { refresh() }
+    suspend fun patchItem(id: String, body: ItemUpdate) = api.patchItem(id, body).also { refresh(force = true) }
 
-    suspend fun deleteItem(id: String) = api.deleteItem(id).also { refresh() }
+    suspend fun deleteItem(id: String) = api.deleteItem(id).also { refresh(force = true) }
 
     suspend fun move(id: String, body: MoveRequest): MovementDto =
-        api.move(id, body).also { refresh() }
+        api.move(id, body).also { refresh(force = true) }
 
     suspend fun unpack(toteId: String, itemIds: List<String>? = null) =
-        api.unpack(toteId, BulkMove(itemIds)).also { refresh() }
+        api.unpack(toteId, BulkMove(itemIds)).also { refresh(force = true) }
 
     suspend fun repack(toteId: String, itemIds: List<String>? = null) =
-        api.repack(toteId, BulkMove(itemIds)).also { refresh() }
+        api.repack(toteId, BulkMove(itemIds)).also { refresh(force = true) }
 
     suspend fun bulkMove(
         itemIds: List<String>,
@@ -179,10 +218,10 @@ class CatalogRepository @Inject constructor(
         containerId: String? = null,
     ) = api.bulkMove(
         com.tote.data.remote.BulkRelocate(itemIds, toToteId, containerId)
-    ).also { refresh() }
+    ).also { refresh(force = true) }
 
     suspend fun bulkBag(itemIds: List<String>, containerId: String?) =
-        api.bulkBag(com.tote.data.remote.BulkBag(itemIds, containerId)).also { refresh() }
+        api.bulkBag(com.tote.data.remote.BulkBag(itemIds, containerId)).also { refresh(force = true) }
 
     suspend fun movements(itemId: String) = api.movements(itemId)
 
@@ -191,7 +230,7 @@ class CatalogRepository @Inject constructor(
     /** Recorded only AFTER a successful physical write, so the database never claims a tag
      *  exists that does not. */
     suspend fun recordTagWrite(toteId: String, uid: String) =
-        api.recordTagWrite(toteId, com.tote.data.remote.NfcWrite(uid)).also { refresh() }
+        api.recordTagWrite(toteId, com.tote.data.remote.NfcWrite(uid)).also { refresh(force = true) }
 
     suspend fun resolveCode(code: String, tagUid: String? = null) = api.resolveCode(code, tagUid)
 
@@ -225,6 +264,6 @@ class CatalogRepository @Inject constructor(
 
     private suspend fun resetCache() {
         dao.replaceAll(emptyList(), emptyList())
-        refresh()
+        refresh(force = true)
     }
 }

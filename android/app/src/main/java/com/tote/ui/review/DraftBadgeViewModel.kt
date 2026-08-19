@@ -51,21 +51,20 @@ class DraftBadgeViewModel @Inject constructor(
         viewModelScope.launch {
             queue.pendingCount.collectLatest { refresh() }
         }
-        viewModelScope.launch {
-            while (true) {
-                delay(REFRESH_INTERVAL_MS)
-                refresh()
-            }
-        }
+        // The interval poll is NOT started here. `viewModelScope` is not lifecycle-aware, so a
+        // `while (true)` in it kept asking the server every minute for the life of the process —
+        // including while the app was backgrounded, which is radio and battery spent on a badge
+        // nobody can see. ToteNav drives it inside `repeatOnLifecycle(RESUMED)` instead.
     }
 
-    private suspend fun refresh() {
+    /** One poll. Public so the lifecycle-aware loop in ToteNav can drive it. */
+    suspend fun refresh() {
         // Silent on failure: this is decoration on a nav bar. A tailnet blip must not raise an
         // error over whatever screen the person is actually using.
         runCatching { api.drafts().size }.onSuccess { _pending.value = it }
     }
 
-    private companion object {
+    companion object {
         const val REFRESH_INTERVAL_MS = 60_000L
     }
 }
