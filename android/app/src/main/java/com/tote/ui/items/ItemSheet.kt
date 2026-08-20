@@ -633,6 +633,11 @@ internal fun movementLine(movement: MovementDto, codeFor: (String?) -> String?):
         "returned" -> "Returned into ${to ?: "a bin"}"
         "disposed" -> "Disposed of"
         "corrected" -> "Corrected"
+        // `from` is deliberately not read here: `movements.from_tote_id` is SET NULL when the
+        // tote goes, so it is always null on this row by the time anyone reads it. The bin's
+        // code survives in the note, which the history renders on the line below.
+        "bin_deleted" -> "Its bin was deleted"
+        "catalogued" -> "Catalogued, no bin yet"
         else -> movement.reason.replaceFirstChar { it.uppercase() }
     }
 }

@@ -37,7 +37,7 @@ from app.services.catalog import (
     to_tote_out,
     tote_counts,
 )
-from app.services.movement import repack_tote, unpack_tote
+from app.services.movement import record_move, repack_tote, unpack_tote
 
 router = APIRouter(prefix="/totes", tags=["totes"])
 
@@ -169,12 +169,43 @@ async def patch_tote(tote_id: uuid.UUID, body: TotePatch, user: CurrentUser, db:
 
 @router.delete("/{tote_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tote(tote_id: uuid.UUID, user: CurrentUser, db: Db):
-    """Deleting a tote leaves its items in the catalog, unfiled (ON DELETE SET NULL).
+    """Deleting a tote leaves its items in the catalog, unfiled — and says so in the ledger.
 
     Throwing a bin away must not erase the record of what was in it. Archiving (PATCH archived)
     is usually what someone actually wants; delete is for a bin created by mistake.
+
+    **The contents are moved out first, through the movement service like everything else.**
+    `items.current_tote_id` is `ON DELETE SET NULL`, so the database would otherwise null the
+    tote and leave `status` reading `stored` — the exact contradiction the invariant exists to
+    forbid, and one the item sheet reads out loud as "Move it… it left one bin and entered
+    another" for a thing that is in no bin. Derived state has one writer; this is it.
+
+    The bin's CODE goes in the note because `movements.from_tote_id` is `SET NULL` too: a
+    moment after this commit the row could no longer say which bin it came out of, and "it left
+    A14 when A14 was deleted" is the whole value of the row.
     """
     tote = await _owned_tote(db, user.household_id, tote_id)
+
+    contents = (
+        (
+            await db.execute(
+                select(Item).where(
+                    Item.household_id == user.household_id, Item.current_tote_id == tote_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for item in contents:
+        await record_move(
+            db,
+            item=item,
+            reason="bin_deleted",
+            note=f"Bin {tote.code} was deleted",
+            moved_by_user_id=user.id,
+        )
+
     await db.delete(tote)
     await db.commit()
 
