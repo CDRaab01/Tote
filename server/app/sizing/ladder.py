@@ -304,7 +304,8 @@ def parse_size(raw: str | None, department: str | None = None) -> SizeReading | 
     because it is the rule most likely to be "improved" away: under-reading is the point. A null
     sends someone to the bin; a wrong ordinal sends them to the wrong bin twice.
 
-    Ambiguity that a marker resolves is parsed happily: `W8`, `Women's 8`, `Girls 8`.
+    Ambiguity that a marker resolves is parsed happily: `W8`, `Women's 8`, `Girls 8`, `B10`,
+    `Youth 6X` — the marker in the string IS the system, so no department is needed.
     """
     if raw is None:
         return None
@@ -320,6 +321,7 @@ def parse_size(raw: str | None, department: str | None = None) -> SizeReading | 
         _parse_toddler,
         _parse_shoe,
         _parse_mens_waist,
+        _parse_marked_youth,
         _parse_marked_womens,
         _parse_alpha,
         _parse_bare_number,
@@ -403,6 +405,31 @@ def _parse_mens_waist(original: str, text: str, dept: str | None) -> SizeReading
 def _mens_ordinal(waist: int) -> float:
     # 32 -> 20 (about a small/medium), 36 -> 22, 40 -> 24. Same band as adult alpha.
     return 20.0 + (waist - 32) / 2.0
+
+
+def _parse_marked_youth(original: str, text: str, dept: str | None) -> SizeReading | None:
+    """A number that says it is a youth size: `girls_8`, `boys_10`, `youth_6x`, `g8`.
+
+    The mirror of `_parse_marked_womens`, and it was missing — which meant `Womens 8` parsed and
+    `GIRLS 8` did not, while `parse_size`'s own docstring promised both. A tag reading `GIRLS 8`
+    is what somebody types when they type what is printed, and it landed with no ordinal at all:
+    invisible to `fits`, which is the one query the ladder exists to serve. The same silent
+    failure as the missing `6m` rungs, and found the same way — by trying what a real tag says.
+
+    Supplying the department chip did not rescue it either, because `_parse_bare_number` only
+    fires on a bare number and `girls_8` is not one.
+
+    **Prefix forms only.** A trailing `y` (`8y`) is claimed by `_parse_shoe`, and quietly taking
+    it from there would turn a child's shoe into a youth garment size — swapping one wrong answer
+    for another on an axis the ladder deliberately keeps separate.
+    """
+    match = re.fullmatch(r"(?:g|b|y|girls|boys|youth|kids|junior|juniors)_?(\d{1,2}x?)", text)
+    if match is None:
+        return None
+    key = match.group(1)
+    if key not in _YOUTH_NUMERIC:
+        return None
+    return SizeReading(original, SYSTEM_YOUTH_NUMERIC, _YOUTH_NUMERIC[key])
 
 
 def _parse_marked_womens(original: str, text: str, dept: str | None) -> SizeReading | None:

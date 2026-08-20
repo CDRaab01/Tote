@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **349 server** (pytest, real Postgres) + **227 Android** (measured 2026-08-19) |
+| Tests | **378 server** (pytest, real Postgres) + **227 Android** (measured 2026-08-19) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -288,7 +288,8 @@ holding in both arms; a QR on the same card costs nothing and reads from four fe
   (`winter|summer|all`, nullable).
 - `movements` — **the ledger, and the reason this app is not a spreadsheet.** id, item_id,
   from_tote_id (nullable), to_tote_id (nullable), quantity, reason
-  (`initial|moved|unpacked|repacked|outgrown|loaned|returned|disposed|corrected`), note,
+  (`initial|moved|unpacked|repacked|outgrown|loaned|returned|disposed|corrected|catalogued|
+  bin_deleted`), note,
   person_id (nullable — who it was lent to, or who outgrew it), **moved_by_user_id**
   (nullable — which *member* did it, as opposed to who it was done for; a question that only
   exists once the catalogue is shared), moved_at, created_at.

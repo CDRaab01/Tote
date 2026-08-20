@@ -34,7 +34,7 @@ from app.models.tote import Tote
 # programming error rather than a user error, so it raises rather than defaulting — defaulting
 # would silently produce the contradictory state the invariant exists to prevent.
 _INBOUND = {"initial", "moved", "repacked", "returned", "corrected"}
-_OUTBOUND = {"unpacked", "outgrown", "loaned", "disposed"}
+_OUTBOUND = {"unpacked", "outgrown", "loaned", "disposed", "bin_deleted"}
 
 # The third kind, and the only one that puts an item nowhere: it entered the CATALOGUE without
 # entering a bin. Reviewing a batch and deciding where things go afterwards is a real workflow —
@@ -76,6 +76,7 @@ _OUT_STATUS = {
     "outgrown": "out",
     "loaned": "loaned",
     "disposed": "disposed",
+    "bin_deleted": "out",
 }
 
 # The `out_reason` recorded alongside. Deliberately narrower than MOVEMENT_REASONS: "why it left"
@@ -90,6 +91,9 @@ _OUT_REASON = {
     # status on an item with no tote, and "unfiled" is the honest one — anything else would claim
     # a history the object does not have.
     "catalogued": "unfiled",
+    # Its bin was deleted. It IS now unfiled; the ledger row is what preserves that it was once
+    # in one, and which one.
+    "bin_deleted": "unfiled",
 }
 
 

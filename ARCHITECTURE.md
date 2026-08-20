@@ -293,6 +293,30 @@ absent and the tests that prove them would be testing a schema that never ships.
 `search_vector` covers the item's own name, description and notes. Category lives in another
 table and a generated column cannot join, so category is a **filter**, not a search term.
 
+## The ladder reads what is on the tag
+
+`parse_size` resolves a system from a marker in the string — `W8`, `Women's 8` — and falls back
+to the `department` argument only for a **bare** number, where the ambiguity is real (youth 8 and
+women's 8 are different garments for different people).
+
+The women's marker parser shipped and the youth one did not, while `parse_size`'s own docstring
+promised both. `GIRLS 8` — which is what somebody types when they type what is printed — landed
+with no ordinal and was **invisible to `fits`**, the one query the ladder exists to serve. The
+department chip did not rescue it either, because `girls_8` is not a bare number and never
+reached that branch. Same silent failure as the missing `6m` rungs, found the same way: by trying
+what a real tag says.
+
+`_parse_marked_youth` takes **prefix forms only** (`girls_8`, `b10`, `youth_6x`). A trailing `y`
+belongs to `_parse_shoe`, and quietly taking `8y` from there would swap one wrong answer for
+another across the shoe/garment boundary the ladder keeps deliberately separate.
+
+**The derived index follows its inputs, all of them.** `apply_apparel` re-derives when the
+department changes as well as the reading — it used to key on `size_raw` alone, so correcting a
+mis-guessed department was accepted while the ordinal kept its old value. That matters because on
+the scan path the department comes from the MODEL, and production carries `mens` and `womens` on
+12-month onesies; the person who spots that at review has to be able to fix it and have the fix
+take.
+
 ## Adding to the seeded vocabulary
 
 `DEFAULT_CATEGORIES` is written **once, at first login**, and never looked at again. That is
@@ -340,6 +364,25 @@ back inside it. `DraftConfirm.tote_id` is optional now.
 **The state is not new.** An item with no bin already existed: deleting a tote leaves its
 contents unfiled (`ON DELETE SET NULL`), search already renders "Not in a tote", and bin
 contents already exclude it. What is new is a deliberate way to *arrive* there.
+
+### Deleting a bin is a whereabouts event
+
+`items.current_tote_id` is `ON DELETE SET NULL`, so deleting a tote used to null the whereabouts
+at the database level while `status` went on reading `stored` — an item claiming to be in a bin
+and in none, which is exactly what the invariant forbids. Nothing crashed; the item sheet simply
+offered "Move it… it left one bin and entered another" for something the list beside it called
+"not in a bin".
+
+So `delete_tote` moves the contents out first, through `record_move` like every other
+relocation, with a reason of its own: **`bin_deleted`**. Not `unpacked`, because nobody unpacked
+anything and a year later those are different facts; not `catalogued`, which #33 deliberately
+reserved for something that was never in a bin at all.
+
+The bin's **code goes in the note**, and that is load-bearing: `movements.from_tote_id` is
+`SET NULL` too, so a moment after the commit the row could no longer say which bin it came out
+of — and "it left A14 when A14 was deleted" is the whole value of the row. `inbound_reason_for`
+then files it later as `moved` rather than `repacked`, on the same reasoning as an item that was
+never filed: "it came back" is untrue of a thing whose bin ceased to exist.
 
 ### A third kind of movement reason
 

@@ -38,7 +38,15 @@ async def apply_apparel(db: AsyncSession, item: Item, updates: dict) -> None:
     for k, v in updates.items():
         setattr(row, k, v)
 
-    if "size_raw" in updates:
+    # Re-derived when EITHER the reading or the department it is read against changes.
+    #
+    # It used to key on `size_raw` alone, which made a correction silently ineffective: the
+    # department disambiguates a bare number (a tag reading `8` is a youth 8 or a women's 8),
+    # and it arrives from the MODEL on the scan path, where it is routinely wrong — production
+    # has `mens` and `womens` on 12-month onesies. Somebody spotting that at review and fixing
+    # the chip had their correction accepted and the derived ordinal left alone, so the garment
+    # stayed indexed as a women's 8 and "what fits Emma" went on missing it.
+    if "size_raw" in updates or "department" in updates:
         reading = parse_size(row.size_raw, department=row.department)
         row.size_system = reading.system if reading else None
         row.size_ordinal = reading.ordinal if reading else None

@@ -20,6 +20,11 @@ MOVEMENT_REASONS = (
     "corrected",
     # Entered the catalogue without entering a bin — see services/movement.py.
     "catalogued",
+    # The bin itself was deleted, so its contents left it without anybody taking them out.
+    # Its own reason rather than `unpacked` because a year later those are different facts,
+    # and `movements.from_tote_id` is SET NULL when the tote goes — so the row records the
+    # code in its `note`, which is the only surviving trace of which bin it was.
+    "bin_deleted",
 )
 
 
