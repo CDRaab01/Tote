@@ -166,7 +166,10 @@ fun ItemRow(
             // sheet behind a tap: a second button here costs the name the width it needs, and
             // a destructive action next to an everyday one is a mis-tap away from deleting a
             // photograph that cannot be retaken.
-            if (selected == null) {
+            // Blank means none: the category browse rows have no everyday action — the tap
+            // opens the sheet, which owns all the verbs — and an empty pill would render as a
+            // mystery button.
+            if (selected == null && actionLabel.isNotEmpty()) {
                 ToteButton(text = actionLabel, onClick = onAction, tonal = true, compact = true)
             }
         }

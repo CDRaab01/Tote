@@ -43,6 +43,7 @@ import com.tote.ui.components.DEPARTMENTS
 import com.tote.ui.components.PickerField
 import com.tote.ui.components.PickerList
 import com.tote.ui.components.PickerOption
+import com.tote.ui.components.asPickerOptions
 import com.tote.ui.components.SlateChip
 import com.tote.ui.components.ToteButton
 import com.tote.ui.components.conditionLabel
@@ -212,7 +213,7 @@ fun ItemSheetContent(
             SheetMode.PickCategory -> PickerFace(
                 title = "Category",
                 subtitle = null,
-                options = state.categories.map { PickerOption(id = it.id, label = it.name) },
+                options = state.categories.asPickerOptions(),
                 selectedId = state.edits.categoryId,
                 query = state.pickerQuery,
                 onQueryChange = onPickerQuery,

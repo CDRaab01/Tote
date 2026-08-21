@@ -63,6 +63,7 @@ import com.tote.ui.components.PickerField
 import com.tote.ui.components.CONDITIONS
 import com.tote.ui.components.DEPARTMENTS
 import com.tote.ui.components.PickerOption
+import com.tote.ui.components.asPickerOptions
 import com.tote.ui.components.SlateChip
 import com.tote.ui.components.conditionLabel
 import com.tote.ui.components.departmentLabel
@@ -616,7 +617,7 @@ fun ReviewContent(
     if (showCategoryPicker) {
         PickerDialog(
             title = "Category",
-            options = state.categories.map { PickerOption(id = it.id, label = it.name) },
+            options = state.categories.asPickerOptions(),
             selectedId = state.edits.categoryId,
             onPick = { id ->
                 onEdit { it.copy(categoryId = id) }

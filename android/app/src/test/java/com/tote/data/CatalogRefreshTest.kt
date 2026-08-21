@@ -43,7 +43,7 @@ class CatalogRefreshTest {
         dao = mock()
         api = mock {
             onBlocking { totes(anyOrNull(), any()) } doReturn listOf(ToteDto(id = "t1", code = "A14"))
-            onBlocking { items(anyOrNull()) } doReturn emptyList()
+            onBlocking { items(anyOrNull(), anyOrNull()) } doReturn emptyList()
             onBlocking { locations() } doReturn listOf(LocationDto(id = "l1", name = "Attic"))
         }
     }
@@ -61,7 +61,7 @@ class CatalogRefreshTest {
                 totesGate.await()
                 listOf(ToteDto(id = "t1", code = "A14"))
             }
-            onBlocking { items(anyOrNull()) } doSuspendableAnswer {
+            onBlocking { items(anyOrNull(), anyOrNull()) } doSuspendableAnswer {
                 started += "items"
                 emptyList()
             }

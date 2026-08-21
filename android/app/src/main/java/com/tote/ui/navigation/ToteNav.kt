@@ -39,6 +39,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.tote.nfc.TapRouter
 import com.tote.nfc.TapTarget
 import com.tote.ui.books.BookScanScreen
+import com.tote.ui.search.CategoryItemsScreen
+import com.tote.ui.settings.CategoryManagerScreen
 import com.tote.ui.capture.CaptureScreen
 import com.tote.ui.people.PeopleScreen
 import com.tote.ui.people.PersonDetailScreen
@@ -79,12 +81,17 @@ object Routes {
     const val SETTINGS = "settings"
     const val UNFILED = "unfiled"
     const val BOOK_SCAN = "books/scan"
+    const val CATEGORY_ITEMS = "categories/{categoryId}/items?name={name}"
+    const val CATEGORY_MANAGER = "settings/categories"
     const val TOTE_DETAIL = "totes/{toteId}?mismatch={mismatch}"
     const val PERSON_DETAIL = "people/{personId}"
 
     fun toteDetail(id: String, mismatch: Boolean = false) = "totes/$id?mismatch=$mismatch"
 
     fun personDetail(id: String) = "people/$id"
+
+    fun categoryItems(id: String, name: String) =
+        "categories/$id/items?name=${android.net.Uri.encode(name)}"
 
     /** Search, optionally pre-filled — used when a tag resolves to nothing. */
     fun search(query: String = "") = "search?q=$query"
@@ -282,6 +289,7 @@ fun ToteNavHost(
                     onOpenTote = { nav.navigate(Routes.toteDetail(it)) },
                     onOpenSettings = { nav.navigate(Routes.SETTINGS) },
                     hasInvite = hasInvite,
+                    onOpenCategory = { id, name -> nav.navigate(Routes.categoryItems(id, name)) },
                 )
             }
             composable(Routes.TOTES) {
@@ -316,7 +324,18 @@ fun ToteNavHost(
                     },
                 ),
             ) { ToteDetailScreen(onGone = { nav.navigateUp() }) }
-            composable(Routes.SETTINGS) { SettingsScreen() }
+            composable(Routes.SETTINGS) {
+                SettingsScreen(onOpenCategories = { nav.navigate(Routes.CATEGORY_MANAGER) })
+            }
+            composable(Routes.CATEGORY_MANAGER) { CategoryManagerScreen() }
+            composable(
+                Routes.CATEGORY_ITEMS,
+                arguments = listOf(
+                    navArgument("name") { type = NavType.StringType; defaultValue = "" },
+                ),
+            ) {
+                CategoryItemsScreen(onOpenTote = { nav.navigate(Routes.toteDetail(it)) })
+            }
             composable(
                 Routes.PERSON_DETAIL,
                 arguments = listOf(navArgument("personId") { type = NavType.StringType }),

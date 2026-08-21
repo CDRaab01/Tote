@@ -58,6 +58,8 @@ data class PickerOption(
     val label: String,
     /** Secondary line — where a bin is, what a person's sizes are. Optional. */
     val detail: String? = null,
+    /** A leading emoji, fixed-width so labels stay aligned. Categories carry one; bins don't. */
+    val icon: String? = null,
 )
 
 /** The number of options past which the picker offers a search box. */
@@ -230,6 +232,7 @@ fun PickerList(
                         detail = option.detail,
                         selected = option.id == selectedId,
                         onClick = { onPick(option.id) },
+                        icon = option.icon,
                     )
                 }
             }
@@ -243,6 +246,7 @@ private fun PickerRow(
     detail: String?,
     selected: Boolean,
     onClick: () -> Unit,
+    icon: String? = null,
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -256,6 +260,11 @@ private fun PickerRow(
             .padding(horizontal = spacing.sm, vertical = spacing.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (icon != null) {
+            // Fixed width, not intrinsic: emoji vary in advance width and a ragged left edge on
+            // the labels reads as misalignment, not decoration.
+            Text(icon, modifier = Modifier.width(32.dp))
+        }
         Column(Modifier.weight(1f)) {
             Text(
                 label,

@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **409 server** (pytest, real Postgres) + **242 Android** (measured 2026-08-21) |
+| Tests | **418 server** (pytest, real Postgres) + **259 Android** (measured 2026-08-21) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -267,7 +267,9 @@ holding in both arms; a QR on the same card costs nothing and reads from four fe
   (nullable, one level of nesting is enough), sort_order. A light table rather than free
   text on the tote, because "show me everything in the attic" is a browse entry point (§1)
   and free text fragments into "attic"/"Attic"/"the attic".
-- `categories` — id, user_id, name, icon, sort_order, seeded with the user's real domains
+- `categories` — id, user_id, name, icon (an emoji, seeded + user-editable since 0007;
+  rendered in pickers, browse chips and the manager), sort_order, seeded with the user's real
+  domains
   (Christmas/seasonal decor, clothing, baby, electronics, vintage games, tools, kitchen, books,
   documents, toys, sporting goods, craft/hobby) and freely editable. Seeded rows, not a
   Python enum: this vocabulary is the user's and will change.

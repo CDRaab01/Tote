@@ -60,6 +60,7 @@ import com.tote.ui.components.ItemThumbnail
 import com.tote.ui.components.PickerDialog
 import com.tote.ui.components.PickerField
 import com.tote.ui.components.PickerOption
+import com.tote.ui.components.asPickerOptions
 import com.tote.ui.components.ToteButton
 import com.tote.ui.items.ItemSheet
 import com.tote.ui.items.ItemSheetViewModel
@@ -983,7 +984,7 @@ private fun AddItemDialog(
     if (showCategoryPicker) {
         PickerDialog(
             title = "Category",
-            options = categories.map { PickerOption(id = it.id, label = it.name) },
+            options = categories.asPickerOptions(),
             selectedId = categoryId,
             onPick = {
                 categoryId = it

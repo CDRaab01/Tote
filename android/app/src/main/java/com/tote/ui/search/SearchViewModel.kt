@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tote.data.CatalogRepository
 import com.tote.data.remote.ApiService
+import com.tote.data.remote.CategoryDto
 import com.tote.data.remote.ItemDto
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -26,6 +27,14 @@ data class SearchUiState(
     val totes: Int = 0,
     val items: Int = 0,
     val out: Int = 0,
+    /**
+     * The browse entry point: categories that actually hold something, most-used first (the
+     * server's order). Empty both when the household has filed nothing into any category AND
+     * when the server was unreachable — deliberately, because the chips are an invitation, not
+     * a report, and an offline "couldn't load browse" banner on the search screen would be
+     * noise over a screen that still works against the cache.
+     */
+    val usedCategories: List<CategoryDto> = emptyList(),
     /**
      * Things out past the date they were due back.
      *
@@ -65,6 +74,13 @@ class SearchViewModel @Inject constructor(
             // unreachable server genuinely cannot tell you that anything is late.
             runCatching { api.overdue() }.onSuccess {
                 _state.value = _state.value.copy(overdue = it)
+            }
+            // Used categories only: eleven empty seeded rows as chips would be the picker
+            // clutter this feature exists to remove, reproduced on the home screen.
+            runCatching { api.categories() }.onSuccess { categories ->
+                _state.value = _state.value.copy(
+                    usedCategories = categories.filter { it.itemCount > 0 }
+                )
             }
         }
     }

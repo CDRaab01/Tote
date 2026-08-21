@@ -52,6 +52,7 @@ import design.pulse.ui.components.SectionHeader
 fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     householdViewModel: HouseholdViewModel = hiltViewModel(),
+    onOpenCategories: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val household by householdViewModel.state.collectAsStateWithLifecycle()
@@ -65,6 +66,7 @@ fun SettingsScreen(
         state = state,
         household = household,
         onSignOut = viewModel::signOut,
+        onOpenCategories = onOpenCategories,
         onInviteEmail = householdViewModel::onInviteEmail,
         onInvite = householdViewModel::invite,
         onAskAccept = householdViewModel::askAccept,
@@ -97,6 +99,7 @@ fun SettingsContent(
     onTransfer: (String) -> Unit = {},
     onRevoke: (String) -> Unit = {},
     onAskLeave: () -> Unit = {},
+    onOpenCategories: () -> Unit = {},
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -133,6 +136,19 @@ fun SettingsContent(
                     SettingRow("Version", state.version)
                     Spacer(Modifier.height(spacing.sm))
                     SettingRow("Server", state.serverUrl)
+                }
+            }
+
+            item { SectionHeader(label = "Catalogue", channel = colors.stored.base) }
+            item {
+                PanelCard(onClick = onOpenCategories) {
+                    Text("Categories", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(spacing.xs))
+                    Text(
+                        "Rename, re-icon, add and remove — the labels are yours.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
 

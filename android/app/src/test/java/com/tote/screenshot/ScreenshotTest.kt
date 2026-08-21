@@ -58,6 +58,12 @@ import com.tote.ui.books.BookRow
 import com.tote.ui.books.BookRowStatus
 import com.tote.ui.books.BookScanContent
 import com.tote.ui.books.BookScanState
+import com.tote.ui.search.CategoryItemsContent
+import com.tote.ui.search.CategoryItemsState
+import com.tote.ui.settings.CategoryEdit
+import com.tote.ui.settings.CategoryEditorBody
+import com.tote.ui.settings.CategoryManagerContent
+import com.tote.ui.settings.CategoryManagerState
 import com.tote.ui.settings.SettingsContent
 import com.tote.ui.settings.SettingsState
 import com.tote.ui.theme.ToteTheme
@@ -824,6 +830,77 @@ class ScreenshotTest {
 
     @Test fun book_scan_session_light() = capture("book_scan_session_light", dark = false) {
         BookScanContent(bookSession, emptyList(), { _, _ -> }, {}, {})
+    }
+
+    // ── Categories: browse chips, the filtered list, and the manager ────────────
+    private val usedCategories = listOf(
+        CategoryDto(id = "c1", name = "Baby", icon = "🍼", itemCount = 43),
+        CategoryDto(id = "c2", name = "Books", icon = "📚", itemCount = 12),
+        CategoryDto(id = "c3", name = "Christmas / seasonal decor", icon = "🎄", itemCount = 5),
+    )
+
+    @Test fun search_browse_chips_dark() = capture("search_browse_chips_dark", dark = true) {
+        SearchContent(
+            SearchUiState(totes = 14, items = 213, out = 6, usedCategories = usedCategories),
+            {}, {},
+        )
+    }
+
+    @Test fun search_browse_chips_light() = capture("search_browse_chips_light", dark = false) {
+        SearchContent(
+            SearchUiState(totes = 14, items = 213, out = 6, usedCategories = usedCategories),
+            {}, {},
+        )
+    }
+
+    @Test fun category_items_dark() = capture("category_items_dark", dark = true) {
+        CategoryItemsContent(
+            CategoryItemsState(
+                name = "Christmas / seasonal decor",
+                loaded = true,
+                items = listOf(
+                    ItemDto(
+                        id = "i1", name = "Fairy lights", description = "Warm white, 10 m",
+                        quantity = 1, status = "stored", currentToteId = "t1", toteCode = "A14",
+                    ),
+                    ItemDto(
+                        id = "i2", name = "Ornament box", quantity = 4,
+                        status = "out", outReason = "unpacked",
+                    ),
+                ),
+            ),
+            onOpenItem = {},
+        )
+    }
+
+    @Test fun category_items_unreachable_dark() =
+        capture("category_items_unreachable_dark", dark = true) {
+            CategoryItemsContent(
+                CategoryItemsState(name = "Christmas / seasonal decor", loaded = true, unreachable = true),
+                onOpenItem = {},
+            )
+        }
+
+    private val managerState = CategoryManagerState(
+        categories = usedCategories +
+            listOf(CategoryDto(id = "c4", name = "Documents", icon = "📄", itemCount = 0)),
+        loaded = true,
+    )
+
+    @Test fun category_manager_dark() = capture("category_manager_dark", dark = true) {
+        CategoryManagerContent(state = managerState, onAdd = {}, onEdit = {})
+    }
+
+    @Test fun category_manager_light() = capture("category_manager_light", dark = false) {
+        CategoryManagerContent(state = managerState, onAdd = {}, onEdit = {})
+    }
+
+    @Test fun category_editor_dark() = capture("category_editor_dark", dark = true) {
+        // The dialog BODY — an AlertDialog never idles under Robolectric.
+        CategoryEditorBody(
+            editing = CategoryEdit(id = "c1", name = "Christmas / seasonal decor", icon = "🎄"),
+            onName = {}, onIcon = {}, onAskDelete = {},
+        )
     }
 
     @Test fun settings_dark() = capture("settings_dark", dark = true) {

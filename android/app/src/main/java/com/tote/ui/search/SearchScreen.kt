@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+
 package com.tote.ui.search
 
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +24,8 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -58,6 +62,7 @@ fun SearchScreen(
     onOpenTote: (String) -> Unit,
     onOpenSettings: () -> Unit = {},
     hasInvite: Boolean = false,
+    onOpenCategory: (String, String) -> Unit = { _, _ -> },
     viewModel: SearchViewModel = hiltViewModel(),
     itemSheet: ItemSheetViewModel = hiltViewModel(),
 ) {
@@ -73,6 +78,7 @@ fun SearchScreen(
         onOpenItem = itemSheet::open,
         onOpenSettings = onOpenSettings,
         hasInvite = hasInvite,
+        onOpenCategory = onOpenCategory,
     )
 
     // A hit opens the item, not the bin. Tapping one used to be guarded on `currentToteId`, so a
@@ -98,6 +104,7 @@ fun SearchContent(
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
     hasInvite: Boolean = false,
+    onOpenCategory: (String, String) -> Unit = { _, _ -> },
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -229,6 +236,35 @@ fun SearchContent(
                         StatTile("Out", state.out.toString(), channel = colors.attention.base, modifier = Modifier.weight(1f))
                     }
                 }
+
+                // Browse — the third entry point (§1), only now built. Used categories only:
+                // the eleven empty seeded rows as chips would reproduce the picker clutter
+                // this feature removes. Server order (most-used first), FlowRow so nothing is
+                // ever clipped at the screen edge, no cap — used-only bounds the set.
+                if (state.usedCategories.isNotEmpty()) {
+                    item { SectionHeader(label = "Browse", channel = colors.search.base) }
+                    item {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(spacing.xs),
+                        ) {
+                            state.usedCategories.forEach { category ->
+                                AssistChip(
+                                    onClick = { onOpenCategory(category.id, category.name) },
+                                    label = {
+                                        Text(
+                                            listOfNotNull(
+                                                category.icon,
+                                                category.name,
+                                                "· ${category.itemCount}",
+                                            ).joinToString(" ")
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             if (state.searched) {
@@ -272,7 +308,7 @@ fun SearchContent(
  * someone open a detail screen to learn it would turn a one-glance question into two taps.
  */
 @Composable
-private fun SearchHitRow(item: ItemDto, onClick: () -> Unit) {
+internal fun SearchHitRow(item: ItemDto, onClick: () -> Unit) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
 

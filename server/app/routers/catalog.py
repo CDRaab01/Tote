@@ -4,11 +4,12 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.category import Category
+from app.models.item import Item
 from app.models.location import Location
 from app.models.tote import Tote
 from app.schemas.catalog import (
@@ -104,23 +105,54 @@ async def delete_location(location_id: uuid.UUID, user: CurrentUser, db: Db):
 
 @router.get("/categories", response_model=list[CategoryOut])
 async def list_categories(user: CurrentUser, db: Db):
-    rows = (
-        (
-            await db.execute(
-                select(Category)
-                .where(Category.household_id == user.household_id)
-                .order_by(Category.sort_order, Category.name)
-            )
-        )
-        .scalars()
-        .all()
+    """Categories, most-used first.
+
+    **This ordering IS the used-first feature.** All four client pickers render the server's
+    order through one shared mapping, so the query below is the whole implementation: the
+    categories the household actually files under rise, the eleven empty seeded ones sink, and
+    no screen anywhere sorts for itself. Computed, never stored — a denormalised count is the
+    first thing to drift (the tote-count rule, applied here).
+
+    Drafts are excluded from the count: an unreviewed model guess must not promote a category
+    the human has not confirmed anything into.
+    """
+    item_count = (
+        select(func.count(Item.id))
+        .where(Item.category_id == Category.id, Item.is_draft.is_(False))
+        .correlate(Category)
+        .scalar_subquery()
+        .label("item_count")
     )
-    return [CategoryOut.model_validate(r) for r in rows]
+    rows = (
+        await db.execute(
+            select(Category, item_count)
+            .where(Category.household_id == user.household_id)
+            .order_by(item_count.desc(), Category.sort_order, Category.name)
+        )
+    ).all()
+    out = []
+    for category, count in rows:
+        one = CategoryOut.model_validate(category)
+        one.item_count = count
+        out.append(one)
+    return out
 
 
 @router.post("/categories", response_model=CategoryOut, status_code=status.HTTP_201_CREATED)
 async def create_category(body: CategoryIn, user: CurrentUser, db: Db):
-    cat = Category(user_id=user.id, household_id=user.household_id, **body.model_dump())
+    data = body.model_dump()
+    if data["sort_order"] is None:
+        # Appended, not slotted in at 0 — a new category tying with the seeds at zero would
+        # jump above them in every picker's tie-break, which reads as the app reordering a list
+        # the person did not touch.
+        data["sort_order"] = (
+            await db.execute(
+                select(func.coalesce(func.max(Category.sort_order) + 1, 0)).where(
+                    Category.household_id == user.household_id
+                )
+            )
+        ).scalar_one()
+    cat = Category(user_id=user.id, household_id=user.household_id, **data)
     db.add(cat)
     await db.commit()
     await db.refresh(cat)
