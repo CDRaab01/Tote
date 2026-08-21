@@ -172,6 +172,15 @@ interface ApiService {
 
     /** The review stack, oldest first — the order they were shot in, which is the order the
      *  person remembers them in. */
+    /**
+     * A book barcode becomes a filed item — or a Review draft when the databases don't know it.
+     *
+     * Slow by design (the server consults OpenLibrary, measured at up to ~12 s cold, plus a
+     * cover download); [ScanTimeoutInterceptor] carries the matching read timeout.
+     */
+    @POST("items/scan-isbn")
+    suspend fun scanIsbn(@Body body: ScanIsbnRequest): ScanIsbnResponse
+
     @GET("drafts")
     suspend fun drafts(): List<DraftDto>
 

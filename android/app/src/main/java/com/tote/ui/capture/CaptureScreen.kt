@@ -80,6 +80,7 @@ import java.io.File
 @Composable
 fun CaptureScreen(
     viewModel: CaptureViewModel = hiltViewModel(),
+    onScanBooks: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val shots by viewModel.shots.collectAsStateWithLifecycle()
@@ -135,6 +136,7 @@ fun CaptureScreen(
         onQueue = viewModel::queueItem,
         onRetry = viewModel::retry,
         onDiscard = { confirmingDiscard = it },
+        onScanBooks = onScanBooks,
     )
     confirmingDiscard?.let { id ->
         // The other photo-destroying action. These files exist nowhere else — the capture
@@ -191,6 +193,7 @@ fun CaptureContent(
     onItemName: (String) -> Unit = {},
     onChooseCategory: (String?) -> Unit = {},
     onDescribe: (Boolean) -> Unit = {},
+    onScanBooks: () -> Unit = {},
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -218,6 +221,24 @@ fun CaptureContent(
                     )
                     Spacer(Modifier.height(spacing.md))
                     HazardRule()
+                }
+            }
+
+            // ── Books skip the camera entirely ───────────────────────────────
+            item {
+                PanelCard(onClick = onScanBooks) {
+                    Text(
+                        "Scanning books?",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Spacer(Modifier.height(spacing.xs))
+                    // Body text, not Caption — Caption upper-cases, and a full sentence in caps
+                    // reads as a warning on the one card here that is an invitation.
+                    Text(
+                        "Use the barcode — looked up and filed straight in, no review.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
 

@@ -6,6 +6,7 @@ movement row. The house AI rule is that nothing model-generated enters the catal
 explicit approval, and Tote has no exception to it.
 """
 
+import datetime
 import uuid
 from typing import Annotated
 
@@ -20,10 +21,11 @@ from app.database import get_db
 from app.models.category import Category
 from app.models.item import Item, ItemPhoto
 from app.models.tote import Tote
-from app.schemas.catalog import DraftConfirm, DraftOut, ItemOut
+from app.schemas.catalog import DraftConfirm, DraftOut, ItemOut, ScanIsbnIn, ScanIsbnOut
 from app.security import CurrentUser
 from app.services import photo_store
 from app.services.apparel_write import apply_apparel
+from app.services.books import LookupUnavailable, description_for, fetch_cover, lookup_isbn
 from app.services.catalog import item_query, to_item_out
 from app.services.movement import record_move
 from app.services.scan_pipeline import scan_photos
@@ -181,6 +183,160 @@ async def scan(
         return await _to_draft_out(db, existing)
     await db.refresh(item)
     return await _to_draft_out(db, item)
+
+
+@router.post("/items/scan-isbn", response_model=ScanIsbnOut, status_code=status.HTTP_201_CREATED)
+async def scan_isbn(body: ScanIsbnIn, user: CurrentUser, db: Db):
+    """A scanned book barcode becomes a filed item — no photograph, no review.
+
+    Its own endpoint rather than a mode of `/items/scan`, which requires at least one photo and
+    is multipart for that reason; a barcode has no bytes to carry. And its own rules, because
+    the trust story is different: **nothing here is model output.** An ISBN lookup returns
+    database rows keyed by the number printed on the object, so the no-auto-commit rule for
+    AI-generated data does not apply (owner-confirmed) and the book files directly into the
+    chosen bin. The rule itself stands untouched for everything vision produces.
+
+    Three outcomes, and the middle one is the design (see `services/books.py`):
+
+    * **Found** → a real item, filed with an ordinary ledger row. Title in `name`, author and
+      imprint in `description`, `ISBN {n}` in `notes` — the three columns `search_vector`
+      covers, so a book is findable by its author for free. Category is the household's
+      "Books" if they still have one. The cover lands as photo 0 when it can be fetched;
+      a coverless book still files.
+    * **Not found** → a draft for the Review tab (`scan_error="isbn_not_found"`), where a human
+      names it. A definitive answer from the database, not a failure.
+    * **Databases unreachable** → 503 with nothing committed, so the client's Retry is safe.
+      A network flake must never mint a "this book does not exist" draft.
+
+    `capture_id` is required and does exactly what it does on `/items/scan` — a replayed
+    request returns what the first attempt made instead of filing the book twice.
+    """
+    existing = (
+        await db.execute(
+            select(Item).where(
+                Item.household_id == user.household_id, Item.capture_id == body.capture_id
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return ScanIsbnOut(
+            found=not existing.is_draft, source=None, item=await _to_draft_out(db, existing)
+        )
+
+    if body.tote_id is not None:
+        found_tote = (
+            await db.execute(
+                select(Tote).where(Tote.id == body.tote_id, Tote.household_id == user.household_id)
+            )
+        ).scalar_one_or_none()
+        if found_tote is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Tote not found")
+
+    try:
+        meta = await lookup_isbn(body.isbn)
+    except LookupUnavailable:
+        # Nothing has been written, so the client can retry the same capture_id safely.
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Couldn't reach the book database — try again in a moment",
+        )
+
+    if meta is None:
+        item = Item(
+            household_id=user.household_id,
+            user_id=user.id,
+            name="Unidentified book",
+            notes=f"ISBN {body.isbn}",
+            is_draft=True,
+            status="out",
+            out_reason="other",
+            scan_error="isbn_not_found",
+            capture_id=body.capture_id,
+            draft_tote_id=body.tote_id,
+            processed_at=datetime.datetime.now(datetime.UTC),
+        )
+        db.add(item)
+        commit_result = await _commit_or_return_winner(db, user.household_id, body.capture_id)
+        if commit_result is not None:
+            return commit_result
+        await db.refresh(item)
+        return ScanIsbnOut(found=False, source=None, item=await _to_draft_out(db, item))
+
+    # The household's "Books" category, if they still have one. By name rather than a stored id
+    # because the vocabulary is the user's — they may have renamed or deleted it, and a book
+    # with no category label is a smaller wrong than resurrecting a name they removed.
+    books_category_id = (
+        await db.execute(
+            select(Category.id).where(
+                Category.household_id == user.household_id, func.lower(Category.name) == "books"
+            )
+        )
+    ).scalar_one_or_none()
+
+    item = Item(
+        household_id=user.household_id,
+        user_id=user.id,
+        name=meta.title[:160],
+        description=description_for(meta),
+        notes=f"ISBN {body.isbn}",
+        category_id=books_category_id,
+        is_draft=False,
+        status="out",
+        out_reason="other",
+        capture_id=body.capture_id,
+        processed_at=datetime.datetime.now(datetime.UTC),
+    )
+    db.add(item)
+    await db.flush()
+
+    # The cover is a nicety on a filing that has already succeeded — its failure must never
+    # take the book with it (the label-pass rule, applied to images).
+    cover = await fetch_cover(meta.cover_url)
+    if cover is not None:
+        data, content_type = cover
+        path = photo_store.save_original(item.id, 0, data, content_type)
+        db.add(ItemPhoto(item_id=item.id, order=0, original_path=path, role="front"))
+
+    await record_move(
+        db,
+        item=item,
+        reason="initial" if body.tote_id is not None else "catalogued",
+        to_tote_id=body.tote_id,
+        moved_by_user_id=user.id,
+    )
+
+    commit_result = await _commit_or_return_winner(db, user.household_id, body.capture_id)
+    if commit_result is not None:
+        return commit_result
+    await db.refresh(item)
+    return ScanIsbnOut(found=True, source=meta.source, item=await _to_draft_out(db, item))
+
+
+async def _commit_or_return_winner(
+    db: AsyncSession, household_id: uuid.UUID, capture_id: uuid.UUID
+) -> ScanIsbnOut | None:
+    """Commit, or hand back the row a racing attempt already made. None means "we won".
+
+    The same backstop `/items/scan` carries: the idempotency check runs before the lookup, the
+    lookup takes seconds, and two retries of one scan can race through that window. The unique
+    constraint decides; the loser returns the winner's row rather than a 409 the client would
+    just retry into the same wall.
+    """
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        existing = (
+            await db.execute(
+                select(Item).where(Item.household_id == household_id, Item.capture_id == capture_id)
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            raise
+        return ScanIsbnOut(
+            found=not existing.is_draft, source=None, item=await _to_draft_out(db, existing)
+        )
+    return None
 
 
 @router.get("/drafts", response_model=list[DraftOut])

@@ -54,6 +54,10 @@ import com.tote.data.remote.InviteDto
 import com.tote.data.remote.MergePreviewDto
 import com.tote.data.remote.PendingInviteDto
 import com.tote.ui.settings.HouseholdState
+import com.tote.ui.books.BookRow
+import com.tote.ui.books.BookRowStatus
+import com.tote.ui.books.BookScanContent
+import com.tote.ui.books.BookScanState
 import com.tote.ui.settings.SettingsContent
 import com.tote.ui.settings.SettingsState
 import com.tote.ui.theme.ToteTheme
@@ -782,6 +786,45 @@ class ScreenshotTest {
         capture("settings_household_shared_light", dark = false) {
             SettingsContent(state = settings, onSignOut = {}, household = sharedHousehold)
         }
+
+    // ── The book-scanning session ────────────────────────────────────────────
+    // All four row states in one frame, because the states ARE the design: a receipt row
+    // (filed, stored-green), a to-do row (not found, attention), a broken row (failed, error
+    // voice + Retry) and an in-flight row. The empty scene proves the screen invites scanning
+    // rather than apologising for having nothing.
+    private val bookSession = BookScanState(
+        toteId = "t1",
+        toteCode = "A14",
+        rows = listOf(
+            BookRow("c1", "9780140328721", BookRowStatus.LOOKING_UP),
+            BookRow(
+                "c2", "9780064430173", BookRowStatus.FAILED,
+                error = "Couldn't reach the book database — try again in a moment",
+            ),
+            BookRow("c3", "9780394800011", BookRowStatus.NOT_FOUND),
+            BookRow(
+                "c4", "9780140327595", BookRowStatus.FILED,
+                title = "Matilda", author = "by Roald Dahl · Puffin, 1988",
+                itemId = "i4", hasCover = false,
+            ),
+        ),
+    )
+
+    @Test fun book_scan_empty_dark() = capture("book_scan_empty_dark", dark = true) {
+        BookScanContent(BookScanState(), emptyList(), { _, _ -> }, {}, {})
+    }
+
+    @Test fun book_scan_empty_light() = capture("book_scan_empty_light", dark = false) {
+        BookScanContent(BookScanState(), emptyList(), { _, _ -> }, {}, {})
+    }
+
+    @Test fun book_scan_session_dark() = capture("book_scan_session_dark", dark = true) {
+        BookScanContent(bookSession, emptyList(), { _, _ -> }, {}, {})
+    }
+
+    @Test fun book_scan_session_light() = capture("book_scan_session_light", dark = false) {
+        BookScanContent(bookSession, emptyList(), { _, _ -> }, {}, {})
+    }
 
     @Test fun settings_dark() = capture("settings_dark", dark = true) {
         SettingsContent(

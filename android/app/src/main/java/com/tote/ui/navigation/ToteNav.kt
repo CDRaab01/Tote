@@ -38,6 +38,7 @@ import androidx.navigation.NavType
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.tote.nfc.TapRouter
 import com.tote.nfc.TapTarget
+import com.tote.ui.books.BookScanScreen
 import com.tote.ui.capture.CaptureScreen
 import com.tote.ui.people.PeopleScreen
 import com.tote.ui.people.PersonDetailScreen
@@ -77,6 +78,7 @@ object Routes {
     const val REVIEW = "review"
     const val SETTINGS = "settings"
     const val UNFILED = "unfiled"
+    const val BOOK_SCAN = "books/scan"
     const val TOTE_DETAIL = "totes/{toteId}?mismatch={mismatch}"
     const val PERSON_DETAIL = "people/{personId}"
 
@@ -297,7 +299,10 @@ fun ToteNavHost(
             composable(Routes.PEOPLE) {
                 PeopleScreen(onOpenPerson = { nav.navigate(Routes.personDetail(it)) })
             }
-            composable(Routes.CAPTURE) { CaptureScreen() }
+            composable(Routes.CAPTURE) {
+                CaptureScreen(onScanBooks = { nav.navigate(Routes.BOOK_SCAN) })
+            }
+            composable(Routes.BOOK_SCAN) { BookScanScreen() }
             composable(Routes.REVIEW) {
                 ReviewScreen(onPhotographSomething = { nav.tabTo(Routes.CAPTURE) })
             }
