@@ -60,6 +60,7 @@ import com.tote.ui.components.HazardRule
 import com.tote.ui.components.PickerDialog
 import com.tote.ui.components.PickerField
 import com.tote.ui.components.PickerOption
+import com.tote.ui.components.asPickerOptions
 import com.tote.ui.components.ToteButton
 import com.tote.ui.components.toteButtonContentColor
 import com.tote.ui.theme.ToteTheme
@@ -473,7 +474,7 @@ fun CaptureContent(
     if (showCategoryPicker) {
         PickerDialog(
             title = "Category",
-            options = state.categories.map { PickerOption(id = it.id, label = it.name) },
+            options = state.categories.asPickerOptions(),
             selectedId = state.categoryId,
             onPick = {
                 onChooseCategory(it)

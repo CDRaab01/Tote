@@ -32,6 +32,16 @@ interface ApiService {
     @GET("categories")
     suspend fun categories(): List<CategoryDto>
 
+    @POST("categories")
+    suspend fun createCategory(@Body body: CategoryCreate): CategoryDto
+
+    @PATCH("categories/{id}")
+    suspend fun patchCategory(@Path("id") id: String, @Body body: CategoryPatch): CategoryDto
+
+    /** SET NULL semantics: items and bins keep their contents, they just lose this label. */
+    @DELETE("categories/{id}")
+    suspend fun deleteCategory(@Path("id") id: String)
+
     /**
      * Every bin, archived ones included when asked.
      *
@@ -91,7 +101,10 @@ interface ApiService {
     // ── Items ────────────────────────────────────────────────────────────────
 
     @GET("items")
-    suspend fun items(@Query("tote_id") toteId: String? = null): List<ItemDto>
+    suspend fun items(
+        @Query("tote_id") toteId: String? = null,
+        @Query("category_id") categoryId: String? = null,
+    ): List<ItemDto>
 
     @POST("items")
     suspend fun createItem(@Body body: ItemCreate): ItemDto

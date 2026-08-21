@@ -376,6 +376,34 @@ the scan path the department comes from the MODEL, and production carries `mens`
 12-month onesies; the person who spots that at review has to be able to fix it and have the fix
 take.
 
+## Category ordering, icons, and browse
+
+**The server owns the ordering, and the ordering is the feature.** `GET /categories` returns
+most-used first (`item_count` — a correlated subquery, computed never stored, drafts excluded so
+an unreviewed model guess cannot promote a label). All four client pickers render that order
+through ONE mapping (`ui/components/CategoryUi.kt`), and no screen sorts for itself: with twelve
+seeded categories and one in use, the eleven empty ones sink instead of standing in front of
+every choice. Ties fall back to `sort_order` — and `POST /categories` appends new names after
+everything the household has rather than defaulting to 0, or a new category would jump above
+the seeds in every tie-break.
+
+**Icons are an emoji string in `categories.icon`** — a column that existed since 0001 and was
+never written. Seeded for new households from `DEFAULT_CATEGORY_ICONS` (a separate map, because
+the tuple's order is load-bearing) and back-filled for existing ones by migration `0007`, whose
+`icon IS NULL` guard is both idempotency and the promise that a hand-picked icon is never
+overwritten. The #29 rule now covers icons: a seed change is the map + a migration.
+
+**Browse-by-category** (§1's third entry point, unbuilt until now): chips on Find for **used
+categories only** — empty seeded rows as chips would reproduce the picker clutter this removes —
+opening a pushed route that lists `GET /items?category_id=` (an endpoint live since Phase 2,
+first caller). The rows are the search hit's row, not `ItemRow`, because browse's whole question
+is "which bin" and that is the one row whose second line answers it. Online-only (the Room cache
+does not carry category ids), and the unreachable state says so instead of claiming empty.
+
+**The manager** (Settings → Categories) is the first caller of POST/PATCH/DELETE `/categories`.
+`CategoryPatch` always sends both fields — the TotePatch discipline, or a rename would silently
+strip the icon. Delete counts what loses the label and says the contents keep their bins.
+
 ## Adding to the seeded vocabulary
 
 `DEFAULT_CATEGORIES` is written **once, at first login**, and never looked at again. That is

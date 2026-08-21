@@ -27,6 +27,27 @@ DEFAULT_CATEGORIES = (
     "Craft / hobby",
 )
 
+# The icon each seeded name starts with. A separate map rather than pairs in the tuple above,
+# because the tuple's ORDER is load-bearing (it is each new household's initial sort_order) and
+# 0004's back-fill logic reads it positionally. An icon is an emoji string in `categories.icon`
+# — user-editable like the name, seeded for new households here and back-filled for existing
+# ones by migration 0007 (a seed change reaches nobody without a migration; the #29 rule, which
+# now covers icons too).
+DEFAULT_CATEGORY_ICONS = {
+    "Christmas / seasonal decor": "🎄",
+    "Clothing": "👕",
+    "Baby": "🍼",
+    "Electronics": "🔌",
+    "Vintage games": "🕹️",
+    "Tools": "🔧",
+    "Kitchen": "🍳",
+    "Books": "📚",
+    "Documents": "📄",
+    "Toys": "🧸",
+    "Sporting goods": "⚽",
+    "Craft / hobby": "🧶",
+}
+
 
 class Category(Base):
     __tablename__ = "categories"

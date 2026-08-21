@@ -17,7 +17,20 @@ data class CategoryDto(
     val name: String,
     val icon: String? = null,
     @SerialName("sort_order") val sortOrder: Int = 0,
+    @SerialName("item_count") val itemCount: Int = 0,
 )
+
+/**
+ * Category writes. Both fields, always sent — the TotePatch discipline: `encodeDefaults` is on
+ * and the server reads `exclude_unset`, so a defaults-built sparse body would null the icon on
+ * every rename. `sort_order` is deliberately absent: the server appends new categories after
+ * everything the household has, and used-first ordering makes manual reorder moot.
+ */
+@Serializable
+data class CategoryCreate(val name: String, val icon: String?)
+
+@Serializable
+data class CategoryPatch(val name: String, val icon: String?)
 
 @Serializable
 data class ToteDto(

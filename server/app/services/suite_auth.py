@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.category import DEFAULT_CATEGORIES, Category
+from app.models.category import DEFAULT_CATEGORIES, DEFAULT_CATEGORY_ICONS, Category
 from app.models.user import User, UserSettings
 from app.schemas.auth import TokenResponse
 from app.security import create_access_token, create_refresh_token
@@ -101,7 +101,13 @@ async def suite_login(db: AsyncSession, suite_token: str) -> TokenResponse:
         db.add(UserSettings(user_id=user.id))
         for order, name in enumerate(DEFAULT_CATEGORIES):
             db.add(
-                Category(household_id=household.id, user_id=user.id, name=name, sort_order=order)
+                Category(
+                    household_id=household.id,
+                    user_id=user.id,
+                    name=name,
+                    icon=DEFAULT_CATEGORY_ICONS.get(name),
+                    sort_order=order,
+                )
             )
         await db.commit()
         await db.refresh(user)

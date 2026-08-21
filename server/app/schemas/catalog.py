@@ -51,7 +51,9 @@ class LocationOut(BaseModel):
 class CategoryIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     icon: str | None = Field(default=None, max_length=48)
-    sort_order: int = 0
+    # None means "append after everything I have" — the #29 rule: a new name never jumps into
+    # the middle of an ordering the person may have arranged. An explicit value still wins.
+    sort_order: int | None = None
 
 
 class CategoryPatch(BaseModel):
@@ -61,10 +63,14 @@ class CategoryPatch(BaseModel):
 
 
 class CategoryOut(BaseModel):
+    """`item_count` drives the used-first ordering and the browse chips — computed per request,
+    never stored, drafts excluded."""
+
     id: uuid.UUID
     name: str
     icon: str | None
     sort_order: int
+    item_count: int = 0
 
     model_config = {"from_attributes": True}
 
