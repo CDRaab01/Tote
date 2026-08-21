@@ -2,28 +2,38 @@ package com.tote.ui.totes
 
 import android.content.Intent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Nfc
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -36,10 +46,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -55,8 +66,6 @@ import com.tote.nfc.WriteState
 import com.tote.nfc.hasNfc
 import com.tote.ui.components.HazardRule
 import com.tote.ui.components.DateField
-import com.tote.ui.components.ItemRow
-import com.tote.ui.components.ItemThumbnail
 import com.tote.ui.components.PickerDialog
 import com.tote.ui.components.PickerField
 import com.tote.ui.components.PickerOption
@@ -353,88 +362,43 @@ fun ToteDetailContent(
     val spacing = ToteTheme.spacing
 
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Box(Modifier.fillMaxSize()) {
+        // The screen leads with what is IN the bin. The old layout stacked two button rows, the
+        // labelling panel and the selection bar between the hero and the first item, so on the
+        // flagship path — tap the tag, read the contents — the contents started below the fold
+        // behind management chrome that is used once per bin. The management verbs now live as
+        // icons on the hero (edit, tag, card), the labelling state is one line, and the bulk
+        // verbs are pinned at the bottom where the thumb is.
         LazyColumn(
-            Modifier.fillMaxSize().padding(spacing.lg),
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = spacing.lg,
+                end = spacing.lg,
+                top = spacing.lg,
+                // Room for the pinned bar, so the last cells scroll clear of it.
+                bottom = 120.dp,
+            ),
             verticalArrangement = Arrangement.spacedBy(spacing.md),
         ) {
             item {
-                HeroPanel {
-                    Text(tote.code, style = MaterialTheme.typography.headlineMedium, color = Color.White)
-                    Spacer(Modifier.height(spacing.xs))
-                    Text(
-                        // The place, on the hero, because "A14" is half an answer: this screen is
-                        // read while deciding whether to climb a ladder.
-                        listOfNotNull(tote.label ?: "Unlabelled", tote.locationName)
-                            .joinToString(" · "),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.82f),
-                    )
-                    if (tote.archived) {
-                        Spacer(Modifier.height(spacing.xs))
-                        Text(
-                            "Archived — off the daily list, still in the catalogue",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.7f),
-                        )
-                    }
-                    Spacer(Modifier.height(spacing.md))
-                    HazardRule()
-                }
+                BinHero(
+                    tote = tote,
+                    hasNfc = hasNfc,
+                    onEditBin = onEditBin,
+                    onWriteTag = onWriteTag,
+                    onPrintCard = onPrintCard,
+                )
             }
 
-            // Two rows, split by what they act on: the bin itself, then everything in it. One
-            // row could not hold four buttons — "Unpack all" wrapped to two lines the moment
-            // "Edit bin" joined it, and a half-unpacked January bin needs all four.
             item {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(spacing.sm),
-                ) {
-                    ToteButton(text = "Add item", onClick = onAddItem, modifier = Modifier.weight(1f))
-                    // Nothing about a bin was editable after creation: no label, no notes, and —
-                    // the one that matters — no way to say where it physically is.
-                    ToteButton(
-                        text = "Edit bin",
-                        onClick = onEditBin,
-                        tonal = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-            }
-
-            // Both operations whenever each has something to act on. The old either/or hid
-            // Repack on any bin with items still inside — so a half-unpacked Christmas bin
-            // (3 in, 2 out: the normal January state) could only be repacked one row at a time.
-            if (tote.itemCount > 0 || tote.outCount > 0) {
-                item {
-                    // FlowRow and no weights, because this row can now hold three buttons and
-                    // an even three-way split wraps "Unpack all" INSIDE its own button — the
-                    // same defect the selection bar was rebuilt to fix. Buttons take the width
-                    // of their words and wrap as whole buttons.
-                    FlowRow(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(spacing.sm),
-                        verticalArrangement = Arrangement.spacedBy(spacing.sm),
-                    ) {
-                        if (tote.itemCount > 0) {
-                            ToteButton(text = "Unpack all", onClick = onUnpackAll, tonal = true)
-                        }
-                        if (tote.outCount > 0) {
-                            ToteButton(text = "Repack all", onClick = onRepackAll, tonal = true)
-                        }
-                        // Beside the two bulk verbs rather than in the "In this tote" header,
-                        // because a selection now spans both lists — and because that header is
-                        // not drawn at all once the bin is empty, which is precisely when
-                        // picking several things to put back is what you came to do.
-                        if (selection == null && tote.items.size + tote.itemsOut.size > 1) {
-                            ToteButton(
-                                text = "Select",
-                                onClick = { onBeginSelecting("") },
-                                tonal = true,
-                            )
-                        }
-                    }
-                }
+                LabellingLine(
+                    hasTag = tote.nfcTagUid != null,
+                    writtenAt = tote.nfcWrittenAt,
+                    cardPrinted = tote.cardPrintedAt != null,
+                    hasNfc = hasNfc,
+                    onWriteTag = onWriteTag,
+                    onPrintCard = onPrintCard,
+                )
             }
 
             if (tagMismatch) {
@@ -451,49 +415,23 @@ fun ToteDetailContent(
                             color = colors.attention.base,
                         )
                         Spacer(Modifier.height(spacing.xs))
-                        Caption(
-                            text = "The label may be on the wrong box, or this tag was rewritten " +
+                        // Sentence case, not the caps caption: four lines of letterspaced
+                        // uppercase made the most safety-critical paragraph in the app the least
+                        // readable text on the screen.
+                        Text(
+                            "The label may be on the wrong box, or this tag was rewritten " +
                                 "for another bin. Check the code on the card before you trust " +
                                 "what's below.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
             }
 
-            item {
-                TagAndCardRow(
-                    hasTag = tote.nfcTagUid != null,
-                    writtenAt = tote.nfcWrittenAt,
-                    cardPrinted = tote.cardPrintedAt != null,
-                    hasNfc = hasNfc,
-                    onWriteTag = onWriteTag,
-                    onPrintCard = onPrintCard,
-                )
-            }
-
-            selection?.let { picked ->
-                item(key = "selection-bar") {
-                    val pickedOut = tote.itemsOut.count { it.id in picked }
-                    val pickedIn = tote.items.count { it.id in picked }
-                    SelectionBar(
-                        count = picked.size,
-                        // A bag belongs to this bin, so it can only label things that are IN it.
-                        canBag = tote.containers.isNotEmpty() && pickedOut == 0,
-                        // The two directions are mutually exclusive verbs: something already out
-                        // cannot be taken out, and something in the bin cannot be put back.
-                        canTakeOut = pickedIn > 0 && pickedOut == 0,
-                        canPutBack = pickedOut > 0 && pickedIn == 0,
-                        onPutBack = onPutBackSelected,
-                        onSelectAll = {
-                            onSelectAll((tote.items + tote.itemsOut).map { it.id })
-                        },
-                        onCancel = onCancelSelecting,
-                        onMove = onMoveSelected,
-                        onBag = onBagSelected,
-                        onUnpack = onUnpackSelected,
-                    )
-                }
-            }
+            // Select lives in the header of whichever section is drawn first, so it is still
+            // reachable on a fully unpacked bin (where "In this tote" is skipped entirely).
+            val canSelect = selection == null && tote.items.size + tote.itemsOut.size > 1
 
             // The whole "In this tote" block is skipped when the bin is empty AND things are out
             // of it: a header, an "Everything is out" card and a count, all saying what the
@@ -501,37 +439,33 @@ fun ToteDetailContent(
             // and the rows they opened the screen to read.
             val showInSection = tote.items.isNotEmpty() || tote.itemsOut.isEmpty()
             if (showInSection) {
-            item {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    SectionHeader(label = "In this tote", channel = colors.stored.base)
-                    // Only offered once there is something to group. A bin with two things in it
-                    // does not need subdividing, and the button would be clutter arguing it does.
-                    Row(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
-                        if (tote.items.isNotEmpty() || tote.containers.isNotEmpty()) {
-                            ToteButton(
-                                text = "Add bag",
-                                onClick = onAddBag,
-                                tonal = true,
-                                compact = true,
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (tote.items.isEmpty()) {
                 item {
-                    EmptyState(
-                        icon = Icons.Filled.Inventory2,
-                        title = "Empty",
-                        subtitle = "Add the first item to start cataloguing this bin.",
+                    SectionHeader(
+                        label = "In this tote",
+                        channel = colors.stored.base,
+                        trailing = {
+                            // Quiet text verbs, not tonal pills: the header's job is to label the
+                            // grid, and two ochre buttons beside it outshouted every photograph.
+                            // Add bag is only offered once there is something to group.
+                            if (tote.items.isNotEmpty() || tote.containers.isNotEmpty()) {
+                                TextButton(onClick = onAddBag) { Text("Add bag") }
+                            }
+                            if (canSelect) {
+                                TextButton(onClick = { onBeginSelecting("") }) { Text("Select") }
+                            }
+                        },
                     )
                 }
-            }
+
+                if (tote.items.isEmpty()) {
+                    item {
+                        EmptyState(
+                            icon = Icons.Filled.Inventory2,
+                            title = "Empty",
+                            subtitle = "Add the first item to start cataloguing this bin.",
+                        )
+                    }
+                }
             }
 
             // Grouped by bag, loose things last. A real bin of baby clothes is three zip bags
@@ -542,17 +476,16 @@ fun ToteDetailContent(
                 item(key = "bag-${bag.id}") {
                     BagHeader(bag = bag, count = inBag.size, onEdit = { onEditBag(bag) })
                 }
-                items(inBag, key = { it.id }) { item ->
-                    ItemRow(
-                        item,
-                        actionLabel = "Take out",
-                        onAction = { onTakeOut(item.id) },
-                        onOpen = { onOpenItem(item) },
-                        selected = selection?.contains(item.id),
-                        onToggle = { onToggleSelected(item.id) },
-                        onLongPress = { onBeginSelecting(item.id) },
-                    )
-                }
+                itemCellRows(
+                    items = inBag,
+                    keyPrefix = "in",
+                    onOpenItem = onOpenItem,
+                    actionLabel = "Take out",
+                    onAction = onTakeOut,
+                    selection = selection,
+                    onToggleSelected = onToggleSelected,
+                    onBeginSelecting = onBeginSelecting,
+                )
             }
 
             val loose = tote.items.filter { it.containerId == null }
@@ -564,17 +497,16 @@ fun ToteDetailContent(
                         SectionHeader(label = "Loose in the bin", channel = colors.stored.base)
                     }
                 }
-                items(loose, key = { it.id }) { item ->
-                    ItemRow(
-                        item,
-                        actionLabel = "Take out",
-                        onAction = { onTakeOut(item.id) },
-                        onOpen = { onOpenItem(item) },
-                        selected = selection?.contains(item.id),
-                        onToggle = { onToggleSelected(item.id) },
-                        onLongPress = { onBeginSelecting(item.id) },
-                    )
-                }
+                itemCellRows(
+                    items = loose,
+                    keyPrefix = "in",
+                    onOpenItem = onOpenItem,
+                    actionLabel = "Take out",
+                    onAction = onTakeOut,
+                    selection = selection,
+                    onToggleSelected = onToggleSelected,
+                    onBeginSelecting = onBeginSelecting,
+                )
             }
 
             // The gap, shown rather than hidden. This section is the answer to "I thought the
@@ -582,7 +514,15 @@ fun ToteDetailContent(
             if (tote.itemsOut.isNotEmpty()) {
                 item {
                     Spacer(Modifier.height(spacing.sm))
-                    SectionHeader(label = "Out of this tote", channel = colors.attention.base)
+                    SectionHeader(
+                        label = "Out of this tote",
+                        channel = colors.attention.base,
+                        trailing = {
+                            if (!showInSection && canSelect) {
+                                TextButton(onClick = { onBeginSelecting("") }) { Text("Select") }
+                            }
+                        },
+                    )
                 }
                 // Grouped by size, and only when there is more than one size to tell apart —
                 // the same rule as "Loose in the bin", which appears only when there are bags to
@@ -596,23 +536,157 @@ fun ToteDetailContent(
                             SectionHeader(label = size, channel = colors.provenance.base)
                         }
                     }
-                    items(group, key = { "out-${it.id}" }) { item ->
-                    ItemRow(
-                        item,
+                    itemCellRows(
+                        items = group,
+                        keyPrefix = "out",
+                        onOpenItem = onOpenItem,
                         actionLabel = "Put back",
-                        onAction = { onPutBack(item.id) },
-                        onOpen = { onOpenItem(item) },
+                        onAction = onPutBack,
+                        out = true,
                         showSize = size == null,
                         suppressRoutineStatus = true,
-                        // These rows had no selection wired at all, which only bit once a bin was
-                        // fully unpacked — the state this section exists to describe. With
+                        // These cells had no selection wired at all, which only bit once a bin
+                        // was fully unpacked — the state this section exists to describe. With
                         // everything out there was no way to put SOME of it back: one row at a
                         // time, or Repack all. Partial repack is the actual January workflow.
-                        selected = selection?.contains(item.id),
-                        onToggle = { onToggleSelected(item.id) },
-                        onLongPress = { onBeginSelecting(item.id) },
+                        selection = selection,
+                        onToggleSelected = onToggleSelected,
+                        onBeginSelecting = onBeginSelecting,
                     )
+                }
+            }
+        }
+
+        // The pinned verbs: one primary, always in reach, with the bulk operations folded behind
+        // it — and the selection bar takes the same slot while selecting, so the verbs for what
+        // is ticked are under the thumb doing the ticking rather than scrolled away above.
+        Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        0f to MaterialTheme.colorScheme.background.copy(alpha = 0f),
+                        0.4f to MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
+                        1f to MaterialTheme.colorScheme.background,
+                    )
+                )
+                .padding(start = spacing.lg, end = spacing.lg, top = spacing.xl, bottom = spacing.lg),
+        ) {
+            if (selection != null) {
+                val pickedOut = tote.itemsOut.count { it.id in selection }
+                val pickedIn = tote.items.count { it.id in selection }
+                SelectionBar(
+                    count = selection.size,
+                    // A bag belongs to this bin, so it can only label things that are IN it.
+                    canBag = tote.containers.isNotEmpty() && pickedOut == 0,
+                    // The two directions are mutually exclusive verbs: something already out
+                    // cannot be taken out, and something in the bin cannot be put back.
+                    canTakeOut = pickedIn > 0 && pickedOut == 0,
+                    canPutBack = pickedOut > 0 && pickedIn == 0,
+                    onPutBack = onPutBackSelected,
+                    onSelectAll = {
+                        onSelectAll((tote.items + tote.itemsOut).map { it.id })
+                    },
+                    onCancel = onCancelSelecting,
+                    onMove = onMoveSelected,
+                    onBag = onBagSelected,
+                    onUnpack = onUnpackSelected,
+                )
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
+                    ToteButton(
+                        text = "Add item",
+                        onClick = onAddItem,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // Both bulk operations whenever each has something to act on, one menu tap
+                    // away — a half-unpacked Christmas bin (3 in, 2 out: the normal January
+                    // state) offers both.
+                    if (tote.itemCount > 0 || tote.outCount > 0) {
+                        Box {
+                            var bulkOpen by remember { mutableStateOf(false) }
+                            OutlinedButton(
+                                onClick = { bulkOpen = true },
+                                modifier = Modifier.heightIn(min = 52.dp),
+                            ) {
+                                Text(if (tote.itemCount > 0) "Unpack…" else "Repack…")
+                            }
+                            DropdownMenu(
+                                expanded = bulkOpen,
+                                onDismissRequest = { bulkOpen = false },
+                            ) {
+                                if (tote.itemCount > 0) {
+                                    DropdownMenuItem(
+                                        text = { Text("Unpack all (${tote.itemCount})") },
+                                        onClick = {
+                                            bulkOpen = false
+                                            onUnpackAll()
+                                        },
+                                    )
+                                }
+                                if (tote.outCount > 0) {
+                                    DropdownMenuItem(
+                                        text = { Text("Repack all (${tote.outCount})") },
+                                        onClick = {
+                                            bulkOpen = false
+                                            onRepackAll()
+                                        },
+                                    )
+                                }
+                            }
+                        }
                     }
+                }
+            }
+        }
+        }
+    }
+}
+
+/**
+ * A section's items as photograph cells, two to a row.
+ *
+ * Chunked into full-width rows rather than a nested lazy grid, because the screen is one
+ * LazyColumn with headers, bag panels and cells interleaved — and a grid that cannot host
+ * arbitrary full-width rows would force every heading out of the scroll.
+ */
+private fun LazyListScope.itemCellRows(
+    items: List<ItemDto>,
+    keyPrefix: String,
+    onOpenItem: (ItemDto) -> Unit,
+    actionLabel: String,
+    onAction: (String) -> Unit,
+    selection: Set<String>?,
+    onToggleSelected: (String) -> Unit,
+    onBeginSelecting: (String) -> Unit,
+    out: Boolean = false,
+    showSize: Boolean = true,
+    suppressRoutineStatus: Boolean = false,
+) {
+    items.chunked(2).forEach { pair ->
+        item(key = "$keyPrefix-${pair.first().id}") {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(ToteTheme.spacing.md),
+            ) {
+                pair.forEach { cellItem ->
+                    ItemCell(
+                        item = cellItem,
+                        onOpen = { onOpenItem(cellItem) },
+                        modifier = Modifier.weight(1f),
+                        actionLabel = actionLabel,
+                        onAction = { onAction(cellItem.id) },
+                        out = out,
+                        selected = selection?.contains(cellItem.id),
+                        onToggle = { onToggleSelected(cellItem.id) },
+                        onLongPress = { onBeginSelecting(cellItem.id) },
+                        showSize = showSize,
+                        suppressRoutineStatus = suppressRoutineStatus,
+                    )
+                }
+                if (pair.size == 1) {
+                    Spacer(Modifier.weight(1f))
                 }
             }
         }
@@ -645,15 +719,96 @@ internal fun outBySize(itemsOut: List<ItemDto>): List<Pair<String?, List<ItemDto
 }
 
 /**
- * Whether this bin has been physically labelled yet.
+ * The bin's identity, with its management verbs as icons.
+ *
+ * Edit, write-tag and print-card used to be five buttons and a panel between the hero and the
+ * first item. They are setup-time work on a screen whose every open is read-time — an NFC tap
+ * exists so the contents are one gesture away — so they ride the hero as icons and the contents
+ * start directly below. The counts are on the hero because "A14 · Christmas decor" is half an
+ * answer: this screen is read while deciding whether to climb a ladder.
+ */
+@Composable
+private fun BinHero(
+    tote: ToteDetailDto,
+    hasNfc: Boolean,
+    onEditBin: () -> Unit,
+    onWriteTag: () -> Unit,
+    onPrintCard: () -> Unit,
+) {
+    val spacing = ToteTheme.spacing
+
+    HeroPanel(contentPadding = spacing.lg) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                tote.code,
+                style = ToteTheme.dataType.dataMedium,
+                color = Color.White,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onEditBin) {
+                Icon(
+                    Icons.Filled.Edit,
+                    contentDescription = "Edit bin",
+                    tint = Color.White.copy(alpha = 0.8f),
+                )
+            }
+            // Disabled with the reason said on the labelling line, not hidden: the write button
+            // used to be drawn and enabled on every phone, with the NFC check buried in the
+            // click handler — tapping it on a phone without NFC read as a frozen app.
+            IconButton(onClick = onWriteTag, enabled = hasNfc) {
+                Icon(
+                    Icons.Filled.Nfc,
+                    contentDescription = if (tote.nfcTagUid != null) "Rewrite tag" else "Write tag",
+                    tint = Color.White.copy(alpha = if (hasNfc) 0.8f else 0.35f),
+                )
+            }
+            IconButton(onClick = onPrintCard) {
+                Icon(
+                    Icons.Filled.Print,
+                    contentDescription = "Print card",
+                    tint = Color.White.copy(alpha = 0.8f),
+                )
+            }
+        }
+        Text(
+            listOfNotNull(tote.label ?: "Unlabelled", tote.locationName).joinToString(" · "),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White.copy(alpha = 0.82f),
+        )
+        Spacer(Modifier.height(spacing.xs))
+        Text(
+            buildList {
+                add("${tote.itemCount} item${if (tote.itemCount == 1) "" else "s"}")
+                if (tote.outCount > 0) add("${tote.outCount} out")
+            }.joinToString(" · "),
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White.copy(alpha = 0.62f),
+        )
+        if (tote.archived) {
+            Spacer(Modifier.height(spacing.xs))
+            Text(
+                "Archived — off the daily list, still in the catalogue",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.7f),
+            )
+        }
+        Spacer(Modifier.height(spacing.md))
+        HazardRule()
+    }
+}
+
+/**
+ * Whether this bin has been physically labelled yet — one line, not a panel.
  *
  * Surfaced rather than buried in a menu because an unlabelled bin is the failure the whole app
  * is built to prevent: a catalogued tote with no tag and no card is a bin you can only find by
- * opening it. Both are shown, and both are offered, because they are redundant on purpose — a
- * tag can die under packing tape, and the card's QR still works.
+ * opening it. But the old panel with two full-width buttons was a card the size of three item
+ * rows sitting permanently between the hero and the contents. One quiet sentence with one verb
+ * carries the same fact; the rose dot marks only the fully unlabelled state, because a bin with
+ * a tag OR a card can already be found and the attention channel must stay rare to stay loud.
  */
 @Composable
-private fun TagAndCardRow(
+private fun LabellingLine(
     hasTag: Boolean,
     writtenAt: String?,
     cardPrinted: Boolean,
@@ -664,77 +819,62 @@ private fun TagAndCardRow(
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
 
-    // Settled bins get one line, not a panel.
-    //
-    // "Tagged and labelled" with two full-width buttons under it is a card the size of three
-    // item rows, sitting permanently between the hero and the contents — and it is finished
-    // work. Rewriting a tag is rare and printing a second card rarer. The loud version stays
-    // for every unfinished state, where it is an attention signal rather than furniture.
+    // Settled bins get one dated line and no verbs — rewrite and reprint live on the hero icons.
+    // The date matters: a tag written before the bin was renamed carries the old text, and the
+    // date is the only way to know that from the app.
     if (hasTag && cardPrinted) {
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(Modifier.weight(1f)) {
-                Caption(
-                    text = if (writtenAt != null) {
-                        "Tagged and labelled · ${writtenAt.take(10)}"
-                    } else {
-                        "Tagged and labelled"
-                    },
-                )
-            }
-            ToteButton(
-                text = "Rewrite",
-                onClick = onWriteTag,
-                tonal = true,
-                compact = true,
-                enabled = hasNfc,
-            )
-            Spacer(Modifier.width(spacing.sm))
-            ToteButton(text = "Card", onClick = onPrintCard, tonal = true, compact = true)
-        }
+        Text(
+            if (writtenAt != null) {
+                "Tagged and labelled · ${writtenAt.take(10)}"
+            } else {
+                "Tagged and labelled"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         return
     }
 
-    PanelCard(channel = if (!hasTag && !cardPrinted) colors.attention.base else null) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    when {
-                        hasTag && cardPrinted -> "Tagged and labelled"
-                        hasTag -> "Tagged, no card printed"
-                        cardPrinted -> "Card printed, no tag"
-                        else -> "Not labelled yet"
-                    },
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Spacer(Modifier.height(spacing.xs))
-                Caption(
-                    text = when {
-                        // Said, rather than left to a button that silently does nothing. The
-                        // write button used to be drawn and enabled on every phone, with the
-                        // NFC check hidden in the click handler — tapping it on a phone without
-                        // NFC was indistinguishable from a frozen app.
-                        !hasNfc -> "This phone has no NFC — print a card instead"
-                        // Dated, because a tag written before the bin was renamed carries the old
-                        // text — and the date is the only way to know that from the app.
-                        hasTag && writtenAt != null -> "Tag written ${writtenAt.take(10)}"
-                        hasTag || cardPrinted -> "Tap the tag or scan the card to open this bin"
-                        else -> "Write a tag or print a card so this bin can be found"
-                    },
-                )
-            }
-            Column {
-                ToteButton(
-                    text = if (hasTag) "Rewrite" else "Write tag",
-                    onClick = onWriteTag,
-                    tonal = true,
-                    enabled = hasNfc,
-                )
-                Spacer(Modifier.height(spacing.xs))
-                ToteButton(text = "Print card", onClick = onPrintCard, tonal = true)
-            }
+    val urgent = !hasTag && !cardPrinted
+    val message = when {
+        urgent && !hasNfc -> "Not labelled yet — this phone has no NFC, so print a card"
+        urgent -> "No tag or card on this bin yet, so it can only be found by opening it"
+        hasTag && writtenAt != null -> "Tag written ${writtenAt.take(10)} · no card printed"
+        hasTag -> "Tagged · no card printed"
+        else -> "Card printed · no tag yet"
+    }
+    // Whichever half is missing and possible: writing the tag needs NFC, printing never does.
+    val verb: Pair<String, () -> Unit>? = when {
+        !hasTag && hasNfc -> "Write tag" to onWriteTag
+        !cardPrinted -> "Print card" to onPrintCard
+        else -> null
+    }
+
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        if (urgent) {
+            Box(
+                Modifier
+                    .size(7.dp)
+                    .clip(RoundedCornerShape(percent = 50))
+                    .background(colors.attention.base)
+            )
+            Spacer(Modifier.width(spacing.sm))
+        }
+        Text(
+            message,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        verb?.let { (label, action) ->
+            TextButton(
+                onClick = action,
+                colors = if (urgent) {
+                    ButtonDefaults.textButtonColors(contentColor = colors.attention.base)
+                } else {
+                    ButtonDefaults.textButtonColors()
+                },
+            ) { Text(label) }
         }
     }
 }

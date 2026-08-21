@@ -2374,6 +2374,44 @@ nudge therefore cannot disagree about what "overdue" means, which they would wit
 other if the phone's clock or the container's UTC got a vote. A failed fetch leaves the card
 absent rather than raising: an unreachable server genuinely cannot tell you that anything is late.
 
+## The bin screen is a photo grid
+
+The bin screen's contents are `ItemCell`s (`ui/totes/ItemCell.kt`) — photograph-first cells, two
+to a row — not `ItemRow`s. The layouts split by question: a bin's contents are recognised by
+*sight* (you are matching pictures against a memory of the thing, and the photographs are the one
+part of the catalogue that cost real work to capture), so the photo takes the cell and the words
+caption it. Everywhere an item is listed *across* bins — search, unfiled, a person's fits and
+loans, category browse — the tote code and location matter more than the picture is big, and
+`ui/components/ItemRow.kt` remains the one shared row there. Do not "unify" them back into one
+component; that difference is the design.
+
+The cells are chunked into full-width `LazyColumn` rows (`itemCellRows`) rather than a nested
+lazy grid, because the screen interleaves bag headers, size-group headings and empty states with
+the cells, and a grid that cannot host arbitrary full-width rows would force every heading out of
+the scroll. Grouping (bags then loose; out-list by size in ladder order via `outBySize`) is
+unchanged.
+
+Three rules carried over from `ItemRow` verbatim, each with a test behind it:
+
+- **One `combinedClickable` on one modifier** carries tap and long-press. A second clickable
+  container underneath cannot be reached (#38); the cell's everyday verb ("Take out" / "Put
+  back") is a `TextButton` *inside* the tappable cell, which is exactly that trap's shape, so
+  `ItemRowTapTest` presses it and asserts the verb wins the pointer without falling through.
+- **While selecting, a tap ticks instead of opening**, and `selection` stays the nullable set.
+- **Out items keep their own section**; in it they render dimmed with a rose "Out" mark, and
+  routine status is suppressed under headings that already say it.
+
+The management chrome moved off the content's path, which was the point of the redesign: edit /
+write-tag / print-card are icons on the hero (the write icon is disabled without NFC and the
+labelling line says why), the labelling state is **one line** with one verb (rose-dotted only
+when the bin has neither tag nor card — a bin with either can already be found, and the attention
+channel must stay rare to stay loud; the settled state is a dated sentence with no verbs), and
+`Add item` plus an `Unpack…` / `Repack…` menu are **pinned at the bottom**. While selecting, the
+`SelectionBar` takes that pinned slot, so the verbs for what is ticked stay under the thumb doing
+the ticking. The `LazyColumn` carries 120dp of bottom content padding so the last cells scroll
+clear of the pinned bar. `Select` lives in the header of whichever section is drawn first, so a
+fully unpacked bin (no "In this tote" block) still offers it.
+
 ## Not yet built
 
 Phases 0-7 are complete on both sides. What remains is Phase 8: polish, the empty/error-state
