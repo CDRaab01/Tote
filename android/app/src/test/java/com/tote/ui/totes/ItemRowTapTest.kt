@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.compose.material3.Surface
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -65,6 +66,7 @@ class ItemRowTapTest {
         onOpenItem: (ItemDto) -> Unit = {},
         onBeginSelecting: (String) -> Unit = {},
         onToggleSelected: (String) -> Unit = {},
+        onTakeOut: (String) -> Unit = {},
     ) {
         compose.setContent {
             ToteTheme(darkTheme = true) {
@@ -72,7 +74,7 @@ class ItemRowTapTest {
                     ToteDetailContent(
                         tote = bin,
                         onAddItem = {}, onUnpackAll = {}, onRepackAll = {},
-                        onTakeOut = {}, onPutBack = {},
+                        onTakeOut = onTakeOut, onPutBack = {},
                         selection = selection,
                         onOpenItem = onOpenItem,
                         onBeginSelecting = onBeginSelecting,
@@ -105,6 +107,21 @@ class ItemRowTapTest {
         // Both gestures now live on one modifier, so a long press firing the tap handler as well
         // would open a sheet over the selection the user just started.
         assertNull(opened)
+    }
+
+    @Test
+    fun `the cell's quiet verb reaches its handler, and does not also open the item`() {
+        // The grid cell demoted "Take out" from a tonal pill to a text button INSIDE the
+        // tappable cell — exactly the nested-clickable shape that swallowed taps in #38. The
+        // button must win the pointer over the cell's own combinedClickable.
+        var opened: String? = null
+        var tookOut: String? = null
+        screen(onOpenItem = { opened = it.id }, onTakeOut = { tookOut = it })
+
+        compose.onAllNodesWithText("Take out")[0].performClick()
+
+        assertEquals("a", tookOut, "the verb on the first cell must act on that cell's item")
+        assertNull(opened, "the verb's tap must not fall through to the cell underneath")
     }
 
     @Test
