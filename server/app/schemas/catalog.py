@@ -449,6 +449,43 @@ class DraftOut(ItemOut):
     photo_count: int = 0
 
 
+class ScanIsbnIn(BaseModel):
+    """A scanned book barcode, and where to file what it resolves to.
+
+    `capture_id` is REQUIRED here where `/items/scan` merely accepts one: this endpoint files a
+    real item with no review step behind it, so a replayed request without a key would not make
+    a duplicate draft somebody deletes — it would silently put a second copy of a book into the
+    catalogue, where it is indistinguishable from owning two.
+    """
+
+    isbn: str
+    tote_id: uuid.UUID | None = None
+    capture_id: uuid.UUID
+
+    @field_validator("isbn")
+    @classmethod
+    def _bookland_ean13(cls, v: str) -> str:
+        from app.services.books import is_valid_isbn13
+
+        cleaned = v.strip().replace("-", "").replace(" ", "")
+        if not is_valid_isbn13(cleaned):
+            raise ValueError("Not a book barcode (need a 978/979 EAN-13 with a valid checksum)")
+        return cleaned
+
+
+class ScanIsbnOut(BaseModel):
+    """What a scan produced. `found` says which of the two shapes `item` is in.
+
+    One response model for both outcomes on purpose: `DraftOut` extends `ItemOut` and carries
+    `is_draft`, so a filed book and a not-found draft travel identically and the client renders
+    the difference from `found` without a second DTO.
+    """
+
+    found: bool
+    source: str | None = None
+    item: DraftOut
+
+
 class DraftConfirm(BaseModel):
     """The human's decision. Everything is editable — the model's answer is a suggestion.
 

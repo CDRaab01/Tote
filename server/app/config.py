@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     # back to UTC rather than crashing, because a slightly-early nudge beats a dead endpoint.
     local_timezone: str = "UTC"
 
+    # --- ISBN lookup (the book scanner) ---------------------------------------------------
+    # OpenLibrary needs no key. Its own timeout rather than `external_timeout_seconds`,
+    # because a cold call was MEASURED at 8.8-11.8 s — the 8 s default would fail every first
+    # scan of a session and make the feature look broken exactly once per sitting.
+    openlibrary_timeout_seconds: float = 12.0
+    # Optional fallback. None disables (config rule) — unkeyed Google Books requests 429.
+    # Secret, so `server/.env`, not compose.
+    google_books_api_key: str | None = None
+
     # Self-hosted ntfy only. Pinned as compose `environment:` literals, never env_file — Compose
     # does not re-read an env_file on recreate, and Crate's NTFY_TOPIC was silently empty for
     # weeks because it interpolated from a root .env that repo did not have.

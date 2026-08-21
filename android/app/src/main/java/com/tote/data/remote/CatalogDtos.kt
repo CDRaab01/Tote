@@ -376,6 +376,27 @@ data class MovementDto(
     @SerialName("moved_at") val movedAt: String,
 )
 
+/**
+ * A scanned book barcode on its way to being filed.
+ *
+ * `captureId` is REQUIRED — this endpoint files a real item with no review step behind it, so a
+ * replayed request without a key would silently put a second copy of a book in the catalogue.
+ */
+@Serializable
+data class ScanIsbnRequest(
+    val isbn: String,
+    @SerialName("tote_id") val toteId: String?,
+    @SerialName("capture_id") val captureId: String,
+)
+
+@Serializable
+data class ScanIsbnResponse(
+    /** True = a real filed item; false = a not-found draft now waiting on the Review tab. */
+    val found: Boolean,
+    val source: String? = null,
+    val item: DraftDto,
+)
+
 @Serializable
 data class NfcWrite(@SerialName("tag_uid") val tagUid: String)
 

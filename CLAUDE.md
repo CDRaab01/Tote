@@ -18,7 +18,7 @@ against production — not just green in CI.
 | | Status |
 |---|---|
 | Live at | `https://dragonfly.tail2ce561.ts.net:8448` (tailnet only) |
-| Tests | **378 server** (pytest, real Postgres) + **227 Android** (measured 2026-08-19) |
+| Tests | **409 server** (pytest, real Postgres) + **242 Android** (measured 2026-08-21) |
 | CI/CD | green; every push to `main` deploys, `notify.yml` pages `tote-alerts` on red |
 
 ### The next task
@@ -206,7 +206,10 @@ holding in both arms; a QR on the same card costs nothing and reads from four fe
 - **AI:** LM Studio only, server-side, house guardrail model — vision output is
   validated/salvaged server-side, drafts are never auto-committed, the user confirms
   before anything is written to the catalog. **No exceptions in this app**: unlike Crate,
-  Tote has no deterministic-policy carve-out. Nothing writes itself.
+  Tote has no deterministic-policy carve-out. Nothing MODEL-GENERATED writes itself — the book
+  scanner files ISBN lookups directly (owner-confirmed, 2026-08-21), and that is not an
+  exception: the metadata is database rows keyed by the number printed on the object, with no
+  model in the loop. The rule this paragraph exists for stands untouched.
 
 ---
 
@@ -1021,7 +1024,10 @@ lazy-list rows are never composed, and "no such node" reads exactly like the bug
 
 **Explicitly not v1:** multi-item detection from one bulk photo (the biggest future labor
 saver, deliberately deferred — it is new prompt ground and the one-photo-per-item path is
-proven); barcode/UPC lookup for boxed goods; value/insurance reporting and export;
+proven); value/insurance reporting and export;
+(~~barcode/UPC lookup~~ — **reversed by the owner 2026-08-21**: ISBN scanning shipped as the
+book scanner. The deferral was about inventing prompt ground; the shipped thing is a
+deterministic database lookup, which is a different animal — see the AI note in §2);
 **per-person permissions inside a household** (household sharing itself shipped in `0006` and is
 deliberately all-or-nothing — see ARCHITECTURE.md, "No per-object sharing"); a web client. **Post-v1 cross-app:** a
 `/cross-app/summary` endpoint feeding the Dragonfly weekly digest, and an **outgrown → Crate

@@ -293,6 +293,65 @@ absent and the tests that prove them would be testing a schema that never ships.
 `search_vector` covers the item's own name, description and notes. Category lives in another
 table and a generated column cannot join, so category is a **filter**, not a search term.
 
+## Book scanning (ISBN)
+
+`POST /items/scan-isbn` turns a scanned barcode into a **filed item** — no photograph, no
+review. Its own endpoint because `/items/scan` requires at least one photo and is multipart for
+that reason; and its own trust story, because nothing here is model output: an ISBN lookup
+returns database rows keyed by the number printed on the object, owner-confirmed exempt from
+the no-auto-commit rule, which stands untouched for everything vision produces.
+
+### The tri-state contract (services/books.py)
+
+The lookup has three outcomes and they are three different facts:
+
+| Outcome | Means | The endpoint does |
+|---|---|---|
+| `BookMetadata` | the book is known | files a real item + `initial`/`catalogued` ledger row |
+| `None` | the database answered: unknown ISBN | a draft for Review (`scan_error="isbn_not_found"`) |
+| raises `LookupUnavailable` | the database could not be reached | 503, **nothing committed** |
+
+Collapsing the last two is the failure the module must never have: a network flake minting a
+"this book does not exist" draft is a junk draft per Wi-Fi hiccup, and the Review tab becomes
+noise. OpenLibrary is **retried once** — the measured failure mode is a connection reset on
+rapid consecutive calls, exactly what a shelf session produces — then Google Books, but only
+when `GOOGLE_BOOKS_API_KEY` is set (unkeyed requests 429, measured).
+
+### Where the metadata lands
+
+Title in `name`, "by {authors} · {publisher}, {year}" in `description`, `ISBN {n}` in `notes` —
+the exact three columns `search_vector` covers, so a book is findable by its author and its
+ISBN with no schema change. Category is the household's "Books" by case-insensitive name (null
+if they deleted it — a missing label is a smaller wrong than resurrecting a name they removed).
+The cover downloads from the lookup's own URL into `photo_store` as photo 0; its failure never
+takes the filing with it (the label-pass rule, applied to images).
+
+### Idempotency and the timeout chain
+
+`capture_id` is **required** here where `/items/scan` merely accepts one: this endpoint files a
+real item with no review behind it, so a replayed request without a key would silently put a
+second copy of a book in the catalogue. Same unique constraint, same race backstop.
+
+Three timeouts nest, and the middle one is load-bearing: OpenLibrary per-attempt **12 s**
+(`OPENLIBRARY_TIMEOUT_SECONDS` — cold calls measured 8.8–11.8 s, the 8 s default would fail
+every first scan of a sitting) < the whole lookup's `asyncio.timeout(30)` < the client
+interceptor's **45 s** for this path. Breach the middle one and the client manufactures a
+FAILED row over a filing that succeeded — capture_id makes the retry safe, but the session
+list would lie.
+
+### The client session
+
+The GMS code scanner (Play-Services UI, no camera permission, EAN-13 only) is one-shot,
+auto-relaunched: scan-scan-scan, each book's network call running behind the scanner modal.
+It cannot run under Robolectric, so it lives behind `BookBarcodeScanner` — a one-method seam
+the tests drive with scripted barcodes. Two guards sit in the ViewModel before any network:
+a non-Bookland EAN-13 (the soup can next to the shelf) is announced and dropped, and an ISBN
+already scanned this session is skipped — two copies of one book is what the quantity field is
+for, and silently filing twice is the storage-catalogue sin. Retry re-sends the SAME
+capture_id. The flow is online-only by design: the lookup inherently needs network, nothing
+commits on failure, and books are scanned indoors — so the capture queue stays out of it and
+Room stays at v5.
+
 ## The ladder reads what is on the tag
 
 `parse_size` resolves a system from a marker in the string — `W8`, `Women's 8` — and falls back

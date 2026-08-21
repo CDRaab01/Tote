@@ -168,6 +168,10 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
 
+    // The book barcode scanner: Play-Services-provided full-screen UI, no camera permission,
+    // no preview surface to maintain. EAN-13 only at the call site.
+    implementation(libs.play.services.code.scanner)
+
     implementation(libs.datastore.preferences)
 
     // Room: a read cache of the catalog, so the app works in the attic and the garage where

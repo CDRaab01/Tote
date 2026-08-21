@@ -78,6 +78,34 @@ class ScanTimeoutInterceptorTest {
     }
 
     @Test
+    fun `the isbn path gets its own read timeout`() {
+        call("/items/scan-isbn")
+
+        assertEquals(
+            ScanTimeoutInterceptor.ISBN_READ_TIMEOUT_SECONDS * 1000,
+            observedReadMillis,
+        )
+        // A JSON body has nothing slow to write.
+        assertEquals(30_000, observedWriteMillis)
+    }
+
+    @Test
+    fun `the isbn path is not mistaken for the photo path`() {
+        // "/items/scan-isbn".endsWith("/items/scan") is false, but this pins it: the two paths
+        // must never inherit each other's budgets, in either direction.
+        call("/items/scan-isbn")
+        assertTrue(observedReadMillis != ScanTimeoutInterceptor.SCAN_READ_TIMEOUT_SECONDS * 1000)
+    }
+
+    @Test
+    fun `the isbn timeout sits outside the server's own budget`() {
+        // The server bounds the whole lookup at 30 s (services/books.py OVERALL_BUDGET_SECONDS).
+        // A client timeout inside that would manufacture FAILED rows over filings that
+        // succeeded — the row would say "failed" while the book sits in the bin.
+        assertTrue(ScanTimeoutInterceptor.ISBN_READ_TIMEOUT_SECONDS > 30)
+    }
+
+    @Test
     fun `the long timeout is long enough for a measured worst case`() {
         // A single photo measured 35.5 s on the live host, cleanup is sequential per photo, and
         // the server's own model timeout is 60 s on top. Anything at or below a minute would be

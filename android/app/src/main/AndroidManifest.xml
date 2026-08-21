@@ -35,6 +35,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Tote"
         android:usesCleartextTraffic="true">
+
+        <!-- Download the barcode-scanner module at install time rather than on the first scan:
+             the first scan happens standing in front of a shelf of books, which is the wrong
+             moment for a Play Services module download over house Wi-Fi. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
