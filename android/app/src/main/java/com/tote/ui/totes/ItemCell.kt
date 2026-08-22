@@ -102,7 +102,7 @@ internal fun ItemCell(
                 AsyncImage(
                     // 512: a half-screen grid tile is ~180dp ≈ 540px at 3x — close enough with
                     // Fit, at a fraction of the full cleaned PNG's bytes.
-                    model = PhotoUrls.item(item.id, 0, w = 512),
+                    model = PhotoUrls.item(item.id, 0, w = 512, rotation = item.photoRotation),
                     contentDescription = null,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier

@@ -266,6 +266,20 @@ interface ApiService {
      * Computed against the household's local today, not the phone's clock and not UTC, so a
      * screen and a notification can never disagree about what "overdue" means.
      */
+    /**
+     * Every photograph in the household, for the fix-orientation screen.
+     *
+     * One request for the lot rather than a page at a time: the screen is a grid someone scans
+     * in a single pass looking for anything sideways, and paging it would hide exactly the
+     * photographs they came to find.
+     */
+    @GET("photos/orientation")
+    suspend fun photosForOrientation(): List<PhotoOrientationDto>
+
+    /** One pass of corrections, in one transaction — see the server's all-or-nothing note. */
+    @POST("photos/bulk-rotate")
+    suspend fun bulkRotate(@Body body: BulkRotateRequest)
+
     @GET("overdue")
     suspend fun overdue(): List<ItemDto>
 

@@ -140,6 +140,10 @@ dependencies {
     // transitively under AGP 9 / KSP2, so declare it explicitly (compile-only is enough).
     compileOnly("com.google.errorprone:error_prone_annotations:2.50.0")
     implementation(libs.androidx.core.ktx)
+    // Reads the EXIF Orientation tag off a capture. BitmapFactory ignores it and
+    // Bitmap.compress writes none, so without this the phone silently uploads sideways
+    // pixels with nothing left in the file to say which way up they belong.
+    implementation(libs.androidx.exifinterface)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)

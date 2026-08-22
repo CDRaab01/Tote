@@ -322,6 +322,11 @@ class ItemOut(BaseModel):
     # none, and the client uses this to decide whether to draw a thumbnail at all rather than
     # firing a request per row and rendering whatever a 404 looks like.
     photo_count: int = 0
+    # The correction on the FIRST photograph, which is the one every list draws. It rides on the
+    # item so a thumbnail's URL can carry it: the whole URL is the client's cache key, so without
+    # a term that moves when a photo is put the right way up, a corrected photograph would keep
+    # serving its old thumbnail out of the phone's disk cache for a day.
+    photo_rotation: int = 0
     # Present only for clothing. Absent is normal — most items in a house are not garments.
     apparel: ApparelOut | None = None
     # Who has it, for a loaned item. Resolved from the LEDGER (the newest `loaned` movement),
@@ -374,6 +379,40 @@ class BulkRelocateIn(BaseModel):
     # batch of clothing. Validated against `to_tote_id`, never against where the items are now.
     container_id: uuid.UUID | None = None
     note: str | None = None
+
+
+class PhotoOrientationOut(BaseModel):
+    """One photograph, as the orientation-fix screen needs it.
+
+    Deliberately thin: an id to address it by, enough words to recognise which object it belongs
+    to, and the correction currently recorded. The screen's whole job is looking at pictures, so
+    everything else on an item would be noise between the person and the photographs.
+    """
+
+    item_id: uuid.UUID
+    order: int
+    item_name: str
+    rotation: int
+    tote_code: str | None = None
+
+
+class PhotoRotationIn(BaseModel):
+    """One photograph's new correction."""
+
+    item_id: uuid.UUID
+    order: int
+    rotation: int = Field(ge=0, le=270, multiple_of=90)
+
+
+class BulkRotateIn(BaseModel):
+    """Put a batch of photographs the right way up in one transaction.
+
+    A batch rather than one request per photo for the same reason `bulk-move` is: the screen
+    behind this is a grid someone corrects in one pass, and thirty individual requests is thirty
+    chances to half-succeed, leaving a catalogue the person believes they have fixed and has not.
+    """
+
+    photos: list[PhotoRotationIn] = Field(min_length=1)
 
 
 class BulkBagIn(BaseModel):

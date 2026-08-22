@@ -379,6 +379,6 @@ async def search(
         )
     ).all()
     return [
-        SearchHit(item=to_item_out(item, code, loc, photos), rank=float(r))
-        for item, code, loc, photos, r in rows
+        SearchHit(item=to_item_out(item, code, loc, photos, turn), rank=float(r))
+        for item, code, loc, photos, turn, r in rows
     ]

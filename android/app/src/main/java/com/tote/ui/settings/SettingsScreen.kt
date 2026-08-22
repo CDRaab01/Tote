@@ -53,6 +53,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
     householdViewModel: HouseholdViewModel = hiltViewModel(),
     onOpenCategories: () -> Unit = {},
+    onOpenPhotoOrientation: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val household by householdViewModel.state.collectAsStateWithLifecycle()
@@ -67,6 +68,7 @@ fun SettingsScreen(
         household = household,
         onSignOut = viewModel::signOut,
         onOpenCategories = onOpenCategories,
+        onOpenPhotoOrientation = onOpenPhotoOrientation,
         onInviteEmail = householdViewModel::onInviteEmail,
         onInvite = householdViewModel::invite,
         onAskAccept = householdViewModel::askAccept,
@@ -100,6 +102,7 @@ fun SettingsContent(
     onRevoke: (String) -> Unit = {},
     onAskLeave: () -> Unit = {},
     onOpenCategories: () -> Unit = {},
+    onOpenPhotoOrientation: () -> Unit = {},
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -146,6 +149,18 @@ fun SettingsContent(
                     Spacer(Modifier.height(spacing.xs))
                     Text(
                         "Rename, re-icon, add and remove — the labels are yours.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            item {
+                PanelCard(onClick = onOpenPhotoOrientation) {
+                    Text("Which way up", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(spacing.xs))
+                    Text(
+                        "Turn any photograph that ended up on its side. Older ones lost the " +
+                            "tag that said which way up they belonged.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

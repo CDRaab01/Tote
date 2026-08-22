@@ -41,6 +41,7 @@ import com.tote.nfc.TapTarget
 import com.tote.ui.books.BookScanScreen
 import com.tote.ui.search.CategoryItemsScreen
 import com.tote.ui.settings.CategoryManagerScreen
+import com.tote.ui.settings.PhotoOrientationScreen
 import com.tote.ui.capture.CaptureScreen
 import com.tote.ui.people.PeopleScreen
 import com.tote.ui.people.PersonDetailScreen
@@ -83,6 +84,7 @@ object Routes {
     const val BOOK_SCAN = "books/scan"
     const val CATEGORY_ITEMS = "categories/{categoryId}/items?name={name}"
     const val CATEGORY_MANAGER = "settings/categories"
+    const val PHOTO_ORIENTATION = "settings/photo-orientation"
     const val TOTE_DETAIL = "totes/{toteId}?mismatch={mismatch}"
     const val PERSON_DETAIL = "people/{personId}"
 
@@ -325,9 +327,15 @@ fun ToteNavHost(
                 ),
             ) { ToteDetailScreen(onGone = { nav.navigateUp() }) }
             composable(Routes.SETTINGS) {
-                SettingsScreen(onOpenCategories = { nav.navigate(Routes.CATEGORY_MANAGER) })
+                SettingsScreen(
+                    onOpenCategories = { nav.navigate(Routes.CATEGORY_MANAGER) },
+                    onOpenPhotoOrientation = { nav.navigate(Routes.PHOTO_ORIENTATION) },
+                )
             }
             composable(Routes.CATEGORY_MANAGER) { CategoryManagerScreen() }
+            composable(Routes.PHOTO_ORIENTATION) {
+                PhotoOrientationScreen(onDone = { nav.navigateUp() })
+            }
             composable(
                 Routes.CATEGORY_ITEMS,
                 arguments = listOf(

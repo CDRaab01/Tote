@@ -23,6 +23,11 @@ ALLOWED_CONTENT_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp"
 # client mint an unbounded family of derivatives per photo.
 THUMBNAIL_WIDTHS = frozenset({192, 512, 1024})
 
+# The rotations a photograph may carry, in degrees clockwise. Only right angles: they are all the
+# UI can produce, and each one is lossless to apply. Same reasoning as the widths above — the
+# value lands in a filename, so it is a fixed set rather than an open integer.
+ROTATIONS = frozenset({0, 90, 180, 270})
+
 
 def item_dir(item_id: uuid.UUID) -> Path:
     d = Path(settings.photos_dir) / str(item_id)
@@ -47,11 +52,20 @@ def read_bytes(path: str) -> bytes:
     return Path(path).read_bytes()
 
 
-def thumbnail_path(source_path: str, order: int, width: int, *, from_cleaned: bool) -> Path:
+def thumbnail_path(
+    source_path: str, order: int, width: int | None, *, from_cleaned: bool, rotation: int = 0
+) -> Path:
     """Where the sized derivative of ``source_path`` lives.
 
-    ``thumb_{order}_{width}_{c|o}.webp``, BESIDE the source — inside the item's directory, so
-    :func:`delete_item_photos`'s rmtree collects derivatives without knowing they exist.
+    ``thumb_{order}_{width}_{c|o}[_r{deg}].webp``, BESIDE the source — inside the item's
+    directory, so :func:`delete_item_photos`'s rmtree collects derivatives without knowing they
+    exist. A ``width`` of None is the full-size slot (``full``), which only ever exists for a
+    rotated photograph: unturned and unsized, the source itself is already the answer.
+
+    Rotation joins the key for the same reason the source does: a turned photograph is different
+    bytes, and serving the old file under the same name is how a correction appears not to have
+    worked. The suffix is omitted at 0 so every derivative made before rotation existed keeps its
+    name and stays a cache hit.
 
     The ``c``/``o`` suffix encodes which source the thumb was derived from. The route picks the
     source first (cleaned when present, else original) and the suffix follows, so a thumb made
@@ -64,10 +78,14 @@ def thumbnail_path(source_path: str, order: int, width: int, *, from_cleaned: bo
     that :func:`delete_item_photos` just removed.
     """
     suffix = "c" if from_cleaned else "o"
-    return Path(source_path).parent / f"thumb_{order}_{width}_{suffix}.webp"
+    turn = f"_r{rotation}" if rotation else ""
+    size = width if width is not None else "full"
+    return Path(source_path).parent / f"thumb_{order}_{size}_{suffix}{turn}.webp"
 
 
-def ensure_thumbnail(source_path: str, dest: Path, width: int) -> Path | None:
+def ensure_thumbnail(
+    source_path: str, dest: Path, width: int | None, rotation: int = 0
+) -> Path | None:
     """Make ``dest`` exist as a ``width``-bounded WebP of ``source_path``; return it, or None.
 
     Sync and CPU-bound (Pillow) — call via ``asyncio.to_thread``. None means the source does
@@ -79,6 +97,10 @@ def ensure_thumbnail(source_path: str, dest: Path, width: int) -> Path | None:
     derivative would flatten alpha to black, the exact defect class ``cleanup.clean_photo``'s
     compositing rules exist to prevent. ``Image.thumbnail`` never upscales, so a source smaller
     than ``width`` passes through at its own size.
+
+    ``rotation`` (degrees clockwise) is applied BEFORE the resize, so the width bounds the edge a
+    viewer will actually see rather than the one the sensor happened to record. A ``width`` of
+    None turns the photograph without resizing it — the full-size response for a corrected photo.
 
     Atomic against concurrent requests for the same derivative: each writer saves to its own
     temp name and ``os.replace``s it into place, so both succeed and one file wins.
@@ -94,9 +116,14 @@ def ensure_thumbnail(source_path: str, dest: Path, width: int) -> Path | None:
     # original bytes, and book covers arrive from the internet — so honour orientation here
     # rather than letting a thumb disagree with Coil's EXIF-aware render of the full image.
     img = ImageOps.exif_transpose(img)
+    if rotation:
+        # `expand` so a 90/270 turn keeps every pixel instead of cropping to the old frame.
+        # Pillow rotates counter-clockwise; the stored value is clockwise, as a person reads it.
+        img = img.rotate(-rotation, expand=True)
     has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
     img = img.convert("RGBA" if has_alpha else "RGB")
-    img.thumbnail((width, width), Image.LANCZOS)
+    if width is not None:
+        img.thumbnail((width, width), Image.LANCZOS)
     tmp = dest.parent / f".{dest.name}.{uuid.uuid4().hex}.tmp"
     try:
         img.save(tmp, format="WEBP")

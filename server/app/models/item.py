@@ -197,6 +197,18 @@ class ItemPhoto(Base):
     original_path: Mapped[str] = mapped_column(String(255))
     cleaned_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # How far to turn this photograph to display it upright, in degrees clockwise.
+    #
+    # A HUMAN's correction, not a reading. Until v1.0.57 the client stripped the EXIF Orientation
+    # tag on the way up (BitmapFactory ignores it, Bitmap.compress writes none), so for every
+    # photograph taken before that there is nothing in the file to recover orientation from. The
+    # capture path is fixed going forward; this is how the ones already on the volume get put
+    # right, and how any future camera that lies can be corrected.
+    #
+    # Applied when a derivative is rendered, never baked into the stored bytes: the photographs
+    # are the one artefact here that cannot be recreated, so rotation stays a derived index over
+    # them — which also makes a wrong correction reversible instead of a lost generation.
+    rotation: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

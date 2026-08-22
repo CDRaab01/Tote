@@ -883,3 +883,145 @@ async def test_the_thumbnail_is_cached_on_disk(auth_client, monkeypatch):
     assert len(thumbs) == 1, "the derivative is generated once and kept beside its source"
     second = await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 192})
     assert second.content == first.content
+
+
+# ── Orientation ──────────────────────────────────────────────────────────────
+#
+# The client used to destroy orientation on the way up: BitmapFactory ignores the EXIF
+# Orientation tag and Bitmap.compress writes none, so a portrait photo arrived as sideways pixels
+# with nothing left to say so. The capture path is fixed at the source now; `rotation` is how the
+# photographs already on the volume get put right — by a person, because there is nothing left in
+# the file to infer it from.
+
+
+async def _rotatable(auth_client, monkeypatch):
+    """A draft whose photo is unmistakably wider than it is tall."""
+    _fake_identify(monkeypatch)
+    return (await _scan(auth_client, photo_bytes(size=(800, 400)))).json()
+
+
+async def test_a_rotation_turns_the_photograph_and_is_recorded(auth_client, monkeypatch):
+    draft = await _rotatable(auth_client, monkeypatch)
+
+    flat = await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 192})
+    wide, tall = Image.open(io.BytesIO(flat.content)).size
+    assert wide > tall, "the fixture should start out landscape"
+
+    turned = await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 192, "r": 90})
+    w2, h2 = Image.open(io.BytesIO(turned.content)).size
+    assert h2 > w2, "a quarter turn must swap the edges"
+    # Bounded by the width it was asked for, not by the edge the sensor happened to record:
+    # rotation is applied BEFORE the resize.
+    assert max(w2, h2) == 192
+
+
+async def test_a_recorded_rotation_applies_without_being_asked(auth_client, monkeypatch):
+    """A curl, a test, or a client that predates rotation still gets it the right way up."""
+    draft = await _rotatable(auth_client, monkeypatch)
+    await auth_client.post(
+        "/photos/bulk-rotate",
+        json={"photos": [{"item_id": draft["id"], "order": 0, "rotation": 90}]},
+    )
+
+    bare = await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 192})
+    w, h = Image.open(io.BytesIO(bare.content)).size
+    assert h > w
+
+    # And the FULL-size response honours it too — no `w` at all. Nothing in the client asks for
+    # that path today, which is exactly why it is worth pinning: an unused branch that quietly
+    # serves sideways pixels is how this comes back.
+    full = await auth_client.get(f"/items/{draft['id']}/photos/0")
+    fw, fh = Image.open(io.BytesIO(full.content)).size
+    assert fh > fw
+
+
+async def test_a_turned_photograph_gets_its_own_cached_derivative(auth_client, monkeypatch):
+    """Rotation is part of the derivative's name.
+
+    Without it a corrected photo would serve the old file under the same URL, and the fix would
+    look like it had not worked — on the client for a day, because of `Cache-Control`.
+    """
+    from app.services import photo_store
+
+    draft = await _rotatable(auth_client, monkeypatch)
+    await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 192})
+    await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 192, "r": 180})
+
+    directory = photo_store.item_dir(uuid.UUID(draft["id"]))
+    assert len(list(directory.glob("thumb_0_192_*.webp"))) == 2
+    assert list(directory.glob("thumb_0_192_*_r180.webp")), "the turned one is keyed by its angle"
+
+
+async def test_an_unknown_rotation_is_rejected(auth_client, monkeypatch):
+    draft = await _rotatable(auth_client, monkeypatch)
+    for r in (45, 1, -90, 360):
+        got = await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 192, "r": r})
+        assert got.status_code == 422, r
+
+
+async def test_the_item_carries_its_first_photograph_s_rotation(auth_client, monkeypatch):
+    """So a list row can build a cache-correct thumbnail URL without a request per row."""
+    _fake_identify(monkeypatch)
+    tote = (await auth_client.post("/totes", json={"code": "R01"})).json()
+    draft = (await _scan(auth_client, photo_bytes(size=(800, 400)))).json()
+    filed = (
+        await auth_client.post(
+            f"/drafts/{draft['id']}/confirm", json={"tote_id": tote["id"], "name": "Sideways"}
+        )
+    ).json()
+    assert filed["photo_rotation"] == 0
+
+    await auth_client.post(
+        "/photos/bulk-rotate",
+        json={"photos": [{"item_id": filed["id"], "order": 0, "rotation": 270}]},
+    )
+    listed = (await auth_client.get("/items", params={"tote_id": tote["id"]})).json()
+    assert listed[0]["photo_rotation"] == 270
+
+
+async def test_the_orientation_list_names_the_object_and_skips_drafts(auth_client, monkeypatch):
+    _fake_identify(monkeypatch)
+    tote = (await auth_client.post("/totes", json={"code": "R02"})).json()
+    draft = (await _scan(auth_client, photo_bytes())).json()
+    await auth_client.post(
+        f"/drafts/{draft['id']}/confirm", json={"tote_id": tote["id"], "name": "Filed thing"}
+    )
+    # A second scan left unconfirmed: still a draft, and about to be looked at on review anyway.
+    await _scan(auth_client, photo_bytes())
+
+    listed = (await auth_client.get("/photos/orientation")).json()
+    assert [p["item_name"] for p in listed] == ["Filed thing"]
+    assert listed[0]["tote_code"] == "R02"
+    assert listed[0]["rotation"] == 0
+
+
+async def test_bulk_rotate_is_all_or_nothing(auth_client, monkeypatch):
+    """A partial save leaves a grid the person has just finished correcting half-corrected,
+    with nothing on screen saying which half."""
+    draft = await _rotatable(auth_client, monkeypatch)
+
+    got = await auth_client.post(
+        "/photos/bulk-rotate",
+        json={
+            "photos": [
+                {"item_id": draft["id"], "order": 0, "rotation": 90},
+                {"item_id": draft["id"], "order": 7, "rotation": 90},
+            ]
+        },
+    )
+    assert got.status_code == 404
+
+    listed = (await auth_client.get("/photos/orientation")).json()
+    assert all(p["rotation"] == 0 for p in listed), "nothing may have been written"
+
+
+async def test_another_household_cannot_rotate_your_photographs(
+    auth_client, other_client, monkeypatch
+):
+    draft = await _rotatable(auth_client, monkeypatch)
+    got = await other_client.post(
+        "/photos/bulk-rotate",
+        json={"photos": [{"item_id": draft["id"], "order": 0, "rotation": 90}]},
+    )
+    assert got.status_code == 404
+    assert (await other_client.get("/photos/orientation")).json() == []
