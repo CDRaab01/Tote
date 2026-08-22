@@ -18,11 +18,22 @@ object PhotoUrls {
      * @param cleaned prefer the background-removed copy. The server falls back to the original
      *   when cleanup failed or has not run, so a photo whose cleanup broke still displays rather
      *   than showing a broken frame — which is the whole reason the fallback lives server-side.
+     * @param w ask for a resized WebP derivative no wider than this (one of the server's fixed
+     *   widths), or null for the full file. Lists pass a width: without one, a 52dp thumbnail
+     *   downloads the full cleaned PNG — megabytes over the attic's Wi-Fi — which is why rows
+     *   scrolled ahead of their pictures.
      */
-    fun item(itemId: String, order: Int, cleaned: Boolean = true): String =
-        url(BuildConfig.SERVER_URL, itemId, order, cleaned)
+    fun item(itemId: String, order: Int, cleaned: Boolean = true, w: Int? = null): String =
+        url(BuildConfig.SERVER_URL, itemId, order, cleaned, w)
 
-    /** The pure half, so the joining rules are testable without a BuildConfig. */
-    fun url(baseUrl: String, itemId: String, order: Int, cleaned: Boolean = true): String =
-        "${baseUrl.trimEnd('/')}/items/$itemId/photos/$order?cleaned=$cleaned"
+    /**
+     * The pure half, so the joining rules are testable without a BuildConfig.
+     *
+     * Parameter order in the query string is FIXED (`cleaned` then `w`): the full URL is Coil's
+     * cache key, and the same photo at the same size must always be the same string or the disk
+     * cache holds duplicate entries that never hit.
+     */
+    fun url(baseUrl: String, itemId: String, order: Int, cleaned: Boolean = true, w: Int? = null): String =
+        "${baseUrl.trimEnd('/')}/items/$itemId/photos/$order?cleaned=$cleaned" +
+            (w?.let { "&w=$it" } ?: "")
 }

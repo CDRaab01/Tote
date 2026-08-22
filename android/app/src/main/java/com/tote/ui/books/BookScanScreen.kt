@@ -241,7 +241,7 @@ private fun CoverThumb(row: BookRow) {
                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             row.hasCover && row.itemId != null ->
                 AsyncImage(
-                    model = PhotoUrls.item(row.itemId, 0, cleaned = false),
+                    model = PhotoUrls.item(row.itemId, 0, cleaned = false, w = 192),
                     contentDescription = null,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.size(52.dp),

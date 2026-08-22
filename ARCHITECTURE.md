@@ -2374,6 +2374,49 @@ nudge therefore cannot disagree about what "overdue" means, which they would wit
 other if the phone's clock or the container's UTC got a vote. A failed fetch leaves the card
 absent rather than raising: an unreachable server genuinely cannot tell you that anything is late.
 
+## Photo derivatives
+
+`GET /items/{id}/photos/{order}` takes `?w=` (one of `photo_store.THUMBNAIL_WIDTHS` — a fixed
+set, because the width names a file the server will create and an open integer would let one
+client mint unbounded derivatives per photo; anything else is 422). The derivative is generated
+on first request — Pillow, `thumbnail` + LANCZOS, EXIF-transposed — and cached beside its source
+as `thumb_{order}_{width}_{c|o}.webp`, **inside the item's directory**, so `delete_item_photos`'
+rmtree collects derivatives without knowing they exist.
+
+Why this exists: without it, every 52dp list thumbnail on the client downloaded the full cleaned
+PNG — megabytes of RGBA over the attic's Wi-Fi to paint a square smaller than a stamp — which is
+why lists scrolled ahead of their pictures.
+
+Three rules worth knowing:
+
+- **WebP, never JPEG.** The cleaned copies are RGBA cutouts and a JPEG derivative would flatten
+  their alpha to black — the same defect class the cleanup module's compositing rules exist to
+  prevent, arriving through a new door. A test asserts the thumb keeps its transparency.
+- **The source is chosen first; the derivative's name follows it** (`_c` from the cleaned copy,
+  `_o` from the original). That is the supersession mechanism: a thumb made from the original
+  while no cleaned copy existed is simply never served again once one does — no invalidation
+  step. Today cleanup runs synchronously inside the scan request, so that transition cannot
+  actually occur in production; the suffix is the contract for the day cleanup goes async, and
+  meanwhile it keeps `cleaned=false` book-cover thumbs from colliding with cleaned-derived
+  ones. Stale `_o` files are dead weight bounded by widths × sources × photos and are reaped
+  only by item deletion. A source that does not decode (a corrupt upload the scan deliberately
+  kept) is served whole rather than turned into a 500.
+- **Every photo response carries `Cache-Control: private, max-age=86400`.** Private because
+  these are photographs of the inside of a house behind auth; a day because Coil's disk cache
+  is the client's offline photo store and, without the header, HTTP heuristics made freshly
+  catalogued photos — exactly the ones being scrolled — revalidate on every pass. Caveat:
+  Starlette's `FileResponse` sets ETag/Last-Modified but answers no 304s, so expiry means
+  re-downloading a tens-of-KB derivative, not the original. Generation is atomic against
+  concurrent requests (per-writer temp file + `os.replace`), and the serving path derives the
+  thumb's directory from the source's own parent — never through the mkdir-ing `item_dir()` —
+  so it cannot re-create a directory a concurrent delete just removed.
+
+Client side, `PhotoUrls` appends `w` in a fixed position because the full URL is Coil's cache
+key; lists ask for 192 (52dp thumbs), grid tiles and the review strips 512, the item sheet's
+hero 1024. The Room cache stays photo-free on purpose: Coil's disk cache already is the offline
+photo store once the server permits caching, and a second cache with a second eviction policy
+would be a drift machine.
+
 ## The bin screen is a photo grid
 
 The bin screen's contents are `ItemCell`s (`ui/totes/ItemCell.kt`) — photograph-first cells, two

@@ -36,7 +36,12 @@ class ToteApp : Application(), Configuration.Provider, ImageLoaderFactory {
      * loader has no `AuthInterceptor` and every thumbnail in the review stack would 401.
      */
     override fun newImageLoader(): ImageLoader =
-        ImageLoader.Builder(this).okHttpClient(okHttpClient).build()
+        ImageLoader.Builder(this)
+            .okHttpClient(okHttpClient)
+            // A photo fading in reads as loading; one popping in reads as the list glitching.
+            // No placeholder painter — every call site already sits on a panel-toned box.
+            .crossfade(true)
+            .build()
 
     override fun onCreate() {
         super.onCreate()

@@ -6,6 +6,7 @@ movement row. The house AI rule is that nothing model-generated enters the catal
 explicit approval, and Tote has no exception to it.
 """
 
+import asyncio
 import datetime
 import uuid
 from typing import Annotated
@@ -35,6 +36,12 @@ router = APIRouter(tags=["scan"])
 Db = Annotated[AsyncSession, Depends(get_db)]
 
 MAX_PHOTOS = 8
+
+# Cacheable, but only in the requester's own cache: these are photographs of the inside of a
+# house behind auth, and a shared cache on the path must never hold them. A day, because the
+# client's image cache makes re-validation the only cost — and FileResponse answers no 304s,
+# so expiry means re-downloading a tens-of-KB derivative, not the original.
+PHOTO_CACHE_CONTROL = "private, max-age=86400"
 
 
 async def _owned_draft(db: AsyncSession, household_id: uuid.UUID, draft_id: uuid.UUID) -> Item:
@@ -416,14 +423,33 @@ async def discard(draft_id: uuid.UUID, user: CurrentUser, db: Db):
 
 @router.get("/items/{item_id}/photos/{order}", include_in_schema=False)
 async def item_photo(
-    item_id: uuid.UUID, order: int, user: CurrentUser, db: Db, cleaned: bool = True
+    item_id: uuid.UUID,
+    order: int,
+    user: CurrentUser,
+    db: Db,
+    cleaned: bool = True,
+    w: int | None = None,
 ):
-    """Serve one photo.
+    """Serve one photo, optionally resized.
 
     Authenticated: these are photographs of the inside of someone's house. Falls back to the
     original when no cleaned copy exists, so a photo whose cleanup failed still displays rather
     than showing a broken frame.
+
+    ``w`` asks for a WebP derivative no wider than that, from the fixed
+    :data:`photo_store.THUMBNAIL_WIDTHS` set — generated on first request, cached beside the
+    source. Without it every 52dp list thumbnail on the client downloaded the full cleaned PNG
+    (megabytes, over the attic's Wi-Fi), which is why lists scrolled ahead of their pictures.
+    The source is chosen FIRST and the derivative's name follows it, so a thumb made from the
+    original is superseded the moment a cleaned copy exists. A source that does not decode (a
+    corrupt upload the scan deliberately kept) is served whole rather than turned into a 500.
     """
+    if w is not None and w not in photo_store.THUMBNAIL_WIDTHS:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"w must be one of {sorted(photo_store.THUMBNAIL_WIDTHS)}",
+        )
+
     owned = (
         await db.execute(
             select(Item.id).where(Item.id == item_id, Item.household_id == user.household_id)
@@ -440,5 +466,11 @@ async def item_photo(
     if photo is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Photo not found")
 
+    from_cleaned = cleaned and photo.cleaned_path is not None
     path = (photo.cleaned_path if cleaned else None) or photo.original_path
-    return FileResponse(path)
+    if w is not None:
+        dest = photo_store.thumbnail_path(path, order, w, from_cleaned=from_cleaned)
+        thumb = await asyncio.to_thread(photo_store.ensure_thumbnail, path, dest, w)
+        if thumb is not None:
+            path = str(thumb)
+    return FileResponse(path, headers={"Cache-Control": PHOTO_CACHE_CONTROL})

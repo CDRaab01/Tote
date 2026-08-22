@@ -62,7 +62,7 @@ fun DraftChooser(
     currentIndex: Int,
     onPick: (Int) -> Unit,
     onDismiss: () -> Unit,
-    photoUrlFor: (String, Int) -> String = { id, order -> PhotoUrls.item(id, order) },
+    photoUrlFor: (String, Int) -> String = { id, order -> PhotoUrls.item(id, order, w = 512) },
 ) {
     val sheetState = rememberModalBottomSheetState()
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -88,7 +88,7 @@ fun DraftChooserContent(
     currentIndex: Int,
     onPick: (Int) -> Unit,
     modifier: Modifier = Modifier,
-    photoUrlFor: (String, Int) -> String = { id, order -> PhotoUrls.item(id, order) },
+    photoUrlFor: (String, Int) -> String = { id, order -> PhotoUrls.item(id, order, w = 512) },
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
