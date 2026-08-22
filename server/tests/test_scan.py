@@ -741,3 +741,145 @@ async def test_deleting_an_item_deletes_its_photographs_from_disk(auth_client, m
 
     assert (await auth_client.delete(f"/items/{filed['id']}")).status_code == 204
     assert not directory.exists() or not any(directory.iterdir())
+
+
+# ── Sized photos ─────────────────────────────────────────────────────────────
+#
+# `?w=` exists because every 52dp list thumbnail on the client downloaded the FULL cleaned PNG —
+# megabytes of RGBA over the attic's Wi-Fi to paint a square smaller than a stamp, which is why
+# lists scrolled ahead of their pictures.
+
+
+def _fake_identify(monkeypatch, name="Sized thing"):
+    import app.services.scan_pipeline as pipeline
+
+    async def fake(urls, categories=None, client=None):
+        from app.services.ai.identify_prompts import IdentifyDraft
+
+        return IdentifyDraft(name=name)
+
+    monkeypatch.setattr(pipeline, "identify_item", fake)
+
+
+async def test_a_sized_photo_is_webp_no_larger_than_asked(auth_client, monkeypatch):
+    _fake_identify(monkeypatch)
+    draft = (await _scan(auth_client, photo_bytes(size=(1400, 1000)))).json()
+
+    r = await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 192})
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/webp"
+    assert max(Image.open(io.BytesIO(r.content)).size) == 192
+
+    # `thumbnail` never upscales, and the cleaned copy is a crop — so the ceiling for a large
+    # `w` is the SOURCE's long edge, measured off the actual file rather than the upload.
+    full = await auth_client.get(f"/items/{draft['id']}/photos/0")
+    source_edge = max(Image.open(io.BytesIO(full.content)).size)
+    r = await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 1024})
+    assert max(Image.open(io.BytesIO(r.content)).size) == min(1024, source_edge)
+
+
+async def test_a_sized_cleaned_photo_keeps_its_transparency(auth_client, monkeypatch):
+    """The derivative is WebP, never JPEG, precisely for this assertion: a JPEG thumb would
+    flatten the cutout's alpha to black — the defect class the cleanup tests guard, arriving
+    through a new door. Skipped without rembg, same as the cleanup alpha test."""
+    _fake_identify(monkeypatch)
+    draft = (await _scan(auth_client, photo_bytes())).json()
+
+    full = await auth_client.get(f"/items/{draft['id']}/photos/0")
+    if Image.open(io.BytesIO(full.content)).mode != "RGBA":
+        pytest.skip("rembg unavailable — the degraded cleanup path has no alpha to preserve")
+
+    r = await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 192})
+    thumb = Image.open(io.BytesIO(r.content))
+    assert thumb.mode == "RGBA"
+    # < 16 rather than == 0: LANCZOS is allowed to feather the cutout's edge, not to fill it.
+    assert thumb.getchannel("A").getextrema()[0] < 16, (
+        "nothing is transparent in the thumb — the derivative flattened the cutout"
+    )
+
+
+async def test_an_unknown_width_is_rejected(auth_client, monkeypatch):
+    """The width names a file the server will create; an open integer would let one client mint
+    an unbounded family of derivatives per photo. Fixed set, 422 outside it."""
+    _fake_identify(monkeypatch)
+    draft = (await _scan(auth_client, photo_bytes())).json()
+    for w in (200, 0, -1):
+        r = await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": w})
+        assert r.status_code == 422, w
+
+
+async def test_photo_responses_carry_cache_control(auth_client, monkeypatch):
+    """`private` because these are photos of the inside of a house behind auth; a day because
+    the client's disk cache is the offline story for the attic and revalidation was the reason
+    freshly catalogued photos re-downloaded on every scroll."""
+    _fake_identify(monkeypatch)
+    draft = (await _scan(auth_client, photo_bytes())).json()
+    for params in ({}, {"w": 192}):
+        r = await auth_client.get(f"/items/{draft['id']}/photos/0", params=params)
+        assert r.headers["cache-control"] == "private, max-age=86400", params
+
+
+async def test_a_sized_request_survives_an_undecodable_original(auth_client, monkeypatch):
+    """The scan deliberately keeps an upload cleanup could not read; asking for a thumb of it
+    must degrade to serving it whole, not turn a working photo endpoint into a 500."""
+    _fake_identify(monkeypatch, name="Unreadable but saved")
+    r = await auth_client.post(
+        "/items/scan", files={"photos": ("broken.jpg", b"not an image", "image/jpeg")}
+    )
+    item_id = r.json()["id"]
+
+    sized = await auth_client.get(f"/items/{item_id}/photos/0", params={"w": 192})
+    assert sized.status_code == 200
+    assert sized.content == b"not an image"
+
+
+async def test_a_thumb_from_the_original_is_superseded_by_the_cleaned_copy(
+    auth_client, raw_sql, monkeypatch
+):
+    """Proves the mechanism, not a live bug.
+
+    Today cleanup runs synchronously inside the scan request, so a cleaned copy cannot arrive
+    after a client has ever seen the photo. The `_c`/`_o` source suffix on the derivative's
+    filename is the contract for the day cleanup goes async — and meanwhile it is what keeps
+    `cleaned=false` book-cover thumbs from colliding with cleaned-derived ones.
+    """
+    import app.services.scan_pipeline as pipeline
+    from app.services import photo_store
+
+    _fake_identify(monkeypatch)
+
+    def broken_clean(data, target):
+        raise OSError("cleanup broken for this test")
+
+    monkeypatch.setattr(pipeline, "_clean_to_disk", broken_clean)
+    draft = (await _scan(auth_client, photo_bytes())).json()
+
+    first = await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 192})
+    r0, _, b0 = mean_of_center(first.content)
+    assert b0 > r0, "the original-derived thumb should show the fixture's blue subject"
+
+    # The cleaned copy lands later, as an async cleanup would: solid red, unmistakable.
+    cleaned = photo_store.cleaned_path_for(uuid.UUID(draft["id"]), 0)
+    Image.new("RGBA", (300, 300), (200, 30, 30, 255)).save(cleaned, format="PNG")
+    await raw_sql(
+        "UPDATE item_photos SET cleaned_path = :p WHERE item_id = :i",
+        p=cleaned,
+        i=uuid.UUID(draft["id"]),
+    )
+
+    second = await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 192})
+    r1, _, b1 = mean_of_center(second.content)
+    assert r1 > b1, "the cleaned copy must supersede the original-derived thumb"
+
+
+async def test_the_thumbnail_is_cached_on_disk(auth_client, monkeypatch):
+    from app.services import photo_store
+
+    _fake_identify(monkeypatch)
+    draft = (await _scan(auth_client, photo_bytes())).json()
+
+    first = await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 192})
+    thumbs = list(photo_store.item_dir(uuid.UUID(draft["id"])).glob("thumb_0_192_*.webp"))
+    assert len(thumbs) == 1, "the derivative is generated once and kept beside its source"
+    second = await auth_client.get(f"/items/{draft['id']}/photos/0", params={"w": 192})
+    assert second.content == first.content

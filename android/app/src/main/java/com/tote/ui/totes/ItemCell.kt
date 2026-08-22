@@ -100,7 +100,9 @@ internal fun ItemCell(
             // way, because a grid that reflows as images resolve cannot be scanned.
             if (item.photoCount > 0) {
                 AsyncImage(
-                    model = PhotoUrls.item(item.id, 0),
+                    // 512: a half-screen grid tile is ~180dp ≈ 540px at 3x — close enough with
+                    // Fit, at a fraction of the full cleaned PNG's bytes.
+                    model = PhotoUrls.item(item.id, 0, w = 512),
                     contentDescription = null,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier

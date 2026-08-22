@@ -233,7 +233,7 @@ fun ReviewContent(
     onRetry: () -> Unit,
     onPhotographSomething: () -> Unit = {},
     modifier: Modifier = Modifier,
-    photoUrlFor: (String, Int) -> String = { id, order -> PhotoUrls.item(id, order) },
+    photoUrlFor: (String, Int) -> String = { id, order -> PhotoUrls.item(id, order, w = 512) },
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing

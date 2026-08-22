@@ -8,12 +8,20 @@ that column is never renumbered: renumbering would leave every file orphaned wit
 pointing at it.
 """
 
+import os
 import uuid
 from pathlib import Path
+
+from PIL import Image, ImageOps
 
 from app.config import settings
 
 ALLOWED_CONTENT_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+
+# The widths a client may ask for via `?w=` on the photo endpoint. A fixed set, because the
+# request is attacker-reachable input naming a file to create: an open integer would let one
+# client mint an unbounded family of derivatives per photo.
+THUMBNAIL_WIDTHS = frozenset({192, 512, 1024})
 
 
 def item_dir(item_id: uuid.UUID) -> Path:
@@ -37,6 +45,65 @@ def cleaned_path_for(item_id: uuid.UUID, order: int) -> str:
 
 def read_bytes(path: str) -> bytes:
     return Path(path).read_bytes()
+
+
+def thumbnail_path(source_path: str, order: int, width: int, *, from_cleaned: bool) -> Path:
+    """Where the sized derivative of ``source_path`` lives.
+
+    ``thumb_{order}_{width}_{c|o}.webp``, BESIDE the source — inside the item's directory, so
+    :func:`delete_item_photos`'s rmtree collects derivatives without knowing they exist.
+
+    The ``c``/``o`` suffix encodes which source the thumb was derived from. The route picks the
+    source first (cleaned when present, else original) and the suffix follows, so a thumb made
+    from the original while cleanup was pending is simply never served again once the cleaned
+    copy exists — superseded by filename, no invalidation step. It also keeps ``cleaned=false``
+    requests (the book covers) from colliding with cleaned-derived thumbs of the same photo.
+
+    Derived from the source's own parent rather than :func:`item_dir`, deliberately: that helper
+    mkdirs as a side effect, and the serving path must never be able to re-create a directory
+    that :func:`delete_item_photos` just removed.
+    """
+    suffix = "c" if from_cleaned else "o"
+    return Path(source_path).parent / f"thumb_{order}_{width}_{suffix}.webp"
+
+
+def ensure_thumbnail(source_path: str, dest: Path, width: int) -> Path | None:
+    """Make ``dest`` exist as a ``width``-bounded WebP of ``source_path``; return it, or None.
+
+    Sync and CPU-bound (Pillow) — call via ``asyncio.to_thread``. None means the source does
+    not decode (the scan deliberately keeps an upload that cleanup could not read, and serving
+    it beats a 500 — same contract as the cleanup module's "never block on cosmetics"); the
+    caller serves the source unresized.
+
+    WebP because the cleaned copies are RGBA cutouts and the transparency must survive — a JPEG
+    derivative would flatten alpha to black, the exact defect class ``cleanup.clean_photo``'s
+    compositing rules exist to prevent. ``Image.thumbnail`` never upscales, so a source smaller
+    than ``width`` passes through at its own size.
+
+    Atomic against concurrent requests for the same derivative: each writer saves to its own
+    temp name and ``os.replace``s it into place, so both succeed and one file wins.
+    """
+    if dest.exists():
+        return dest
+    try:
+        img = Image.open(source_path)
+        img.load()
+    except OSError:
+        return None
+    # The client strips EXIF when it re-encodes, but a decode failure there falls back to the
+    # original bytes, and book covers arrive from the internet — so honour orientation here
+    # rather than letting a thumb disagree with Coil's EXIF-aware render of the full image.
+    img = ImageOps.exif_transpose(img)
+    has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
+    img = img.convert("RGBA" if has_alpha else "RGB")
+    img.thumbnail((width, width), Image.LANCZOS)
+    tmp = dest.parent / f".{dest.name}.{uuid.uuid4().hex}.tmp"
+    try:
+        img.save(tmp, format="WEBP")
+        os.replace(tmp, dest)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return dest
 
 
 def delete_item_photos(item_id: uuid.UUID) -> None:
