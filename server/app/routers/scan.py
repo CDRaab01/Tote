@@ -22,7 +22,15 @@ from app.database import get_db
 from app.models.category import Category
 from app.models.item import Item, ItemPhoto
 from app.models.tote import Tote
-from app.schemas.catalog import DraftConfirm, DraftOut, ItemOut, ScanIsbnIn, ScanIsbnOut
+from app.schemas.catalog import (
+    BulkRotateIn,
+    DraftConfirm,
+    DraftOut,
+    ItemOut,
+    PhotoOrientationOut,
+    ScanIsbnIn,
+    ScanIsbnOut,
+)
 from app.security import CurrentUser
 from app.services import photo_store
 from app.services.apparel_write import apply_apparel
@@ -429,6 +437,7 @@ async def item_photo(
     db: Db,
     cleaned: bool = True,
     w: int | None = None,
+    r: int | None = None,
 ):
     """Serve one photo, optionally resized.
 
@@ -443,11 +452,23 @@ async def item_photo(
     The source is chosen FIRST and the derivative's name follows it, so a thumb made from the
     original is superseded the moment a cleaned copy exists. A source that does not decode (a
     corrupt upload the scan deliberately kept) is served whole rather than turned into a 500.
+
+    ``r`` (degrees clockwise) states the rotation the CALLER believes this photograph carries.
+    It is not the server changing its mind about the truth — the stored ``rotation`` is applied
+    when ``r`` is absent — it is there so the URL describes the exact bytes it returns. Coil keys
+    its cache on the whole URL, so without a term that moves when a photograph is corrected, a
+    turned photo would keep serving its old thumbnail out of the phone's disk cache for a day
+    and the correction would look like it had not worked.
     """
     if w is not None and w not in photo_store.THUMBNAIL_WIDTHS:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             f"w must be one of {sorted(photo_store.THUMBNAIL_WIDTHS)}",
+        )
+    if r is not None and r not in photo_store.ROTATIONS:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"r must be one of {sorted(photo_store.ROTATIONS)}",
         )
 
     owned = (
@@ -468,9 +489,87 @@ async def item_photo(
 
     from_cleaned = cleaned and photo.cleaned_path is not None
     path = (photo.cleaned_path if cleaned else None) or photo.original_path
-    if w is not None:
-        dest = photo_store.thumbnail_path(path, order, w, from_cleaned=from_cleaned)
-        thumb = await asyncio.to_thread(photo_store.ensure_thumbnail, path, dest, w)
+    # An absent `r` means "however you have it recorded" — so a curl, a test, or a client that
+    # predates rotation still gets the photograph the right way up.
+    rotation = photo.rotation if r is None else r
+    if w is not None or rotation:
+        dest = photo_store.thumbnail_path(
+            path, order, w, from_cleaned=from_cleaned, rotation=rotation
+        )
+        thumb = await asyncio.to_thread(photo_store.ensure_thumbnail, path, dest, w, rotation)
         if thumb is not None:
             path = str(thumb)
     return FileResponse(path, headers={"Cache-Control": PHOTO_CACHE_CONTROL})
+
+
+@router.get("/photos/orientation", response_model=list[PhotoOrientationOut])
+async def photos_for_orientation(user: CurrentUser, db: Db):
+    """Every photograph in the household, for the fix-orientation screen.
+
+    This screen exists because of a defect that is now closed at the source: until v1.0.57 the
+    client decoded a capture with BitmapFactory (which ignores the EXIF Orientation tag) and
+    re-encoded it with Bitmap.compress (which writes no EXIF), so a portrait photo arrived as
+    sideways pixels with nothing left to say so. Going forward the capture path rotates before
+    it uploads. For everything already on the volume the rotation is genuinely not in the file,
+    and this app does not guess — so a person looks at them and says.
+
+    Drafts are excluded: an unreviewed draft's photographs are about to be looked at anyway on
+    the review screen, and mixing them in here would put items in a fix-up list that nobody has
+    decided to keep yet.
+    """
+    rows = (
+        await db.execute(
+            select(ItemPhoto, Item.name, Tote.code)
+            .join(Item, ItemPhoto.item_id == Item.id)
+            .outerjoin(Tote, Item.current_tote_id == Tote.id)
+            .where(Item.household_id == user.household_id, Item.is_draft.is_(False))
+            .order_by(Item.created_at.desc(), Item.name, ItemPhoto.order)
+        )
+    ).all()
+    return [
+        PhotoOrientationOut(
+            item_id=photo.item_id,
+            order=photo.order,
+            item_name=name,
+            rotation=photo.rotation,
+            tote_code=code,
+        )
+        for photo, name, code in rows
+    ]
+
+
+@router.post("/photos/bulk-rotate", status_code=status.HTTP_204_NO_CONTENT)
+async def bulk_rotate(body: BulkRotateIn, user: CurrentUser, db: Db):
+    """Record the corrections from one pass of the fix-orientation screen.
+
+    Nothing on disk is rewritten. The stored bytes are the one artefact in this app that cannot
+    be recreated, so the correction is a derived index over them, applied when a derivative is
+    rendered — which also means a wrong turn costs another tap rather than a lost generation of
+    re-encoding.
+
+    All or nothing on an unknown photograph, like every other bulk path here: a partial save
+    would leave a grid the person has just finished correcting half-corrected, with nothing on
+    screen saying which half.
+    """
+    wanted = {(p.item_id, p.order): p.rotation for p in body.photos}
+    rows = (
+        (
+            await db.execute(
+                select(ItemPhoto)
+                .join(Item, ItemPhoto.item_id == Item.id)
+                .where(
+                    ItemPhoto.item_id.in_({p.item_id for p in body.photos}),
+                    Item.household_id == user.household_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    found = {(row.item_id, row.order): row for row in rows}
+    if not wanted.keys() <= found.keys():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "One or more photos not found")
+
+    for key, rotation in wanted.items():
+        found[key].rotation = rotation
+    await db.commit()

@@ -150,6 +150,11 @@ data class ItemDto(
     // The client uses it to decide whether to draw a thumbnail at all, rather than firing a
     // request per row and rendering whatever a 404 looks like.
     @SerialName("photo_count") val photoCount: Int = 0,
+    // The correction recorded on the FIRST photograph — the one every row and tile draws. It
+    // rides in the thumbnail's URL because the whole URL is Coil's cache key: without a term
+    // that moves when a photo is put the right way up, a corrected photograph keeps serving its
+    // old thumbnail from the phone's disk cache for a day and the fix looks like it failed.
+    @SerialName("photo_rotation") val photoRotation: Int = 0,
     // Present only for clothing. Absent is normal — most things in a house are not garments.
     val apparel: ApparelDto? = null,
 )
@@ -424,3 +429,29 @@ data class NfcResolveDto(
 
 @Serializable
 data class NfcBaseDto(val base: String)
+
+/**
+ * One photograph, as the fix-orientation screen needs it.
+ *
+ * Deliberately thin: enough to address the photo and to recognise which object it belongs to.
+ * The screen's whole job is looking at pictures, so anything else would be noise between the
+ * person and the photographs.
+ */
+@Serializable
+data class PhotoOrientationDto(
+    @SerialName("item_id") val itemId: String,
+    val order: Int,
+    @SerialName("item_name") val itemName: String,
+    val rotation: Int = 0,
+    @SerialName("tote_code") val toteCode: String? = null,
+)
+
+@Serializable
+data class PhotoRotationDto(
+    @SerialName("item_id") val itemId: String,
+    val order: Int,
+    val rotation: Int,
+)
+
+@Serializable
+data class BulkRotateRequest(val photos: List<PhotoRotationDto>)

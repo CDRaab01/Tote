@@ -54,6 +54,22 @@ def _photo_count():
     )
 
 
+def _photo_rotation():
+    """The display correction on the item's FIRST photograph, as a correlated scalar subquery.
+
+    Photo 0 specifically: it is the one every list and grid draws, and it is the only one whose
+    rotation a row needs in order to build a cache-correct thumbnail URL. Coalesced to 0 so an
+    item with no photographs reads as "nothing to turn" rather than null.
+    """
+    return (
+        select(func.coalesce(ItemPhoto.rotation, 0))
+        .where(ItemPhoto.item_id == Item.id, ItemPhoto.order == 0)
+        .correlate(Item)
+        .scalar_subquery()
+        .label("photo_rotation")
+    )
+
+
 def item_query(household_id: uuid.UUID) -> Select:
     """Items with their tote code and location name attached.
 
@@ -62,7 +78,7 @@ def item_query(household_id: uuid.UUID) -> Select:
     would silently hide exactly the items a user is most likely to be hunting for.
     """
     return (
-        select(Item, Tote.code, Location.name, _photo_count())
+        select(Item, Tote.code, Location.name, _photo_count(), _photo_rotation())
         .outerjoin(Tote, Item.current_tote_id == Tote.id)
         .outerjoin(Location, Tote.location_id == Location.id)
         .where(Item.household_id == household_id)
@@ -102,6 +118,7 @@ def to_item_out(
     tote_code: str | None,
     location_name: str | None,
     photo_count: int = 0,
+    photo_rotation: int | None = 0,
 ) -> ItemOut:
     out = ItemOut.model_validate(item)
     # Only present for clothing, and only when the relationship was actually loaded. Reading it
@@ -113,6 +130,7 @@ def to_item_out(
     out.tote_code = tote_code
     out.location_name = location_name
     out.photo_count = photo_count
+    out.photo_rotation = photo_rotation or 0
     # Overdue is computed here, once, so a notification and a screen cannot disagree about it.
     out.is_overdue = bool(
         item.expected_back
@@ -124,7 +142,7 @@ def to_item_out(
 
 async def items_for(db: AsyncSession, query: Select) -> list[ItemOut]:
     rows = (await db.execute(query)).all()
-    out = [to_item_out(item, code, loc, photos) for item, code, loc, photos in rows]
+    out = [to_item_out(item, code, loc, photos, turn) for item, code, loc, photos, turn in rows]
     await attach_borrowers(db, out)
     return out
 

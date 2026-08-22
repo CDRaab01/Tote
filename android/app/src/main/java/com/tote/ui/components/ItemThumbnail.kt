@@ -54,7 +54,7 @@ fun ItemThumbnail(
             AsyncImage(
                 // 192: the largest this 52dp frame can need at 3x density. The full file is
                 // megabytes of cleaned PNG; the derivative is tens of KB.
-                model = PhotoUrls.item(item.id, 0, w = 192),
+                model = PhotoUrls.item(item.id, 0, w = 192, rotation = item.photoRotation),
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.size(size),

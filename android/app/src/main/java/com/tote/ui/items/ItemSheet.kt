@@ -250,7 +250,7 @@ private fun ViewFace(
             contentAlignment = Alignment.Center,
         ) {
             AsyncImage(
-                model = PhotoUrls.item(item.id, 0, w = 1024),
+                model = PhotoUrls.item(item.id, 0, w = 1024, rotation = item.photoRotation),
                 contentDescription = "Photo of ${item.name}",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxWidth().height(200.dp),

@@ -2417,6 +2417,60 @@ hero 1024. The Room cache stays photo-free on purpose: Coil's disk cache already
 photo store once the server permits caching, and a second cache with a second eviction policy
 would be a drift machine.
 
+## Which way up: orientation
+
+**The client destroyed orientation on the way up, and for every photograph taken before
+v1.0.57 it is not recoverable.** A phone camera writes its pixels in *sensor* orientation and
+records how far to turn them in an EXIF Orientation tag. `ImageBytes.downscaleToJpeg` decoded
+with `BitmapFactory` — which ignores that tag — and re-encoded with `Bitmap.compress`, which
+writes no EXIF at all. So the upload was sideways pixels with nothing left in the file to say
+which way up they belonged. There was no EXIF handling anywhere in the client and no
+`exifinterface` dependency; the server's `exif_transpose` in `ensure_thumbnail` was correct
+defensively and a no-op on these files, because there was no tag left to act on.
+
+Two halves, because the problem has two halves:
+
+**Forward — the pixels become canonical.** The tag is now read off the ORIGINAL bytes *before*
+the decode (the last moment it exists) and baked in with a matrix during the re-encode. All
+eight orientation states are handled, not just the three rotations: a half-handled tag is worse
+than an unread one, because it puts *some* photographs right and leaves others wrong with no
+pattern anyone can spot. Uploaded bytes are then upright by construction — no metadata anyone
+downstream has to remember to honour. `ImageBytesTest` builds real EXIF-bearing JPEGs; two of
+its four orientation cases were **checked against the unfixed code and fail there**, and the
+180° case asserts a marked corner *moved* rather than only that the dimensions survived, because
+a half-turn preserves dimensions and a test that cannot fail reads as coverage.
+
+**Backward — a person says, and the app records it.** `item_photos.rotation` (migration `0008`,
+degrees, CHECK-constrained to the four right angles) is a HUMAN's correction. It is applied when
+a derivative is rendered and **never baked into the stored bytes**: the photographs are the one
+artefact here that cannot be recreated, so rotation stays a derived index over them — which also
+makes a wrong turn one more tap instead of a lost generation of re-encoding. The app does not
+guess an angle from the pixels; a landscape-shaped garment photo is a decent *suggestion* and
+this codebase does not write suggestions as fact.
+
+Three consequences worth knowing:
+
+- **Rotation joins the derivative's cache key** (`thumb_{order}_{width}_{c|o}[_r{deg}].webp`),
+  for the same reason the source does. The suffix is omitted at 0, so every derivative made
+  before rotation existed keeps its name and stays a cache hit.
+- **It is in the URL too** (`&r=`), and that is not the client deciding how to turn a photo —
+  the server applies its stored rotation when `r` is absent, so a curl or an older client still
+  gets it the right way up. `r` exists because the whole URL is Coil's cache key: without a term
+  that moves when a photograph is corrected, the phone would serve the old thumbnail from disk
+  for `max-age` and the fix would look like it had not worked. `ItemOut.photo_rotation` carries
+  photo 0's angle so a list row can build that URL without a request per row.
+- **The full-size path honours rotation as well**, via a `_full` derivative. Nothing in the
+  client asks for that path today — every call site passes a width — which is exactly why it is
+  pinned by a test: an unused branch quietly serving sideways pixels is how this comes back.
+
+`GET /photos/orientation` lists every non-draft photograph for the fix screen (drafts are
+excluded — they are about to be looked at on review anyway), and `POST /photos/bulk-rotate`
+records one pass in one transaction, all or nothing, because a partial save leaves a grid
+somebody has just finished correcting half-corrected with nothing on screen saying which half.
+The screen holds its pending turns in memory and previews each with a local `Modifier.rotate`
+rather than re-fetching, so a correction pass costs no round trips until Save; leaving without
+saving changes nothing.
+
 ## The bin screen is a photo grid
 
 The bin screen's contents are `ItemCell`s (`ui/totes/ItemCell.kt`) — photograph-first cells, two

@@ -64,6 +64,10 @@ import com.tote.ui.settings.CategoryEdit
 import com.tote.ui.settings.CategoryEditorBody
 import com.tote.ui.settings.CategoryManagerContent
 import com.tote.ui.settings.CategoryManagerState
+import com.tote.data.remote.PhotoOrientationDto
+import com.tote.ui.settings.PhotoKey
+import com.tote.ui.settings.PhotoOrientationContent
+import com.tote.ui.settings.PhotoOrientationState
 import com.tote.ui.settings.SettingsContent
 import com.tote.ui.settings.SettingsState
 import com.tote.ui.theme.ToteTheme
@@ -1368,4 +1372,50 @@ class ScreenshotTest {
     @Test fun login_error_dark() = capture("login_error_dark", dark = true) {
         LoginContent(UiState.Error("Sign-in failed. Check you are on the tailnet and retry."), {})
     }
+
+    // ── Which way up ─────────────────────────────────────────────────────────
+    //
+    // The one-off screen for the photographs that lost their orientation tag before the capture
+    // path was fixed. Worth baselines in both themes: it is a grid of pictures over a dark
+    // surface with a pinned bar, and the "n to turn" bar only exists once something is pending.
+
+    private val sideways = listOf(
+        PhotoOrientationDto("i1", 0, "Hoodie 12m", 0, "A15"),
+        PhotoOrientationDto("i2", 0, "Onesie 12m", 90, "A15"),
+        PhotoOrientationDto("i3", 0, "Baby Blanket", 0, "D1"),
+        PhotoOrientationDto("i4", 0, "Bassinet Fitted Sheet", 0, "D1"),
+        PhotoOrientationDto("i5", 0, "Cotton Baby Blanket", 180, null),
+        PhotoOrientationDto("i6", 0, "Baby Towel", 0, "D1"),
+    )
+
+    @Test fun photo_orientation_dark() = capture("photo_orientation_dark", dark = true) {
+        PhotoOrientationContent(PhotoOrientationState(photos = sideways, loaded = true))
+    }
+
+    @Test fun photo_orientation_light() = capture("photo_orientation_light", dark = false) {
+        PhotoOrientationContent(PhotoOrientationState(photos = sideways, loaded = true))
+    }
+
+    /** Mid-pass: the save bar appears only once there is something to save. */
+    @Test fun photo_orientation_pending_dark() =
+        capture("photo_orientation_pending_dark", dark = true) {
+            PhotoOrientationContent(
+                PhotoOrientationState(
+                    photos = sideways,
+                    loaded = true,
+                    pending = mapOf(PhotoKey("i1", 0) to 90, PhotoKey("i3", 0) to 270),
+                )
+            )
+        }
+
+    /** Nothing photographed yet — distinguished from "couldn't load", per the empty-state rule. */
+    @Test fun photo_orientation_empty_dark() =
+        capture("photo_orientation_empty_dark", dark = true) {
+            PhotoOrientationContent(PhotoOrientationState(photos = emptyList(), loaded = true))
+        }
+
+    @Test fun photo_orientation_unreachable_dark() =
+        capture("photo_orientation_unreachable_dark", dark = true) {
+            PhotoOrientationContent(PhotoOrientationState(loaded = true, unreachable = true))
+        }
 }
