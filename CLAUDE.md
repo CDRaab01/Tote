@@ -976,6 +976,43 @@ pixels, and it was **checked against the broken code before being kept** (two of
 there). Its `@Config(qualifiers = Pixel5)` is load-bearing: on Robolectric's default window the
 lazy-list rows are never composed, and "no such node" reads exactly like the bug.
 
+**The upload queue backed itself into a corner it could not leave (#53).** Owner-reported from
+the phone — "41 in the upload queue… it just seems stuck on one" — and diagnosed from the server's
+access log rather than from the app, which is what made it legible: **81 of 82 uploads that day
+returned 201**. Nothing was broken. The queue was starving anyway.
+
+**The ratchet.** WorkManager resets `runAttemptCount` only on success, Android stops a background
+worker at ~10 minutes, and a scan costs ~31 s. `drain()` tried the *whole* queue in one run, so
+past ~19 items it could never finish; being killed counts as a retry; the backoff doubled every
+pass. Measured: one burst moved 20 items in **exactly 10.0 minutes**, gaps of **3704 s and 3885 s**
+(the 3840 s step), throughput 29 → 9 → 3 → 5 per hour against a growing queue.
+
+**Why it could not be nudged out.** `kick` uses `APPEND_OR_REPLACE`, so each new capture became a
+node *behind* the sleeping one — photographing more strictly worsened it. And the delay lives in
+WorkManager's database, not the process, so a force-stop did not clear it; `ToteApp` already
+kicked on every start, and that kick appended too. Both escape hatches a person would reach for
+were closed.
+
+A drain is **bounded** now (8 items / 5 min) and a short run reports `Result.success()` and
+re-enqueues — banking progress is what zeroes the counter, so the escalation cannot start. App
+start calls `UploadWorker.restart` (`REPLACE`), because opening the app is the one gesture
+everybody already knows and it must always be a way out. Backoff is left to the one thing it is
+good at: a real outage.
+
+Two things fell out. **A row whose photos are gone was indistinguishable from an outage** —
+`FileNotFoundException` is an `IOException`, so it would sit `pending` for ever holding the whole
+queue's backoff open, rebuilding the spiral from inside the fix for it; it is `failed` with a
+plain sentence now. And **every queued row claimed "Waiting for a connection"** while the Wi-Fi
+was perfect, which sends somebody hunting a network fault and buries the rows where the signal
+really is the problem. A pending row carries a message only after a transport failure, so that
+distinction needed no new plumbing: "Waiting its turn" otherwise.
+
+Worth keeping: **the app's own screen was the least reliable witness.** The top row read
+"Uploading…" for 34 minutes with no connection open to `:8008` — a row stranded by a killed
+worker, whose cure (`releaseStranded`) runs only at the *start of a drain*, which is precisely
+what was asleep. The cure was locked inside the broken thing, and the only button that row offered
+was **Discard**, which destroys the photographs.
+
 ---
 
 ## 9. Testing & CI

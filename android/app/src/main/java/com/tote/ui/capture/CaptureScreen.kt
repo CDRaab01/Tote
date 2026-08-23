@@ -588,7 +588,15 @@ private fun QueueRow(
                             // diagnosis read like a code.
                             failed -> entry.lastError ?: "Rejected by the server"
                             entry.state == CaptureQueueEntity.STATE_UPLOADING -> "Uploading…"
-                            else -> "Waiting for a connection"
+                            // Only say the network when the network is what stopped it. A
+                            // pending row carries a message ONLY after a transport failure —
+                            // picking a row up clears it — so this distinguishes the two without
+                            // asking the system anything. Every queued row used to read
+                            // "Waiting for a connection", which sent someone hunting a Wi-Fi
+                            // fault while the queue was simply working through a backlog, and
+                            // buried the rows where the signal really was the problem.
+                            entry.lastError != null -> "Waiting for a connection"
+                            else -> "Waiting its turn"
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = when {

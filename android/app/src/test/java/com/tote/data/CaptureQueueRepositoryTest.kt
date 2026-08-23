@@ -72,7 +72,7 @@ class CaptureQueueRepositoryTest {
         val repository = repo()
         repository.enqueue(files)
 
-        assertTrue(repository.drain())
+        assertTrue(repository.drain().allClear)
         assertEquals(0, dao.rows.value.size)
         // The server owns the photos now; a second copy on the phone is an invisible photo
         // library nobody manages.
@@ -85,7 +85,7 @@ class CaptureQueueRepositoryTest {
         val repository = repo()
         repository.enqueue(photoFiles())
 
-        assertFalse(repository.drain())
+        assertFalse(repository.drain().allClear)
         val row = dao.rows.value.single()
         assertEquals(CaptureQueueEntity.STATE_PENDING, row.state)
         assertEquals(1, row.attempts)
@@ -106,7 +106,7 @@ class CaptureQueueRepositoryTest {
 
         // A poison row must not abort the rest of the queue — one bad capture cannot hold a
         // bin's worth of good ones hostage.
-        assertTrue(repository.drain())
+        assertTrue(repository.drain().allClear)
         assertEquals(1, dao.rows.value.size)
         assertEquals(CaptureQueueEntity.STATE_FAILED, dao.rows.value.single().state)
         // The stored message is now the server's own sentence when it gave one, or this
@@ -127,7 +127,7 @@ class CaptureQueueRepositoryTest {
 
         // Reported CLEAR: WorkManager must not retry, because the server may well have processed
         // it and a second upload would file the same object twice.
-        assertTrue(repository.drain())
+        assertTrue(repository.drain().allClear)
         assertEquals(CaptureQueueEntity.STATE_UNCERTAIN, dao.rows.value.single().state)
         // And the photos survive, because the user may still need to retry by hand.
         assertTrue(files.all { it.exists() })
@@ -159,7 +159,7 @@ class CaptureQueueRepositoryTest {
         // What the process leaves behind if it dies during the ~35 s upload.
         dao.setState(id, CaptureQueueEntity.STATE_UPLOADING, 0, null)
 
-        assertTrue(repository.drain())
+        assertTrue(repository.drain().allClear)
         assertEquals(0, dao.rows.value.size)
     }
 
@@ -214,6 +214,82 @@ class CaptureQueueRepositoryTest {
         assertEquals("tote-1", row.toteId)
         // Denormalised so the queue can name the bin while offline.
         assertEquals("A14", row.toteCode)
+    }
+
+    // ── Bounded drains ───────────────────────────────────────
+
+    @Test
+    fun `a drain stops at the batch bound and reports that more is waiting`() = runTest {
+        // The whole point of the bound: a run that stops short must be distinguishable from a run
+        // that finished, because the caller banks one as success and backs off on the other.
+        var calls = 0
+        api.stub {
+            onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer {
+                calls++
+                draft()
+            }
+        }
+        val repository = repo()
+        repeat(3) { repository.enqueue(photoFiles()) }
+
+        val result = repository.drain(maxItems = 2)
+
+        assertEquals(2, calls, "the bound must actually stop the loop")
+        assertTrue(result.morePending)
+        // Nothing failed, so there is nothing here for WorkManager to back off against — which is
+        // exactly the distinction the 2026-08-23 spiral collapsed.
+        assertTrue(result.allClear)
+        assertEquals(1, dao.rows.value.size)
+        assertEquals(CaptureQueueEntity.STATE_PENDING, dao.rows.value.single().state)
+    }
+
+    @Test
+    fun `the batch that empties the queue reports nothing more pending`() = runTest {
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
+        val repository = repo()
+        repeat(2) { repository.enqueue(photoFiles()) }
+
+        val result = repository.drain(maxItems = 2)
+
+        assertTrue(result.allClear)
+        assertFalse(result.morePending, "an exactly-full batch that cleared the queue is finished")
+        assertEquals(0, dao.rows.value.size)
+    }
+
+    @Test
+    fun `a run always attempts at least one row, however small the time budget`() = runTest {
+        // Guards against a livelock: if the budget were checked in a way that could reject the
+        // first row, the caller would re-enqueue for ever and the queue would never move.
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
+        val repository = repo()
+        repeat(2) { repository.enqueue(photoFiles()) }
+
+        val result = repository.drain(budgetMs = 1L)
+
+        assertEquals(1, dao.rows.value.size, "exactly one row should have gone")
+        assertTrue(result.morePending)
+    }
+
+    @Test
+    fun `a capture whose photos have vanished fails instead of jamming the queue`() = runTest {
+        // FileNotFoundException is an IOException, so without the guard this row would be marked
+        // pending for ever AND hold allClear false, backing the whole queue off behind something
+        // that can never succeed. Head-of-line poison wearing an outage's clothes.
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
+        val repository = repo()
+        val doomed = photoFiles()
+        repository.enqueue(doomed)
+        repository.enqueue(photoFiles())
+        doomed.forEach { it.delete() }
+
+        val result = repository.drain()
+
+        // Reported clear: there is nothing here a retry could fix, so nothing to back off for.
+        assertTrue(result.allClear)
+        assertFalse(result.morePending)
+        val stuck = dao.rows.value.single()
+        assertEquals(CaptureQueueEntity.STATE_FAILED, stuck.state)
+        assertEquals("The photos for this capture are no longer on the phone.", stuck.lastError)
     }
 
     private fun httpError(code: Int) = HttpException(
@@ -276,7 +352,7 @@ class CaptureQueueRepositoryTest {
         val id = repository.enqueue(photoFiles())
         dao.setState(id, CaptureQueueEntity.STATE_UPLOADING, 0, null)
 
-        assertTrue(repository.drain())
+        assertTrue(repository.drain().allClear)
         assertEquals(listOf<String?>(id), keys)
     }
 
