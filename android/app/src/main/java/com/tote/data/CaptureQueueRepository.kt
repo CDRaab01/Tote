@@ -113,21 +113,66 @@ class CaptureQueueRepository @Inject constructor(
     }
 
     /**
-     * Drain every pending row.
+     * What one bounded drain achieved.
      *
-     * Returns true when nothing is left waiting on a network — WorkManager takes that as done.
-     * False means "retry me later", and only a genuine transport failure produces it: a rejected
-     * or uncertain row is waiting on a person, and telling WorkManager to retry for those would
-     * spin the backoff chain against a queue that cannot move.
+     * @param allClear nothing is left waiting on a *network*. False is the only thing that earns
+     *   a backoff, and a rejected or uncertain row never sets it: those wait on a person.
+     * @param morePending rows remain solely because the batch bound was reached. The caller banks
+     *   the progress and comes straight back rather than backing off.
      */
-    suspend fun drain(): Boolean {
+    data class DrainResult(val allClear: Boolean, val morePending: Boolean)
+
+    /**
+     * Drain pending rows, oldest first, up to a bounded amount of work.
+     *
+     * ## Why it is bounded
+     *
+     * Android stops a background worker after about ten minutes, and one scan costs ~31 s against
+     * the live model. An unbounded drain over a queue longer than about nineteen items therefore
+     * *cannot* finish, and being killed counts against WorkManager's attempt counter exactly like
+     * a failure — so the backoff doubled on every pass until a real 41-item queue was managing
+     * one to three uploads an hour and could not recover on its own (production, 2026-08-23).
+     *
+     * Stopping short and reporting success is what holds that counter at zero. See [UploadWorker].
+     *
+     * Both bounds earn their place: [maxItems] covers the ordinary item, and [budgetMs] covers the
+     * one that is a single capture but eight photographs, where a count alone still overruns.
+     */
+    suspend fun drain(
+        maxItems: Int = DEFAULT_BATCH,
+        budgetMs: Long = DEFAULT_BUDGET_MS,
+    ): DrainResult {
         // Anything an earlier process left mid-flight. Uploads here run for tens of seconds,
         // which is ample time for Android to kill a backgrounded app, and an `uploading` row
         // whose uploader no longer exists would sit out every future drain.
         dao.releaseStranded()
 
+        val startedAtMs = System.currentTimeMillis()
         var allClear = true
+        var attempted = 0
+
         for (entry in dao.listUploadable()) {
+            if (attempted >= maxItems || System.currentTimeMillis() - startedAtMs >= budgetMs) {
+                return DrainResult(allClear = allClear, morePending = true)
+            }
+            attempted++
+
+            // Photos that are gone are not a transport problem and must not be reported as one:
+            // `readBytes` on a missing file throws IOException, which would hold this row pending
+            // and `allClear` false for ever — rebuilding the exact backoff spiral this batching
+            // exists to end, behind a row that can never succeed. Head-of-line poison, and the
+            // reason a genuine outage must stay distinguishable from a broken row.
+            val missing = entry.paths.filter { !File(it).exists() }
+            if (missing.isNotEmpty()) {
+                dao.setState(
+                    entry.id,
+                    CaptureQueueEntity.STATE_FAILED,
+                    entry.attempts + 1,
+                    "The photos for this capture are no longer on the phone.",
+                )
+                continue
+            }
+
             dao.setState(entry.id, CaptureQueueEntity.STATE_UPLOADING, entry.attempts, null)
             try {
                 val parts = entry.paths.mapIndexed { index, path ->
@@ -194,7 +239,7 @@ class CaptureQueueRepository @Inject constructor(
                 allClear = false
             }
         }
-        return allClear
+        return DrainResult(allClear = allClear, morePending = false)
     }
 
     /** A row the user has decided about: send it back through the drain. */
@@ -220,5 +265,14 @@ class CaptureQueueRepository @Inject constructor(
     private companion object {
         const val JPEG = "image/jpeg"
         const val TEXT = "text/plain"
+
+        /**
+         * Eight items at the measured ~31 s each is about four minutes — comfortably inside the
+         * ten Android allows, with room for the batch to run slower than measured.
+         */
+        const val DEFAULT_BATCH = 8
+
+        /** The same ceiling expressed in time, for the capture that is eight photographs. */
+        const val DEFAULT_BUDGET_MS = 5L * 60L * 1000L
     }
 }

@@ -1051,6 +1051,8 @@ garage — where the Wi-Fi is worst — so nothing in the capture path waits on 
    cannot be done or reconstructed.
 3. **Drain.** `UploadWorker` (WorkManager, `CONNECTED` constraint, exponential backoff) calls
    `CaptureQueueRepository.drain()`, which downscales each photo and posts it to `/items/scan`.
+   A drain is **bounded** and re-enqueues itself — see "A drain is bounded" below, which is what
+   stops the backoff escalating against a queue too big to clear in one run.
 
 The **destination bin is chosen once and remembered** across captures, and rides along as the
 scan's `tote_id`. The server records it as the draft's *suggested* destination and does not apply
@@ -1143,6 +1145,52 @@ WorkManager to retry would spin the backoff chain against a queue that cannot mo
 A drain also begins by releasing anything left in `uploading` by process death. Uploads run for
 tens of seconds — ample time for Android to kill a backgrounded app — and an `uploading` row
 whose uploader no longer exists would otherwise sit out every future drain forever.
+
+### A drain is bounded, and a run that stops short still reports success
+
+`drain()` takes `maxItems` (8) and `budgetMs` (5 min) and returns a `DrainResult` of two flags:
+`allClear` (nothing is waiting on a *network*) and `morePending` (rows remain only because the
+bound was reached). `UploadWorker` maps them: `!allClear` → `Result.retry()`, `morePending` →
+re-enqueue and `Result.success()`, otherwise `Result.success()`.
+
+Reporting success on a run that deliberately stopped early looks dishonest and is the entire
+point. **WorkManager resets `runAttemptCount` only when a worker succeeds.** Android stops a
+background worker at around ten minutes; a scan costs ~31 s; so an unbounded drain over a queue
+longer than about nineteen items *cannot* finish, and being killed counts exactly like a failure.
+The backoff therefore doubled on every pass with nothing to reset it.
+
+Measured in production on 2026-08-23, from the server's own access log: a 41-item queue reached
+the 3840 s step (observed gaps of 3704 s and 3885 s), and the drain bursts show the ceiling
+directly — one burst moved 20 items in exactly 10.0 minutes and stopped. Throughput fell 29 → 9 →
+3 → 5 per hour while the queue kept growing. Two properties made it unrecoverable by hand:
+
+- **Appended work does not jump the queue.** `kick` uses `APPEND_OR_REPLACE`, so every new capture
+  became a node *behind* the sleeping one. Photographing more could not help, and each attempt
+  lengthened the chain.
+- **The delay is not in the process.** It lives in WorkManager's database, so a force-stop did not
+  clear it, and `ToteApp` already kicked on every start — a relaunch appended rather than reset.
+
+Hence `UploadWorker.restart` (`ExistingWorkPolicy.REPLACE`) on app start: opening the app is the
+one gesture every user already knows, so it must always be a way out. It is safe against an upload
+in flight — the row stays `uploading`, the next drain's `releaseStranded` returns it, and
+`capture_id` makes the re-send resolve to the draft that already exists. **It cannot reach the
+queue itself**: WorkManager's schedule and the Room table are different databases, so cancelling
+jobs never touches a capture.
+
+Backoff is now reserved for what it is good at — a genuine outage, the one case that sets
+`allClear` false.
+
+### A row whose photos are gone fails; it does not look like an outage
+
+`readBytes` on a missing file throws `FileNotFoundException`, which **is** an `IOException` — so
+without a guard such a row would be marked `pending` for ever and hold `allClear` false, backing
+the entire queue off behind something that can never succeed. Head-of-line poison wearing an
+outage's clothes, and it would have rebuilt the spiral above from inside the fix for it.
+
+`drain()` therefore checks the files exist first and marks the row `failed` with a plain sentence.
+Nothing is lost that was not already gone; what changes is that the queue behind it keeps moving.
+This is also why the drain does **not** bail out on the first `IOException`: one broken row must
+never be able to stop the rows behind it.
 
 ### Every attempt carries `capture_id`, and that is what makes a re-send safe
 

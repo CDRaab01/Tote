@@ -48,6 +48,13 @@ class ToteApp : Application(), Configuration.Provider, ImageLoaderFactory {
         // Resume any capture uploads stranded by process death. The queue is the one place in
         // this app holding data the server has never seen, so it gets a nudge on every start
         // rather than waiting for the user to open the capture screen.
-        UploadWorker.kick(WorkManager.getInstance(this))
+        //
+        // `restart`, not `kick`: this line used to append, and appended work waits for everything
+        // ahead of it, so once one node was deep in a backoff chain a relaunch could not rescue
+        // the queue — it only lengthened the line behind the blockage. A 41-item queue sat like
+        // that for hours in production on 2026-08-23, surviving even a force-stop, because the
+        // delay lives in WorkManager's database rather than in the process. Opening the app is
+        // the one gesture every user already knows, so it is the one that must always work.
+        UploadWorker.restart(WorkManager.getInstance(this))
     }
 }
