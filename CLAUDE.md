@@ -1201,3 +1201,52 @@ repair, since sizes are deletable and never editable) actually take effect the s
 
 **Verified:** 458 pytest green (the one failure is the pre-existing local-only webp case, see #54),
 migration `0009` applies and downgrades on a fresh DB *and* on a copy of production.
+
+
+## The backoff outlived the outage (#56)
+
+Owner: "I got a lot in queue." Diagnosed over **adb** rather than from the server, which is what
+finally made it legible — and it is a correction to #53, not a new bug.
+
+`dumpsys jobscheduler` on the phone:
+
+```
+Satisfied constraints:    CONNECTIVITY ...
+Unsatisfied constraints:  TIMING_DELAY
+Minimum latency:          +1h3m59s
+```
+
+Healthy Wi-Fi, full queue, an hour to wait. `dumpsys wifi` showed why it got there: four different
+BSSIDs in fifteen minutes — photographing while walking the house roams between access points, and
+each roam kills an upload mid-flight. #53 returned `retry()` on any `IOException`, so six or seven
+roams walked the chain to 3840 s, and WorkManager resets the counter only on success.
+
+**The insight #53 missed: `NetworkType.CONNECTED` already does the waiting.** WorkManager will not
+run the worker without a network, so backoff is never what makes a queue wait for connectivity —
+it only decides how long a **recovered** queue stays parked. Reserving backoff for "a genuine
+outage" felt obviously right and was wrong, because a *transient* outage ratchets just the same.
+
+`DrainResult` gains `uploaded`, and the decision moved into a pure `outcomeFor` so it has tests:
+**any progress is a success**, and `RETRY` is reserved for a run that achieved nothing and still
+needs a network. Backoff also went `EXPONENTIAL` → **`LINEAR`**: exponential is the right curve for
+hammering a struggling server and the wrong one where the constraint already prevents hammering.
+
+Two things worth keeping beyond the fix:
+
+- **`IOException.message` can be null**, and #53 keyed the row label on `lastError != null`. So a
+  row that genuinely failed on the network read "Waiting its turn" — the screen looked innocent
+  while the job scheduler knew exactly what was wrong. Never store a bare `e.message` that a UI
+  will treat as a signal.
+- **The phone is diagnosable.** `dumpsys jobscheduler`, `dumpsys connectivity`, `dumpsys wifi` and
+  `am get-standby-bucket` answered in minutes what the server logs could not answer at all — the
+  server sees only what arrives, and this failure was entirely about what never left. Ruled out
+  along the way: standby bucket (Tote is 10/ACTIVE — though **Crate is 40/RARE**), background
+  restriction, process death, and the installed build.
+
+Immediate recovery for a queue already ratcheted: force-stop and relaunch, which fires
+`ToteApp.onCreate` → `UploadWorker.restart()` (`REPLACE`) → a fresh job at attempt zero. Verified
+live: latency went `1h3m59s` → `15s`, `Ready: true`, uploads resumed in 135 s.
+
+**Verified:** 194 Android tests green, `:app:assembleDebug` green, and `UploadWorkerDecisionTest`
+was **checked against the old rule first** — two of its seven cases fail there, and they are
+exactly the two that encode this change.

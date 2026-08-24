@@ -1180,6 +1180,55 @@ jobs never touches a capture.
 Backoff is now reserved for what it is good at — a genuine outage, the one case that sets
 `allClear` false.
 
+#### …and then the backoff outlived the outage anyway
+
+The paragraph above was still wrong about one thing, found in production the next day. Returning
+`retry()` on *any* `IOException` treats "the network died on the eighth of eight" and "nothing
+moved at all" as the same result — and only the second deserves a penalty.
+
+**The insight the first fix missed: `NetworkType.CONNECTED` already does the waiting.** WorkManager
+will not run this worker without a network, so backoff is never what makes a queue wait for
+connectivity. All it controls is how long a **recovered** queue stays parked.
+
+Measured on 2026-08-24 with `adb shell dumpsys jobscheduler`: photographing while walking the
+house roamed between four access points, each roam killing an upload mid-flight. Six or seven
+`IOException`s later the chain stood at 3840 s, and the job read:
+
+```
+Satisfied constraints:    CONNECTIVITY ...
+Unsatisfied constraints:  TIMING_DELAY
+Minimum latency:          +1h3m59s
+```
+
+Healthy Wi-Fi, full queue, an hour to wait. The penalty outlived the problem by design.
+
+So `DrainResult` gained **`uploaded`**, and `UploadWorker.outcomeFor` — extracted as a pure
+function precisely so this table has tests — reads:
+
+| result | outcome | why |
+|---|---|---|
+| `uploaded == 0 && !allClear` | `RETRY` | achieved nothing, still needs a network |
+| `morePending \|\| !allClear` | `SUCCESS_AND_KICK` | progress banked; come straight back |
+| otherwise | `SUCCESS` | done |
+
+**Any progress resets the attempt counter**, so a session cannot ratchet: a roam costs one
+immediate re-run instead of an hour. The backoff policy also moved from `EXPONENTIAL` to
+**`LINEAR`** — exponential is the right curve for hammering a struggling server, and the wrong one
+here, where the constraint prevents hammering and the curve only decides how long a recovered
+queue idles. Linear from 30 s reaches five minutes after ten failures; exponential is past four
+hours.
+
+`UploadWorkerDecisionTest` was checked against the old rule before being kept: two of its seven
+cases fail there, and they are exactly the two that encode this change.
+
+#### A null exception message made the stall invisible
+
+`IOException` is entitled to a null `message`, and several common ones have one. The capture row
+chose between "Waiting its turn" and "Waiting for a connection" on `lastError != null`, so a row
+that had genuinely failed on the network displayed as merely queued — which is why the screen
+looked innocent while the job scheduler knew exactly what was wrong. The drain now stores
+`e.message` or an honest fallback, never null.
+
 ### A row whose photos are gone fails; it does not look like an outage
 
 `readBytes` on a missing file throws `FileNotFoundException`, which **is** an `IOException` — so

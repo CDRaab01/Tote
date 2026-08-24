@@ -9,6 +9,7 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.Flow
@@ -290,6 +291,51 @@ class CaptureQueueRepositoryTest {
         val stuck = dao.rows.value.single()
         assertEquals(CaptureQueueEntity.STATE_FAILED, stuck.state)
         assertEquals("The photos for this capture are no longer on the phone.", stuck.lastError)
+    }
+
+    @Test
+    fun `a run reports how much it actually uploaded`() = runTest {
+        // The count is what tells the worker a run made progress. Without it, "the network died
+        // on the eighth of eight" and "nothing moved at all" are the same result — and treating
+        // them the same is what froze a queue for an hour on 2026-08-24.
+        var calls = 0
+        api.stub {
+            onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer {
+                calls++
+                if (calls <= 2) draft() else throw IOException("wifi roamed")
+            }
+        }
+        val repository = repo()
+        repeat(3) { repository.enqueue(photoFiles()) }
+
+        val result = repository.drain()
+
+        assertEquals(2, result.uploaded)
+        assertFalse(result.allClear, "the third row still needs a network")
+        // Two really did land, so two rows are gone and only the failed one remains pending.
+        assertEquals(1, dao.rows.value.size)
+        assertEquals(CaptureQueueEntity.STATE_PENDING, dao.rows.value.single().state)
+    }
+
+    @Test
+    fun `a transport failure always leaves a message, even when the exception has none`() = runTest {
+        // `IOException` is entitled to a null message and several common ones have one. The
+        // capture screen decides between "waiting its turn" and "waiting for a connection" by
+        // whether a message is stored, so a null made a row that failed on the network look
+        // merely queued — which is precisely what disguised the 2026-08-24 stall on screen.
+        api.stub {
+            onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer {
+                throw IOException()
+            }
+        }
+        val repository = repo()
+        repository.enqueue(photoFiles())
+
+        repository.drain()
+
+        val row = dao.rows.value.single()
+        assertEquals(CaptureQueueEntity.STATE_PENDING, row.state)
+        assertNotNull(row.lastError, "a network failure must be visible on the row")
     }
 
     private fun httpError(code: Int) = HttpException(

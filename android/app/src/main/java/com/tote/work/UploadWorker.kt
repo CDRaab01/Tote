@@ -38,7 +38,7 @@ import java.util.concurrent.TimeUnit
  *
  * So: do a batch, say so honestly, re-enqueue. The counter goes back to zero on every batch and
  * the escalation cannot start. Backoff is then reserved for the one thing it is actually good at
- * — a genuine outage, where [CaptureQueueRepository.DrainResult.allClear] is false.
+ * â€” a genuine outage, where [CaptureQueueRepository.DrainResult.allClear] is false.
  */
 @HiltWorker
 class UploadWorker @AssistedInject constructor(
@@ -48,31 +48,55 @@ class UploadWorker @AssistedInject constructor(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        val result = repository.drain()
-        return when {
-            // Something is still waiting on a network. This is the ONLY path that backs off, and
-            // a rejected or timed-out row never reaches it — those are waiting on a person, and
-            // spinning the backoff chain against a queue that cannot move without a decision is
-            // what this worker is careful not to do.
-            !result.allClear -> Result.retry()
-            // Budget spent with rows to spare: bank the progress (this is what clears the attempt
-            // counter) and queue the next batch to run straight away.
-            result.morePending -> {
-                kick(WorkManager.getInstance(applicationContext))
+        val workManager = WorkManager.getInstance(applicationContext)
+        return when (outcomeFor(repository.drain())) {
+            Outcome.SUCCESS -> Result.success()
+            Outcome.SUCCESS_AND_KICK -> {
+                kick(workManager)
                 Result.success()
             }
-            else -> Result.success()
+            Outcome.RETRY -> Result.retry()
         }
     }
 
+    /** What a drain's result means for WorkManager. Pure, so the rules below have tests. */
+    internal enum class Outcome { SUCCESS, SUCCESS_AND_KICK, RETRY }
+
     companion object {
+        /**
+         * **A run that moved ANYTHING is a success, even if the network died on the row after it.**
+         *
+         * This corrects the first version of this fix, which returned `retry()` whenever
+         * `allClear` was false, however much had already gone up. The `CONNECTED` constraint
+         * ALREADY refuses to run this worker without a network â€” so backoff is not what makes the
+         * queue wait for connectivity. It only adds delay on top, *after* connectivity returns.
+         *
+         * Measured in production on 2026-08-24: roaming between four access points while
+         * photographing produced a handful of mid-upload IOExceptions, the chain reached 3840 s,
+         * and the phone then sat with healthy Wi-Fi and a full queue for the next hour. The job's
+         * own dump said exactly that â€” CONNECTIVITY satisfied, TIMING_DELAY not, an hour to run.
+         * The penalty outlived the problem.
+         *
+         * [Outcome.RETRY] is therefore reserved for a run that achieved *nothing* and still needs
+         * a network. Any progress resets WorkManager's attempt counter, so a session cannot
+         * ratchet the way that one did.
+         */
+        internal fun outcomeFor(result: CaptureQueueRepository.DrainResult): Outcome = when {
+            result.uploaded == 0 && !result.allClear -> Outcome.RETRY
+            // More to do, or rows the network still owes us: come straight back rather than
+            // backing off. The constraint holds that run until there is a network, which is the
+            // honest way to wait.
+            result.morePending || !result.allClear -> Outcome.SUCCESS_AND_KICK
+            else -> Outcome.SUCCESS
+        }
+
         private const val UNIQUE_NAME = "capture-upload"
 
         /**
          * Idempotent kick: one drain chain, appended to rather than duplicated.
          *
          * `APPEND_OR_REPLACE` and not `KEEP`: a queue with work already running still needs the
-         * new capture drained, and `KEEP` would silently drop the request — the same shape as the
+         * new capture drained, and `KEEP` would silently drop the request â€” the same shape as the
          * WorkManager trap that swallowed a rescheduled job elsewhere in the suite.
          */
         fun kick(workManager: WorkManager) {
@@ -82,7 +106,7 @@ class UploadWorker @AssistedInject constructor(
         /**
          * Throw away whatever chain exists and start a clean one. Call this on app start.
          *
-         * [kick] appends, and appended work does not run until everything ahead of it succeeds —
+         * [kick] appends, and appended work does not run until everything ahead of it succeeds â€”
          * so a single node stuck in a long backoff freezes every capture queued after it, and
          * kicking again only lengthens the queue behind the blockage. That is precisely the state
          * production reached on 2026-08-23, and because `ToteApp` already kicked on every start,
@@ -106,7 +130,12 @@ class UploadWorker @AssistedInject constructor(
                 .setConstraints(
                     Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
                 )
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                // LINEAR, not EXPONENTIAL. Exponential is the right curve for hammering a
+                // struggling server; it is the wrong one here, because `CONNECTED` already
+                // prevents the hammering and the only thing the curve then controls is how
+                // long a RECOVERED queue stays parked. Linear from 30 s reaches five minutes
+                // after ten failures, where exponential is already past four hours.
+                .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.SECONDS)
                 .build()
     }
 }
