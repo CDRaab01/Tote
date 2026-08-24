@@ -123,7 +123,13 @@ _INFANT_MONTHS: dict[str, float] = {
     "12m": 1.0,
     "15m": 1.25,
     "18m": 1.5,
+    # New POSITIONS, added 2026-08-23 with the six-month ranges. Only these two are new: the
+    # other common ranges land exactly on rungs that already exist and are therefore spellings
+    # of them, not rungs — see `_RANGE_TO_POINT`. One rung per ordinal is an invariant the tests
+    # enforce, and it is what makes a duplicate read as the typo it usually is.
+    "18-24m": 1.75,
     "24m": 2.0,
+    "24-36m": 2.5,
     # Written on some tags instead of 3T, and it lands on the same ordinal 3T does — which is
     # the point of one shared axis.
     "36m": 3.0,
@@ -224,6 +230,20 @@ _MONTH_ALIASES = {
 }
 
 # Departments that make a bare number unambiguous. See `parse_size`.
+# Six-month ranges whose midpoint IS an existing rung, so they are spellings of it rather than
+# positions of their own. `12-18M` and `15M` are the same approximate body size and must sort to
+# the same place — that is the point of one shared axis — but the table holds one key per
+# ordinal, so the coincidence lives here instead of duplicating a rung.
+#
+# `18-24m` and `24-36m` are absent deliberately: they fall between existing rungs, so they ARE
+# new positions and live in `_INFANT_MONTHS`.
+_RANGE_TO_POINT = {
+    "0-6m": "3m",
+    "6-12m": "9m",
+    "12-18m": "15m",
+    "12-24m": "18m",
+}
+
 _YOUTH_DEPARTMENTS = ("boys", "girls")
 _WOMENS_DEPARTMENTS = ("womens",)
 
@@ -287,7 +307,9 @@ def _norm_months(text: str) -> str:
     word characters — which silently dropped every tag written `18 mo`, a common one.
     """
     text = text.replace("_", "")
-    return re.sub(r"mo(?:nth)?s?\b", "m", text)
+    # `mth`/`mths` is the other spelling real tags use. The alternation is written so that a
+    # bare `m` still does NOT match: `12m` must survive untouched, being the table's own key.
+    return re.sub(r"m(?:o(?:nth)?|th)s?\b", "m", text)
 
 
 def parse_size(raw: str | None, department: str | None = None) -> SizeReading | None:
@@ -316,6 +338,14 @@ def parse_size(raw: str | None, department: str | None = None) -> SizeReading | 
 
     dept = (department or "").strip().casefold() or None
 
+    reading = _parse_one(original, text, dept)
+    if reading is not None:
+        return reading
+    return _parse_alternates(original, text, dept)
+
+
+def _parse_one(original: str, text: str, dept: str | None) -> SizeReading | None:
+    """One already-cleaned candidate against every parser, in order."""
     for parser in (
         _parse_infant,
         _parse_toddler,
@@ -332,6 +362,43 @@ def parse_size(raw: str | None, department: str | None = None) -> SizeReading | 
     return None
 
 
+def _parse_alternates(original: str, text: str, dept: str | None) -> SizeReading | None:
+    """A slash-separated tag, resolved ONLY when the alternates that parse agree.
+
+    Real tags carry several kinds of slash. `12 months/mois` is one size printed in two
+    languages; `2T/2TL/2Alt.` is one size in a maker's own variants; `M/L` is a garment that
+    is genuinely both, and `32/33` is a single waist measurement that happens to contain a
+    slash. They must not be treated alike.
+
+    So this runs **only as a fallback**, after the whole string has failed — which is what
+    keeps `32/33` parsing as the mens_waist it already was — and it resolves only when every
+    alternate that parses lands on the same reading. `12 months/mois` resolves because just
+    one half parses; `M/L` refuses because both do and they disagree, which is the correct
+    answer: the tag really does say two sizes and the never-infer rule means we do not pick.
+
+    `12/18` also refuses, because bare numbers do not parse. On a baby garment it almost
+    certainly means 12-18 months — and "almost certainly" is exactly the reasoning this
+    module exists to refuse. `size_raw` keeps it for a human.
+    """
+    if "/" not in text:
+        return None
+    readings = []
+    for part in text.split("/"):
+        part = part.strip("_-. ")
+        if not part:
+            continue
+        found = _parse_one(original, part, dept)
+        if found is not None:
+            readings.append(found)
+    if not readings:
+        return None
+    first = readings[0]
+    if any(r.system != first.system or r.ordinal != first.ordinal for r in readings):
+        return None
+    # `raw` stays the caller's ORIGINAL string, never the alternate that happened to parse.
+    return SizeReading(original, first.system, first.ordinal)
+
+
 # ── Individual parsers ─────────────────────────────────────────────────────────────────────
 # Each returns a SizeReading or None. Order matters only where two could match; the sequence in
 # parse_size puts the unambiguous, heavily-marked forms first.
@@ -339,6 +406,9 @@ def parse_size(raw: str | None, department: str | None = None) -> SizeReading | 
 
 def _parse_infant(original: str, text: str, dept: str | None) -> SizeReading | None:
     key = _MONTH_ALIASES.get(text.replace("-", "_"), _norm_months(text))
+    # After normalising, fold a range onto the rung it coincides with. `12-18 months`,
+    # `12-18M` and `12/18 mths` all reach `12-18m` by now, and all mean `15m`.
+    key = _RANGE_TO_POINT.get(key, key)
     if key in _INFANT_MONTHS:
         return SizeReading(original, SYSTEM_INFANT_MONTHS, _INFANT_MONTHS[key])
     return None

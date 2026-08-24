@@ -2089,11 +2089,43 @@ section below. The consequence is easy to miss and was: shipping the bare months
 the garments already in the bin. They keep the null the ladder gave them the day they were stored,
 so `fits` still cannot see them, and the deploy looks successful because the code is correct.
 
-**Any change to `app/sizing/ladder.py` is therefore two jobs: the rungs, and a backfill of rows
-where `size_raw IS NOT NULL AND size_ordinal IS NULL`.** Re-derive through `parse_size` rather than
-writing values by hand, so the parser stays the one implementation; `size_raw` is never touched, and
-setting the two derived columns back to NULL undoes it. It is not a migration — the schema does not
-change, and the set to fix depends on which rungs moved.
+**Any change to `app/sizing/ladder.py` is therefore two jobs: the rungs, and a re-derive.**
+`app/sizing/rederive.py` is the one implementation — it reads every row with a `size_raw`, runs it
+back through `parse_size`, and writes only the rows whose derived values actually change. It never
+touches `size_raw`, and it is idempotent, being a pure function of the reading and the current
+ladder.
+
+**This used to say "it is not a migration". It is one now, and the reasoning changed on
+evidence.** The old argument was that the schema does not change and the set to fix depends on
+which rungs moved. Both are true and neither survived contact: the hand-run script written for
+#36 was blocked by the tooling classifier and **its three garments were still stranded months
+later**, sitting in the open-items table. And 0004 already records the better argument — a
+statement run by hand on the box is lost the next time the database is restored, and a household
+inventory is exactly the kind of thing restored years later.
+
+The "which rungs moved" objection dissolves once the re-derive is idempotent: the set to fix is
+always *every* row with a reading, because re-deriving a row that does not change costs one
+comparison and writes nothing. So a ladder change is now a three-line migration calling
+`rederive_sizes` (see `0009`), and the downgrade is a documented no-op — there is nothing to
+restore, because the derived columns are a cache over `size_raw` rather than data of their own.
+
+### Ranges are spellings, not rungs — where their midpoint already exists
+
+The six-month ranges added in 0009 exposed a design question the three-month ones had not.
+`12-18M`'s midpoint is 1.25, which is exactly where `15M` already sits — so adding it as a rung
+would have put two keys on one ordinal and broken
+`test_every_rung_in_a_system_is_strictly_ordered`.
+
+That test is right and the instinct to relax it was wrong. **The ladder is the set of distinct
+positions**; one rung per ordinal is what makes an accidental duplicate read as the typo it
+usually is. A range whose midpoint coincides with an existing rung is another *spelling* of that
+rung, so it belongs in `_RANGE_TO_POINT` alongside the other aliases — `12-18m -> 15m`,
+`6-12m -> 9m`. Only `18-24m` (1.75) and `24-36m` (2.5) fall between existing rungs, and only
+those two are new positions.
+
+The coincidence is the feature, not a collision to design around: a garment tagged `12-18M` and
+one tagged `15M` are the same approximate body size and must sort to the same place, which is the
+entire point of one shared axis.
 
 ## Name-first capture: the question you do not ask
 

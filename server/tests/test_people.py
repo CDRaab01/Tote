@@ -71,6 +71,46 @@ async def test_a_person_reports_the_sizes_in_effect_today(auth_client):
     assert current == {"tops": "4T", "shoes": "shoe 10"}
 
 
+async def test_two_readings_on_the_same_day_resolve_to_the_later_one(auth_client):
+    """`effective_from` is a DATE, so two readings recorded on one day tie — and with no second
+    sort key the winner was whatever Postgres returned first, which can differ between queries.
+
+    Found in the owner's real data: `9 month` and the typo `9 moth` recorded for one person on
+    one day. When the typo won, `fits` answered "cannot say" for that garment type while the good
+    reading sat on the person's screen looking perfectly recorded — and it would flip back on the
+    next request. Non-determinism reads as a haunted app, not a bug report.
+    """
+    person = await _person(auth_client, "Cedric")
+    await _size(auth_client, person["id"], "tops", "9 month", effective_from=str(TODAY))
+    await _size(auth_client, person["id"], "tops", "9 moth", effective_from=str(TODAY))
+
+    # The typo was recorded second, so it is current — a later reading supersedes an earlier one
+    # even on the same day, which is what "record it again to correct it" has to mean.
+    current = (await auth_client.get(f"/people/{person['id']}")).json()["current_sizes"]
+    tops = [s for s in current if s["garment_type"] == "tops"]
+    assert len(tops) == 1
+    assert tops[0]["size_raw"] == "9 moth"
+
+    # And it is STABLE: the same answer every time, which is the actual property under test.
+    for _ in range(5):
+        again = (await auth_client.get(f"/people/{person['id']}")).json()["current_sizes"]
+        assert [s["size_raw"] for s in again if s["garment_type"] == "tops"] == ["9 moth"]
+
+
+async def test_the_good_reading_wins_when_it_is_the_later_one(auth_client):
+    """The inverse, and the one that matters after somebody fixes a typo: delete-and-re-record is
+    the sanctioned repair (sizes are deletable, never editable), so the repair must actually take
+    effect on the same day it is made."""
+    person = await _person(auth_client, "Cedric")
+    await _size(auth_client, person["id"], "tops", "9 moth", effective_from=str(TODAY))
+    await _size(auth_client, person["id"], "tops", "9 month", effective_from=str(TODAY))
+
+    current = (await auth_client.get(f"/people/{person['id']}")).json()["current_sizes"]
+    tops = next(s for s in current if s["garment_type"] == "tops")
+    assert tops["size_raw"] == "9 month"
+    assert tops["size_ordinal"] == pytest.approx(0.75)
+
+
 async def test_a_future_size_does_not_become_current(auth_client):
     """Recording "she will be in a 5T in September" must not change what fits her in June."""
     person = await _person(auth_client)
