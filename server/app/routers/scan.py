@@ -8,6 +8,7 @@ explicit approval, and Tote has no exception to it.
 
 import asyncio
 import datetime
+import logging
 import uuid
 from typing import Annotated
 
@@ -43,13 +44,61 @@ router = APIRouter(tags=["scan"])
 
 Db = Annotated[AsyncSession, Depends(get_db)]
 
+logger = logging.getLogger(__name__)
+
 MAX_PHOTOS = 8
+
+# What the loser of a capture race does before giving up on finding the winner's row.
+#
+# One read should be enough: a duplicate INSERT blocks on the unique index until the first
+# transaction ends, so an IntegrityError means the winner has already committed and is visible.
+# The re-reads are belt and braces, not the fix — the fix is that the handler now guards the
+# statement that actually raises. They cost 200 ms on a path that should never be taken, and
+# the warning on the give-up path is what makes the next surprise diagnosable rather than a
+# bare 409 in an access log.
+_RACE_REREAD_ATTEMPTS = 3
+_RACE_REREAD_DELAY_SECONDS = 0.1
 
 # Cacheable, but only in the requester's own cache: these are photographs of the inside of a
 # house behind auth, and a shared cache on the path must never hold them. A day, because the
 # client's image cache makes re-validation the only cost — and FileResponse answers no 304s,
 # so expiry means re-downloading a tens-of-KB derivative, not the original.
 PHOTO_CACHE_CONTROL = "private, max-age=86400"
+
+
+async def _draft_for_capture(
+    db: AsyncSession,
+    household_id: uuid.UUID,
+    capture_id: uuid.UUID | None,
+    *,
+    attempts: int = 1,
+) -> Item | None:
+    """The item an earlier attempt at this capture already created, if any.
+
+    One read for the pre-flight idempotency check; [_RACE_REREAD_ATTEMPTS] for the loser of a
+    race, which has just been told by the unique constraint that a row exists and so must not
+    conclude "no row" from a single empty read. Returning None there becomes a 409, and a 409
+    on this endpoint marks the queue row **failed** on the phone — a human clearing a row by
+    hand for a photograph the server already has.
+
+    The rollback between reads is the point of the retry, not politeness: it ends the
+    transaction so the next statement opens a new one and cannot reuse a snapshot taken before
+    the winner committed.
+    """
+    if capture_id is None:
+        return None
+    for attempt in range(attempts):
+        existing = (
+            await db.execute(
+                select(Item).where(Item.household_id == household_id, Item.capture_id == capture_id)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        if attempt + 1 < attempts:
+            await db.rollback()
+            await asyncio.sleep(_RACE_REREAD_DELAY_SECONDS)
+    return None
 
 
 async def _owned_draft(db: AsyncSession, household_id: uuid.UUID, draft_id: uuid.UUID) -> Item:
@@ -108,19 +157,12 @@ async def scan(
     the same reason: the gate reads the person's own vocabulary instead of the model's guess at
     it. Leave both out and the endpoint behaves exactly as it always has.
     """
-    if capture_id is not None:
-        existing = (
-            await db.execute(
-                select(Item).where(
-                    Item.household_id == user.household_id, Item.capture_id == capture_id
-                )
-            )
-        ).scalar_one_or_none()
-        if existing is not None:
-            # Deliberately returned whatever state it is in — including a confirmed item that is
-            # no longer a draft. The alternative, 409, would push the client back into the retry
-            # loop this key exists to end.
-            return await _to_draft_out(db, existing)
+    existing = await _draft_for_capture(db, user.household_id, capture_id)
+    if existing is not None:
+        # Deliberately returned whatever state it is in — including a confirmed item that is
+        # no longer a draft. The alternative, 409, would push the client back into the retry
+        # loop this key exists to end.
+        return await _to_draft_out(db, existing)
 
     if not photos:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "At least one photo is required")
@@ -167,33 +209,55 @@ async def scan(
         if owned is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found")
 
-    item = await scan_photos(
-        db,
-        household_id=user.household_id,
-        user_id=user.id,
-        photos=payload,
-        tote_id=tote_id,
-        capture_id=capture_id,
-        name=name,
-        category_id=category_id,
-        describe=describe,
-    )
+    # Read off `user` BEFORE the try. `household_id` is a property over the lazy `membership`
+    # relationship, and `db.rollback()` expires every instance in the session — so touching it
+    # inside the handler below raises MissingGreenlet instead of recovering the draft. The
+    # original handler did exactly that, and nobody found out because it was unreachable.
+    household_id = user.household_id
+
     try:
+        item = await scan_photos(
+            db,
+            household_id=household_id,
+            user_id=user.id,
+            photos=payload,
+            tote_id=tote_id,
+            capture_id=capture_id,
+            name=name,
+            category_id=category_id,
+            describe=describe,
+        )
         await db.commit()
     except IntegrityError:
         # Two attempts for the same capture raced: the check above ran before the first one
         # committed. The constraint is the backstop the check cannot be — a scan takes tens of
         # seconds, so the window is wide, and the loser must hand back the winner's draft rather
         # than a 409 the client would retry.
+        #
+        # `scan_photos` is INSIDE the try, and that is the entire fix: it opens with
+        # `db.add(item)` + `db.flush()`, so a duplicate `capture_id` raises there and never
+        # reaches the commit below. This handler was written around the commit alone, so for the
+        # one case it exists to catch it was unreachable — the error went straight to the global
+        # IntegrityError handler and out as a 409, which is what the phone recorded as a failed
+        # capture during the 2026-08-23 queue drain. Guarding the commit and not the flush that
+        # actually raises is the kind of mistake that looks correct in review and in every test
+        # that never races.
+        #
+        # Catching it at the flush is also the cheap place: it happens before any photo is
+        # written to disk and before any model call, so the loser wastes neither GPU nor files.
         await db.rollback()
-        existing = (
-            await db.execute(
-                select(Item).where(
-                    Item.household_id == user.household_id, Item.capture_id == capture_id
-                )
-            )
-        ).scalar_one_or_none()
+        existing = await _draft_for_capture(
+            db, household_id, capture_id, attempts=_RACE_REREAD_ATTEMPTS
+        )
         if existing is None:
+            # The constraint says a row exists and we cannot find it. Say so loudly: this path
+            # ends as a 409, which the phone records as a failed capture for a human to clear.
+            logger.warning(
+                "scan: capture %s hit the unique constraint but no row was found after %d "
+                "re-reads; returning 409",
+                capture_id,
+                _RACE_REREAD_ATTEMPTS,
+            )
             raise
         return await _to_draft_out(db, existing)
     await db.refresh(item)
@@ -341,12 +405,16 @@ async def _commit_or_return_winner(
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        existing = (
-            await db.execute(
-                select(Item).where(Item.household_id == household_id, Item.capture_id == capture_id)
-            )
-        ).scalar_one_or_none()
+        existing = await _draft_for_capture(
+            db, household_id, capture_id, attempts=_RACE_REREAD_ATTEMPTS
+        )
         if existing is None:
+            logger.warning(
+                "scan-isbn: capture %s hit the unique constraint but no row was found after %d "
+                "re-reads; returning 409",
+                capture_id,
+                _RACE_REREAD_ATTEMPTS,
+            )
             raise
         return ScanIsbnOut(
             found=not existing.is_draft, source=None, item=await _to_draft_out(db, existing)

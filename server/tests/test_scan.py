@@ -612,6 +612,68 @@ async def test_replaying_a_capture_returns_the_same_draft(auth_client, monkeypat
     assert calls["n"] == 1
 
 
+async def test_the_capture_lookup_survives_its_own_retries(auth_client, db, monkeypatch):
+    """The re-read loop rolls back between attempts, and a rollback mid-helper must not leave the
+    session unusable — that would turn a recoverable race into a 500 on a path whose entire job
+    is recovering from one."""
+    import app.routers.scan as scan_router
+
+    capture = uuid.uuid4()
+    household = auth_client.household_id
+
+    # Nothing filed under this key: the loop runs to exhaustion, rolling back between reads.
+    missing = await scan_router._draft_for_capture(
+        db, household, capture, attempts=scan_router._RACE_REREAD_ATTEMPTS
+    )
+    assert missing is None
+
+    # And the session still works afterwards.
+    assert await scan_router._draft_for_capture(db, household, None) is None
+
+
+async def test_a_capture_race_re_reads_instead_of_409ing(auth_client, monkeypatch):
+    """The bug this exists for: the loser of a race is told by the unique constraint that a row
+    exists, then reads and does not find it, and a single empty read used to become a 409.
+
+    A 409 here is not cosmetic — the phone records it as a FAILED capture, so a photograph the
+    server already holds needs a human to clear it by hand. One occurred in production during
+    the 2026-08-23 queue drain.
+    """
+    import app.routers.scan as scan_router
+    import app.services.scan_pipeline as pipeline
+    from app.services.ai.identify_prompts import IdentifyDraft
+
+    async def fake_identify(urls, categories=None, client=None):
+        return IdentifyDraft(name="Plaid baseball cap", confidence="high")
+
+    monkeypatch.setattr(pipeline, "identify_item", fake_identify)
+
+    capture = str(uuid.uuid4())
+    first = await _scan(auth_client, photo_bytes(), capture_id=capture)
+    assert first.status_code == 201
+
+    # Force the *first* read of every lookup to miss, exactly as the losing racer's did. The
+    # row is really there, so a retrying lookup finds it on the second read and a
+    # single-read one returns None and 409s.
+    real = scan_router._draft_for_capture
+    state = {"first": True}
+
+    async def flaky(db, household_id, capture_id, *, attempts=1):
+        if state["first"]:
+            state["first"] = False
+            return None
+        return await real(db, household_id, capture_id, attempts=attempts)
+
+    monkeypatch.setattr(scan_router, "_draft_for_capture", flaky)
+
+    second = await _scan(auth_client, photo_bytes(), capture_id=capture)
+
+    # Recovered: the same draft handed back, not a 409, and no second object in the catalog.
+    assert second.status_code == 201, second.text
+    assert second.json()["id"] == first.json()["id"]
+    assert len((await auth_client.get("/drafts")).json()) == 1
+
+
 async def test_a_different_capture_is_a_different_draft(auth_client, monkeypatch):
     """The negative control. A key that deduplicated too eagerly would silently drop the second
     of two genuinely different objects photographed back to back — which is the normal way this
