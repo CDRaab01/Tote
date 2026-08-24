@@ -115,12 +115,16 @@ class CaptureQueueRepository @Inject constructor(
     /**
      * What one bounded drain achieved.
      *
-     * @param allClear nothing is left waiting on a *network*. False is the only thing that earns
-     *   a backoff, and a rejected or uncertain row never sets it: those wait on a person.
+     * @param allClear nothing is left waiting on a *network*. A rejected or uncertain row never
+     *   sets it false: those wait on a person.
      * @param morePending rows remain solely because the batch bound was reached. The caller banks
      *   the progress and comes straight back rather than backing off.
+     * @param uploaded how many captures actually reached the server this run. **This is what
+     *   decides whether a run counts as progress**, and it exists because `allClear` alone
+     *   conflated "the network died on the last of eight" with "nothing moved at all" — see
+     *   [UploadWorker], where treating those the same froze a queue for an hour.
      */
-    data class DrainResult(val allClear: Boolean, val morePending: Boolean)
+    data class DrainResult(val allClear: Boolean, val morePending: Boolean, val uploaded: Int)
 
     /**
      * Drain pending rows, oldest first, up to a bounded amount of work.
@@ -150,10 +154,11 @@ class CaptureQueueRepository @Inject constructor(
         val startedAtMs = System.currentTimeMillis()
         var allClear = true
         var attempted = 0
+        var uploaded = 0
 
         for (entry in dao.listUploadable()) {
             if (attempted >= maxItems || System.currentTimeMillis() - startedAtMs >= budgetMs) {
-                return DrainResult(allClear = allClear, morePending = true)
+                return DrainResult(allClear = allClear, morePending = true, uploaded = uploaded)
             }
             attempted++
 
@@ -207,6 +212,7 @@ class CaptureQueueRepository @Inject constructor(
                 // accumulate a second, invisible photo library on the phone.
                 deleteFiles(entry)
                 dao.delete(entry.id)
+                uploaded++
             } catch (e: SocketTimeoutException) {
                 dao.setState(
                     entry.id,
@@ -234,12 +240,17 @@ class CaptureQueueRepository @Inject constructor(
                     entry.id,
                     CaptureQueueEntity.STATE_PENDING,
                     entry.attempts + 1,
-                    e.message,
+                    // NEVER `e.message` alone: an IOException is entitled to a null message, and
+                    // several common ones have one. The capture screen decides between "waiting
+                    // its turn" and "waiting for a connection" by whether a message is stored, so
+                    // a null here makes a row that genuinely failed on the network look merely
+                    // queued — which is exactly what disguised the 2026-08-24 stall on screen.
+                    e.message?.takeIf { it.isNotBlank() } ?: "Couldn't reach the server.",
                 )
                 allClear = false
             }
         }
-        return DrainResult(allClear = allClear, morePending = false)
+        return DrainResult(allClear = allClear, morePending = false, uploaded = uploaded)
     }
 
     /** A row the user has decided about: send it back through the drain. */
