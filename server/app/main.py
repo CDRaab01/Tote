@@ -1,3 +1,4 @@
+import logging
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _installed_version
 
@@ -54,6 +55,8 @@ app = FastAPI(
     redoc_url="/redoc" if settings.docs_enabled else None,
     openapi_url="/openapi.json" if settings.docs_enabled else None,
 )
+logger = logging.getLogger(__name__)
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -63,6 +66,20 @@ async def integrity_error_handler(request: Request, exc: IntegrityError) -> JSON
     # Tote leans on this more than its siblings: `totes.code` is unique per user because the
     # code is printed on a physical index card, so a duplicate is a real-world ambiguity, not
     # just a constraint violation.
+    #
+    # Logged, because until 2026-08-23 this handler was silent and a 409 in production was
+    # therefore undiagnosable: one appeared during a capture-queue drain and the access log
+    # showed only the status. The constraint name is the whole diagnosis — it says which of the
+    # several very different meanings of "conflict" actually happened — and `detail` carries the
+    # conflicting VALUES, so it stays out of the response body and goes only to the server log.
+    orig = getattr(exc, "orig", None)
+    logger.warning(
+        "IntegrityError on %s %s: constraint=%s detail=%s",
+        request.method,
+        request.url.path,
+        getattr(orig, "constraint_name", None),
+        getattr(orig, "detail", None),
+    )
     return JSONResponse(status_code=409, content={"detail": "Conflict with existing data"})
 
 

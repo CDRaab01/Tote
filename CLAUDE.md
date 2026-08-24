@@ -1013,6 +1013,35 @@ worker, whose cure (`releaseStranded`) runs only at the *start of a drain*, whic
 what was asleep. The cure was locked inside the broken thing, and the only button that row offered
 was **Discard**, which destroys the photographs.
 
+**The race backstop was guarding the wrong statement (#54).** Follow-up to #53, found by watching
+the fixed queue drain: one **409** in 42 uploads, which the phone records as a `failed` capture —
+a human clearing a row by hand for a photograph the server already has.
+
+`/items/scan` catches `IntegrityError` around `await db.commit()` and hands back the winner's
+draft. But `scan_photos` opens with `db.add(item)` + `db.flush()`, so a duplicate `capture_id`
+raises at the **flush**, several statements before that commit. The handler was unreachable; the
+error went to the global handler and out as a 409.
+
+It had a second defect the first one hid: it read `user.household_id` *after* `db.rollback()`, and
+that is a property over the lazy `membership` relationship on an instance the rollback has just
+expired — `MissingGreenlet`. Reaching the handler would have 500ed instead of recovering.
+**Rule: anything read off an ORM instance inside an `except` following a rollback must be
+materialised before the `try`.**
+
+Both are the same shape — code correct about its intent, placed where the thing it describes does
+not happen, and unreachable, so no test contradicted it. Two of the four unique constraints I
+checked while diagnosing do not exist; `uq_items_household_capture` is the only one on `items`,
+which is what identified the path.
+
+`scan_photos` is inside the `try` now — also the cheap place to catch it, since the flush precedes
+any photo hitting disk and any model call. Plus belt-and-braces re-reads, and the global
+`IntegrityError` handler finally **logs the constraint name and detail**: it was silent, so the
+production 409 left nothing but a status code in an access log.
+
+Worth knowing for the next local run: **`test_a_sized_photo_is_webp_no_larger_than_asked` fails
+in a fresh local venv and passes in CI** (returns `application/octet-stream`). Verified
+pre-existing by stashing — not caused by this change, and not diagnosed.
+
 ---
 
 ## 9. Testing & CI

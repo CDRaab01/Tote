@@ -1214,6 +1214,33 @@ attempt is a key that never matches, which is exactly as useless as no key at al
 it is working. `CaptureQueueRepositoryTest` asserts the same key on a second drain and on a
 released stranded row.
 
+#### The race backstop guarded the wrong statement
+
+Two attempts for one capture can slip through the pre-flight check together, and the unique
+constraint is the backstop. That backstop was written around `await db.commit()` — but
+`scan_photos` opens with `db.add(item)` + `db.flush()`, so a duplicate raises at the **flush**,
+several statements earlier, and the handler never saw it. The error went to the global
+`IntegrityError` handler and out as a **409**, which the phone records as a `failed` capture: a
+human clearing a row by hand for a photograph the server already holds. One occurred in the
+2026-08-23 queue drain, in 42 uploads.
+
+The handler had a second defect that the first one hid. It read `user.household_id` *after*
+`db.rollback()` — and that is a property over the lazy `membership` relationship, on an instance
+the rollback has just expired, so it raises `MissingGreenlet`. Had the handler ever been reached
+it would have 500ed instead of recovering. The household is now read into a local before the
+`try`, which is the general rule on this codebase: **anything read off an ORM instance inside an
+`except` that follows a rollback must be materialised before the transaction can end.**
+
+Both are the same shape of mistake — code that is correct about intent, placed where the thing it
+describes does not happen, and unreachable so no test contradicted it. `scan_photos` is inside the
+`try` now, which is also the cheap place to catch it: the flush precedes any photo hitting disk
+and any model call, so the loser of a race wastes neither GPU nor files.
+
+The `IntegrityError` handler in `main.py` now **logs the constraint name and detail**. It was
+silent, so the production 409 left nothing behind but a status code in an access log, and the
+diagnosis took a re-read of every unique constraint on `items` to narrow down. The values go to
+the server log only, never the response body.
+
 ### The scan call needs its own timeout, and only it
 
 OkHttp's default read timeout is 10 s against a call measured at 35.5 s, so without an override
