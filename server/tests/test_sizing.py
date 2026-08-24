@@ -55,6 +55,25 @@ PARSES = [
     ("6 months", None, SYSTEM_INFANT_MONTHS),
     ("15M", None, SYSTEM_INFANT_MONTHS),
     ("36 mo", None, SYSTEM_INFANT_MONTHS),
+    # The SIX-month ranges, and the spellings they arrive in. Every string below was read off a
+    # real tag in the owner's catalogue on 2026-08-23, where 18 of 144 sized garments had a
+    # reading the ladder could not place and 14 were these. The three-month ranges were already
+    # here, so the table was inconsistent with itself as well as with the world — same shape of
+    # gap as the bare points above.
+    ("6-12 mths", None, SYSTEM_INFANT_MONTHS),
+    ("12-18M", None, SYSTEM_INFANT_MONTHS),
+    ("12-18 months", None, SYSTEM_INFANT_MONTHS),
+    ("12-18 MONTHS", None, SYSTEM_INFANT_MONTHS),
+    ("18-24M", None, SYSTEM_INFANT_MONTHS),
+    ("18-24 months", None, SYSTEM_INFANT_MONTHS),
+    ("0-6m", None, SYSTEM_INFANT_MONTHS),
+    ("12-24 months", None, SYSTEM_INFANT_MONTHS),
+    ("24-36m", None, SYSTEM_INFANT_MONTHS),
+    # Bilingual tags — one size printed twice. Canadian clothing is full of them.
+    ("12 months/mois", None, SYSTEM_INFANT_MONTHS),
+    ("18 months/mois", None, SYSTEM_INFANT_MONTHS),
+    # A maker's own variants of one size: 2T, 2T-Long, 2-Alternate. They agree, so it resolves.
+    ("2T/2TL/2Alt.", None, SYSTEM_TODDLER),
     ("2T", None, SYSTEM_TODDLER),
     ("3t", None, SYSTEM_TODDLER),
     ("4T", None, SYSTEM_TODDLER),
@@ -107,6 +126,11 @@ REFUSES = [
     ("8", "mens", "men's tops are not sized on a bare numeric run"),
     # A tag that hedges between two sizes has not told us one.
     ("M/L", None, "a two-size tag"),
+    # Slash-separated ALTERNATES resolve only when the ones that parse agree, so this must stay
+    # a refusal even though the alternates rule now exists: `M` and `L` both parse, to different
+    # ordinals, and the tag really does say two sizes.
+    ("12/18", None, "bare-number alternates: 12 and 18 are each ambiguous alone"),
+    ("2T/4T", None, "alternates that parse but disagree"),
     ("S-M", None, "a two-size tag"),
     ("XS S M L XL", None, "a full size run"),
     # Not sizes at all.
@@ -134,6 +158,63 @@ def test_refuses_to_guess(raw, dept, why):
 
 
 # ── Ordering ───────────────────────────────────────────────────────────────────────────────
+
+
+def test_a_month_range_lands_on_the_midpoint_of_its_bounds():
+    """The convention the three-month ranges already set: `9-12m` is 0.875, between 9m and 12m.
+
+    Consistency here is not cosmetic. It is one shared axis, so a garment tagged `12-18M` and one
+    tagged `15M` are the same approximate body size and must sort to the same place — otherwise
+    the range formats would quietly form a second, parallel ladder.
+    """
+    assert parse_size("6-12m").ordinal == pytest.approx(
+        (parse_size("6m").ordinal + parse_size("12m").ordinal) / 2
+    )
+    assert parse_size("12-18m").ordinal == pytest.approx(
+        (parse_size("12m").ordinal + parse_size("18m").ordinal) / 2
+    )
+    assert parse_size("18-24m").ordinal == pytest.approx(
+        (parse_size("18m").ordinal + parse_size("24m").ordinal) / 2
+    )
+    # And the one that makes the shared axis visible: the range and the bare point coincide.
+    assert parse_size("12-18M").ordinal == parse_size("15M").ordinal
+
+
+def test_alternates_resolve_only_when_the_ones_that_parse_agree():
+    """`12 months/mois` is one size in two languages; `M/L` is a garment that is genuinely both.
+
+    The rule that separates them without guessing: parse every alternate, and resolve only if
+    the ones that succeed land on the same reading.
+    """
+    # Exactly one half parses — the French is not a second size.
+    both = parse_size("12 months/mois")
+    assert both is not None
+    assert both.ordinal == parse_size("12M").ordinal
+    # Several alternates, all the same size in a maker's own notation.
+    assert parse_size("2T/2TL/2Alt.").ordinal == parse_size("2T").ordinal
+    # Two that parse and disagree: refuse. The tag really does say two sizes.
+    assert parse_size("M/L") is None
+    assert parse_size("2T/4T") is None
+    # None parse: refuse, unchanged. On a baby garment `12/18` almost certainly means 12-18
+    # months, and "almost certainly" is precisely what this module will not act on.
+    assert parse_size("12/18") is None
+
+
+def test_the_alternates_rule_does_not_eat_a_slash_that_is_not_a_list():
+    """`32/33` is one waist measurement that happens to contain a slash, and it parsed correctly
+    long before alternates existed. Splitting on `/` first would have turned it into two bare
+    numbers and silently broken it — which is why the rule runs only as a FALLBACK, after the
+    whole string has already failed."""
+    reading = parse_size("32/33")
+    assert reading is not None
+    assert reading.system == SYSTEM_MENS_WAIST
+
+
+def test_raw_survives_an_alternate_resolving():
+    """`size_raw` is the reading. Resolving `12 months/mois` to the `12 months` half must not
+    rewrite what the tag said — the stored string is the one a human can go back and check."""
+    assert parse_size("12 months/mois").raw == "12 months/mois"
+    assert parse_size("2T/2TL/2Alt.").raw == "2T/2TL/2Alt."
 
 
 def test_6x_sorts_between_6_and_7():

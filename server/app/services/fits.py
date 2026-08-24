@@ -59,7 +59,19 @@ async def current_sizes(
             await db.execute(
                 select(PersonSize)
                 .where(PersonSize.person_id == person_id, PersonSize.effective_from <= as_of)
-                .order_by(PersonSize.garment_type, PersonSize.effective_from.desc())
+                .order_by(
+                    PersonSize.garment_type,
+                    PersonSize.effective_from.desc(),
+                    # Tiebreaker, and it is load-bearing. `effective_from` is a DATE, so two
+                    # readings recorded on the same day tie — and with no second key the winner
+                    # is whatever Postgres returns first, which can differ between queries. A
+                    # mistyped size entered alongside a good one on the same day could therefore
+                    # shadow it intermittently, and an unparseable winner makes `fits` answer
+                    # "cannot say" for that garment type while the good reading sits right there
+                    # on the person's screen looking recorded. Found in the owner's real data:
+                    # `9 month` and `9 moth` on the same person, same day.
+                    PersonSize.created_at.desc(),
+                )
             )
         )
         .scalars()

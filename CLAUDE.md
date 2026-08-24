@@ -82,9 +82,9 @@ cd android && ./gradlew :app:assembleDebug :app:testDebugUnitTest
 | **`tote-smoke` credential** | **Not done, and needed on BOTH sides.** dragonfly-id currently has `SMOKE_CLIENTS=magpie-smoke` only, and `SMOKE_SUBJECT_EMAILS` lacks `tote-smoke@dragonflymedia.org`. Add both there, and the same secret value in Tote's `server/.env`. Until then `scripts/synthetic_smoke.py` cannot run its auth stage. |
 | **On-device pass** | Never run. Camera flow, the AppAuth redirect, and **NFC read/write against real NTAG215s** — none of which CI or an emulator can test. `ToteDatabaseMigrationAndroidTest` also only runs here (`./gradlew :app:connectedDebugAndroidTest`). |
 | **ntfy topic** `tote-alerts` | Referenced by `notify.yml`; confirm it exists on the self-hosted ntfy (`:8095`). |
-| **Backups** | Phase 7. **Nothing backs up `/data/photos` yet.** Once real photos exist they are the artifact — the rows are just paths pointing at them. |
+| ~~**Backups**~~ | **DONE, and verified by reading the artifacts 2026-08-23**: `Tote Archive Backup` (daily 05:00) lands a gpg-encrypted `db.dump` + `photos.tar.gz` + MANIFEST on `\\Diskstation\Media2\Backups\Tote`. Checked the FILES, not the task state — this host once reported `Ready` through a two-week silent failure. |
 | **The physical bootstrap** | Printing the first index cards and writing the first tags — the moment the design either works in an attic or does not. |
-| **Size backfill after #36** | Three garments stored as `6m` still carry a null `size_ordinal` and are invisible to `fits`. The ladder is derived **at write time**, so adding rungs does not reach rows already written — see ARCHITECTURE.md, "A ladder change does not reach rows already written". Script ready at `%TEMP%\claude\C--Code\d25fdf3f-f44f-4c2e-8fcd-5ddc6ad36372\scratchpad\backfill-sizes.ps1`; the write is blocked by the tooling classifier, so a human runs it. |
+| ~~**Size backfill after #36**~~ | **DONE 2026-08-23** — superseded by `0009`, which re-derives every stored reading through `parse_size`. The blocked hand-run script is no longer needed; `app/sizing/rederive.py` is the reusable path and a ladder change is now a three-line migration. |
 
 ### Deliberately not done
 
@@ -1152,3 +1152,52 @@ apparel vocabulary instead of inventing a parallel one.
    too-small-payload and read-only paths for real).
 8. **The physical bootstrap** — printing the first index cards and writing the first tags,
    which is the moment the design either works in an attic or doesn't.
+
+
+## The ladder could not read half the tags in a real bin (#55)
+
+Owner added the first two people, which finally made `fits` answerable — and reading the live
+catalogue showed **18 of 144 sized garments carried a reading the ladder could not place**. Every
+one invisible to `fits`, every one on a tag now inside a taped bin. This is #36 again at six times
+the size, and again found by looking at real data rather than by any test.
+
+The twelve distinct formats were all one family: six-month ranges (`12-18M`, `18-24 months`,
+`12-18 MONTHS`), the `mths` spelling, and bilingual tags (`12 months/mois` — Canadian clothing is
+full of them). Three changes cover them:
+
+- **Two new rungs**, `18-24m` (1.75) and `24-36m` (2.5).
+- **`mth`/`mths`** in the month-unit regex, written so a bare `m` still does not match — `12m` is
+  the table's own key and had to survive untouched.
+- **Slash-separated alternates**, resolved ONLY when the ones that parse agree. `12 months/mois`
+  resolves because one half parses; `M/L` refuses because both do and disagree; `12/18` refuses
+  because neither bare number parses alone. It runs as a **fallback**, after the whole string has
+  failed, which is what keeps `32/33` parsing as the mens_waist it always was.
+
+**A range whose midpoint is an existing rung is a spelling, not a rung.** `12-18M` is 1.25, which
+is exactly `15M` — adding it to the table put two keys on one ordinal and broke
+`test_every_rung_in_a_system_is_strictly_ordered`. That test is right: one rung per ordinal is what
+makes a duplicate read as the typo it usually is. So four of the six ranges live in
+`_RANGE_TO_POINT` and only the two that fall *between* rungs are new positions.
+
+**The mechanism mattered more than the rungs.** ARCHITECTURE.md said a ladder change needs a
+backfill and "is not a migration" — but the hand-run script written for #36 was blocked by the
+tooling classifier and its three garments were still stranded months later. `app/sizing/rederive.py`
+is now the one re-derive path and migration `0009` calls it, so the next widening is three lines.
+It is idempotent and never touches `size_raw`.
+
+**Measured against a copy of the live database**, not just a fixture: 18 unparsed → 4, readings
+placed 126 → 140, `size_raw` untouched at 144, and only 14 rows written so nothing already correct
+moved. The four survivors are `12`, `18` and `12/18` — bare numbers, refused by design. For the
+9-month-old the catalogue went from 96 garments that fit to **109**, and the new ones are the
+12-18M band, i.e. the next size up.
+
+**Found on the way: `current_sizes` had no tiebreaker.** It ordered by `effective_from DESC` only,
+and that is a DATE — so two readings recorded on one day tie and the winner was whatever Postgres
+returned first, varying between queries. The owner's data had exactly this: `9 month` and the typo
+`9 moth` on one person, one day. When the typo won, `fits` answered "cannot say" for that garment
+type while the good reading sat on screen looking recorded — and it would flip back on the next
+request. `created_at DESC` breaks the tie, which also makes delete-and-re-record (the sanctioned
+repair, since sizes are deletable and never editable) actually take effect the same day.
+
+**Verified:** 458 pytest green (the one failure is the pre-existing local-only webp case, see #54),
+migration `0009` applies and downgrades on a fresh DB *and* on a copy of production.
