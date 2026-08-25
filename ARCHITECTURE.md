@@ -572,8 +572,12 @@ The contradiction it prevents is invisible in the UI — an item that is both in
 to Dave renders perfectly and is only wrong in the attic.
 
 Reasons are split into inbound (`initial`, `moved`, `repacked`, `returned`, `corrected`) and
-outbound (`unpacked`, `outgrown`, `loaned`, `disposed`). An inbound reason without a destination
-is a 422, and so is an outbound reason *with* one: "lent to Dave, into bin A14" is a
+outbound (`unpacked`, `outgrown`, `loaned`, `disposed`, `bin_deleted`) — with **`corrected` valid
+in both directions** since the verify pass: with a destination it is the old fix-the-record
+filing, without one it records "the catalogue said stored and the bin disagreed" (status `out`,
+`out_reason='missing'`). Direction is decided the way `record_move` decides everything else —
+by whether a destination is present. An inbound-only reason without a destination
+is a 422, and so is an outbound-only reason *with* one: "lent to Dave, into bin A14" is a
 contradiction, not a shorthand.
 
 `record_move` does not commit. The caller owns the transaction, so unpacking forty items is one
@@ -590,6 +594,27 @@ catalog — it is one you trust and shouldn't.
   that are lent out.
 - **`item_ids: null` means everything; `[]` is an explicit selection of nothing.** Conflating
   them would let a UI bug empty a whole bin.
+
+## The verify pass
+
+The ledger records every *intentional* move; nothing before `POST /totes/{id}/verify` could
+catch the move nobody recorded, and unrecorded drift is what kills every inventory system in the
+end. Verify is a human standing at the open bin ticking contents against reality.
+
+The coverage rule is the design: **every item the catalogue currently calls `stored` in this bin
+must be declared `present` or `missing`, or the whole call is a 422 and nothing changes.** A
+partial audit stamped "verified" would be the same lie the empty-state rule exists to prevent,
+so the server refuses it and the client only enables Finish at full coverage. An empty bin
+verifies trivially — the stamp is still worth having.
+
+Present items get **no ledger rows** (they are where the record says; writing forty "still here"
+rows would bury the history in noise). Each missing item gets one outbound `corrected` movement
+— `out` / `out_reason='missing'` — in one all-or-nothing transaction, and the tote's
+`last_verified_at` is stamped. Items already out of the bin are not part of the audit: their
+whereabouts is already an open question the out-list surfaces.
+
+Staleness is the client's judgement (rose past 12 months), rendered from `last_verified_at`;
+the server records the fact and never editorialises a threshold.
 
 ## Refreshing the snapshot
 
@@ -637,6 +662,34 @@ from 7pm local. That is the same class of failure as a test that passes in CI's 
 home. An unrecognised zone degrades to UTC rather than raising — a nudge a few hours eager beats
 a dead endpoint. `tzdata` is a runtime dependency because slim images ship no tz database.
 
+## The Find tab's volunteered cards
+
+`GET /home` is the only place the app speaks unprompted, and both cards are read-side
+compositions over data the catalogue already holds — neither invents.
+
+**Seasonal** is grounded entirely in the ledger: totes whose contents recorded `unpacked`
+movements in the window [today-1y, today-1y+8w]. No holiday calendar and no category
+hard-coding — the user's own unpacking is the signal, and the card's title uses the bins'
+shared category name only when every bin agrees (the user's own vocabulary or nothing).
+Bins unpacked last year and never refilled produce no card.
+
+**Next-size** is built on the recorded size history and the ladder's `next_size_up` — never on
+age guesses. It counts garments currently **`stored`** (unlike `fits_query`, which deliberately
+has no status filter — a suggestion card about a bin trip must not count the drill someone is
+holding), matched within 0.5 of the next rung across comparable systems, shoes gated from
+garments exactly as `fits` gates them. The label is a real ladder rung ("12M" above "9-12M" —
+not the "12-18M" range spelling, which is an alias of 15M), and the best (person, rung) by
+count wins. Nulls are absent cards; absent cards are absent panels — the 0-out rule.
+
+## A photo of the place itself
+
+`locations.photo_path` + three routes (`POST/GET/DELETE /locations/{id}/photo`) put one
+optional photograph on a location, so the bins list can be navigated by sight — the shelf
+header IS the shelf. Same discipline as item photographs: path in the DB, bytes on the photos
+volume, server-derived filenames, replace-deletes-the-old-file, and deleting the location
+deletes the file (the #20 leaked-photographs lesson, applied on day one). `LocationOut` exposes
+only `has_photo` — the path is server-internal.
+
 ## Search
 
 `GET /search` uses **`websearch_to_tsquery`**, not `plainto_tsquery`: quoted phrases, `or`, and
@@ -644,6 +697,26 @@ stray punctuation are what people actually type, and throwing a 500 at them is n
 matches returns `[]` — "no results" is an answer, and an error there reads as the app being
 broken. Ordering is rank then name so ties are stable; an unstable order in a list someone is
 scanning also reads as broken.
+
+**Close matches are a labelled fallback, not better ranking.** With `include_close=true`, a
+query that full-text matched *nothing* gets one trigram pass (`pg_trgm`, similarity > 0.25 on
+name/description), and those hits arrive flagged `close_match: true` — "sleepsiut" stops reading
+as "we don't own one". Two rules keep it honest: the fallback never runs when real matches
+exist (close matches must not dilute an answer), and the client renders the section under its
+own header with its own explanation — the offline-results lesson, applied again. Note the
+stemmer already forgives some typos ("sleepsuite" IS a full-text match); the fallback exists for
+the ones it doesn't.
+
+`size=` narrows a search the same way `GET /items?size=` does — parsed onto the ladder and
+matched by ordinal server-side, so "4T" finds the girls' 4 and never the 4-something waist. The
+client's chips re-ask the server rather than filtering locally: the ladder has one writer.
+
+**`tote_color_hex`** rides on search hits and item rows (and `color_hex` on totes) so the bin
+glyph — the swatch that matches a row to a physical bin by sight — paints the same colour
+everywhere, including the index card's band. `app/services/colors.py` is the one free-text-to-
+hex mapping; unknown text resolves to null and the glyph falls back neutral, because a wrong
+colour sends someone to the wrong bin with confidence. The map is deliberately NOT a new column:
+the raw text stays the stored truth, hex is a derived read over it.
 
 ## Ownership
 
@@ -926,7 +999,8 @@ a bin needs the answer; refusing would strand them.
 
 Rendered server-side as a 5×3in PDF so there is exactly one layout for a physical object. The
 code is set enormous and everything else small: the reader is at arm's length in front of a stack
-of identical bins. The printed count says "when printed", because a printed count is a snapshot
+of identical bins. The printed count carries the date it was true ("updated <date>"), because a
+printed count is a snapshot
 and saying when it was true is the difference between a stale number and a lie.
 
 The QR **encodes the same URI as the tag**, via the same `tote_uri` builder — that is what makes
@@ -934,8 +1008,14 @@ the redundancy real, and a test captures what actually reaches the QR encoder du
 keep the two from ever forking. (The rendered pixels were decoded by hand once, 2026-08-16, and
 matched; the seam test is what keeps it true without a 60 MB OpenCV install on every CI run.)
 
-The card is mono on purpose. Most people print on a mono printer, and the yellow that makes the
-app read as a tote would come out grey.
+The card wears the app's identity now (v2): a charcoal header band with the safety-yellow rule,
+a bin-colour band down the left edge (the same `colors.py` hex as the glyph in the app — the
+card, the row and the bin can never disagree), and a `Verified <date>` line when the bin has
+one (omitted entirely when it hasn't — never "Verified never"). It is still designed
+grayscale-first: on a mono printer the charcoal band is dark grey, the yellow rule light grey,
+the colour band mid grey, and nothing on the card carries meaning by hue alone. No emoji: the
+server image has only reportlab's base-14 Latin-1 fonts, so the category renders as text and
+anything outside Latin-1 degrades to `?` rather than crashing a render.
 
 ## Photo capture
 
