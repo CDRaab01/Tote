@@ -21,8 +21,11 @@ import com.tote.data.remote.ContainerDto
 import com.tote.data.remote.DraftDto
 import com.tote.data.remote.FitsDto
 import com.tote.data.remote.ItemDto
+import com.tote.data.remote.NextSizeCardDto
 import com.tote.data.remote.PersonDto
 import com.tote.data.remote.PersonSizeDto
+import com.tote.data.remote.SeasonalCardDto
+import com.tote.data.remote.SeasonalToteDto
 import com.tote.data.remote.ToteDetailDto
 import com.tote.ui.auth.LoginContent
 import com.tote.ui.capture.CaptureContent
@@ -44,6 +47,8 @@ import com.tote.ui.search.SearchUiState
 import com.tote.ui.totes.ToteDetailContent
 import com.tote.ui.totes.ToteListContent
 import com.tote.ui.totes.UnfiledContent
+import com.tote.ui.verify.VerifyContent
+import com.tote.ui.verify.VerifyUiState
 import androidx.compose.foundation.layout.Column
 import com.tote.ui.components.PickerList
 import com.tote.ui.components.PickerField
@@ -1418,4 +1423,235 @@ class ScreenshotTest {
         capture("photo_orientation_unreachable_dark", dark = true) {
             PhotoOrientationContent(PhotoOrientationState(loaded = true, unreachable = true))
         }
+
+    // ── The bin as an object ─────────────────────────────────────────────────
+    //
+    // Everything below renders something the app previously said in words: a bin's colour, a
+    // shelf's photograph, a near-miss that is not the thing you typed, a date that has gone
+    // stale. Each is a claim about what a person can pick out of a picture, which is precisely
+    // the claim no assertion can make — three real contrast bugs in this app were found only by
+    // opening the PNG.
+
+    /**
+     * Sized hits with the chip row up and one chip chosen.
+     *
+     * Both halves matter in one frame: the selected chip has to read as chosen against "Any
+     * size" (which is the way back), and the results below it have to still look like results —
+     * a narrowed list that looks like a different screen is one people stop narrowing.
+     */
+    @Test fun search_size_chips_dark() = capture("search_size_chips_dark", dark = true) {
+        SearchContent(sizedSearch, {}, {})
+    }
+
+    @Test fun search_size_chips_light() = capture("search_size_chips_light", dark = false) {
+        SearchContent(sizedSearch, {}, {})
+    }
+
+    /**
+     * Nothing matched, but something nearly did.
+     *
+     * Its own baseline because the risk is exactly a visual one: a near-miss rendered like an
+     * exact hit is the app answering a question that was not asked. The header and the sentence
+     * above the rows are the only things separating "here it is" from "did you mean".
+     */
+    @Test fun search_close_matches_dark() = capture("search_close_matches_dark", dark = true) {
+        SearchContent(closeSearch, {}, {})
+    }
+
+    @Test fun search_close_matches_light() = capture("search_close_matches_light", dark = false) {
+        SearchContent(closeSearch, {}, {})
+    }
+
+    /**
+     * Home with both forward-looking cards up, over the overdue one.
+     *
+     * The stack is the point: three cards in three different channels — rose for the thing that
+     * is late, slate for the season coming round, violet for the wearer about to change size —
+     * have to read as three separate invitations rather than one wall of panels.
+     */
+    @Test fun search_home_cards_dark() = capture("search_home_cards_dark", dark = true) {
+        SearchContent(homeCards, {}, {})
+    }
+
+    @Test fun search_home_cards_light() = capture("search_home_cards_light", dark = false) {
+        SearchContent(homeCards, {}, {})
+    }
+
+    /**
+     * The bins list doing all three of its new jobs at once: coloured glyphs, a photographed
+     * place as a banner, and a bin nobody has checked in over a year.
+     *
+     * One scene rather than three because they compete for the same rows — the rose staleness
+     * caption has to stay findable under a photograph, and the glyph has to stay legible in
+     * whatever colour the bin happens to be. Coil draws its placeholder under Robolectric, so
+     * the banner here is the dark card behind the photograph, which is also what the attic sees
+     * on bad Wi-Fi.
+     */
+    @Test fun totes_glyphs_dark() = capture("totes_glyphs_dark", dark = true) {
+        ToteListContent(colouredTotes, {}, {})
+    }
+
+    @Test fun totes_glyphs_light() = capture("totes_glyphs_light", dark = false) {
+        ToteListContent(colouredTotes, {}, {})
+    }
+
+    /**
+     * A pass half-done, with one thing not in the bin.
+     *
+     * The frame has to show that the two chips are one answer with two values, that choosing
+     * "Not here" says what it will write, and that Finish is still shut — a screen where the
+     * disabled button looks pressable is one somebody taps repeatedly in an attic.
+     */
+    @Test fun verify_mid_dark() = capture("verify_mid_dark", dark = true) {
+        VerifyContent(midPass)
+    }
+
+    @Test fun verify_mid_light() = capture("verify_mid_light", dark = false) {
+        VerifyContent(midPass)
+    }
+
+    /** An empty bin is a perfectly good thing to verify, so the button is live over the
+     *  explain-why-empty state rather than the screen looking broken. */
+    @Test fun verify_empty_dark() = capture("verify_empty_dark", dark = true) {
+        VerifyContent(VerifyUiState(tote = emptyBin))
+    }
+
+    @Test fun verify_empty_light() = capture("verify_empty_light", dark = false) {
+        VerifyContent(VerifyUiState(tote = emptyBin))
+    }
+
+    private val sizedHits = listOf(
+        ItemDto(
+            id = "s1", name = "Fleece snowsuit", quantity = 1, status = "stored",
+            description = "Navy, with the fold-over mitts",
+            toteCode = "A15", locationName = "Attic", toteColorHex = "#2E5E4E",
+            apparel = ApparelDto(sizeRaw = "12-18M", sizeSystem = "infant_months"),
+        ),
+        ItemDto(
+            id = "s2", name = "Cable knit cardigan", quantity = 1, status = "stored",
+            toteCode = "A15", locationName = "Attic", toteColorHex = "#2E5E4E",
+            apparel = ApparelDto(sizeRaw = "18M", sizeSystem = "infant_months"),
+        ),
+        ItemDto(
+            id = "s4", name = "Quilted pram suit", quantity = 1, status = "stored",
+            description = "Cream, with the toggle fastening",
+            toteCode = "A15", locationName = "Attic", toteColorHex = "#2E5E4E",
+            apparel = ApparelDto(sizeRaw = "18M", sizeSystem = "infant_months"),
+        ),
+        ItemDto(
+            id = "s3", name = "Corduroy dungarees", quantity = 2, status = "stored",
+            toteCode = "C03", locationName = "Basement closet", toteColorHex = "#C8543A",
+            apparel = ApparelDto(sizeRaw = "2T", sizeSystem = "toddler"),
+        ),
+    )
+
+    private val sizedSearch = SearchUiState(
+        query = "winter",
+        searched = true,
+        // Narrowed rows against an UNNARROWED chip row — the two deliberately disagree, and this
+        // frame is the only place that shows it. Re-deriving the chips from the filtered answer
+        // would collapse the row to the one chip just chosen, with no way back to the others.
+        results = sizedHits.filter { it.apparel?.sizeRaw == "18M" },
+        sizes = listOf("12-18M", "18M", "2T"),
+        sizeFilter = "18M",
+    )
+
+    private val closeSearch = SearchUiState(
+        query = "welles",
+        searched = true,
+        results = emptyList(),
+        close = listOf(
+            ItemDto(
+                id = "c1", name = "Wellies, spotted", quantity = 1, status = "stored",
+                toteCode = "B02", locationName = "Garage rack B", toteColorHex = "#3B6EA5",
+                apparel = ApparelDto(sizeRaw = "8"),
+            ),
+            ItemDto(
+                id = "c2", name = "Welly liners", quantity = 2, status = "stored",
+                toteCode = "B02", locationName = "Garage rack B", toteColorHex = "#3B6EA5",
+            ),
+        ),
+    )
+
+    private val homeCards = SearchUiState(
+        totes = 14,
+        items = 213,
+        out = 6,
+        overdue = listOf(
+            ItemDto(
+                id = "o1", name = "Cordless drill", quantity = 1, status = "loaned",
+                isOverdue = true, expectedBack = "2026-08-01", loanedTo = "Dave",
+            ),
+        ),
+        seasonal = SeasonalCardDto(
+            totes = listOf(
+                SeasonalToteDto(id = "1", code = "A14", colorHex = "#7A1F2B"),
+                SeasonalToteDto(id = "2", code = "A16", colorHex = "#2E5E4E"),
+            ),
+            locationName = "Attic",
+            unpackedOn = "2025-11-28",
+            itemCount = 46,
+            categoryName = "Christmas / decor",
+        ),
+        nextSize = NextSizeCardDto(
+            personId = "p1",
+            personName = "Emma",
+            nextLabel = "18M",
+            garmentCount = 23,
+            totes = listOf(
+                SeasonalToteDto(id = "3", code = "A15", colorHex = "#3B6EA5"),
+                SeasonalToteDto(id = "9", code = "C03", colorHex = "#C8543A"),
+            ),
+        ),
+    )
+
+    private val colouredTotes = listOf(
+        // A photographed place: `locationHasPhoto` turns its heading into a banner, and only
+        // rows carrying a locationId can have one.
+        CachedTote(
+            id = "1", code = "A14", label = "Christmas decor", locationId = "l1",
+            locationName = "Attic", itemCount = 37, outCount = 0, archived = false,
+            colorHex = "#7A1F2B", lastVerifiedAt = "2026-07-02", locationHasPhoto = true,
+        ),
+        // Checked once, twenty months ago — the only state that earns the rose caption.
+        CachedTote(
+            id = "2", code = "A15", label = "Winter clothes 4T", locationId = "l1",
+            locationName = "Attic", itemCount = 12, outCount = 3, archived = false,
+            colorHex = "#3B6EA5", lastVerifiedAt = "2024-12-02", locationHasPhoto = true,
+        ),
+        // No colour recorded and never verified: the ordinary bin, drawn calm.
+        CachedTote(
+            id = "3", code = "G01", label = "Power tools", locationId = "l2",
+            locationName = "Garage rack B", itemCount = 8, outCount = 1, archived = false,
+        ),
+    )
+
+    private val auditBin = ToteDetailDto(
+        id = "t1",
+        code = "A15",
+        label = "Winter clothes 4T",
+        locationName = "Attic",
+        colorHex = "#3B6EA5",
+        lastVerifiedAt = "2024-12-02",
+        itemCount = 3,
+        items = listOf(
+            ItemDto(
+                id = "a", name = "Fleece snowsuit", quantity = 1, status = "stored",
+                apparel = ApparelDto(sizeRaw = "4T"),
+            ),
+            ItemDto(
+                id = "b", name = "Snow boots", quantity = 1, status = "stored",
+                apparel = ApparelDto(sizeRaw = "10"),
+            ),
+            ItemDto(id = "c", name = "Mitten box", quantity = 4, status = "stored"),
+        ),
+    )
+
+    private val midPass = VerifyUiState(
+        tote = auditBin,
+        present = setOf("a"),
+        missing = setOf("b"),
+    )
+
+    private val emptyBin = auditBin.copy(itemCount = 0, items = emptyList())
 }

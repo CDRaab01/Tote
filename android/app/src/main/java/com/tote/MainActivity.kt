@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.nfc.TapRouter
+import com.tote.ui.navigation.Shortcuts
 import com.tote.ui.navigation.ToteNavHost
 import com.tote.ui.auth.AuthViewModel
 import com.tote.ui.auth.LoginScreen
@@ -45,9 +46,23 @@ class MainActivity : ComponentActivity() {
         launchIntent = intent
         setContent {
             ToteTheme {
-                Gate(launchIntent = launchIntent, onIntentConsumed = { launchIntent = null })
+                Gate(launchIntent = launchIntent, onIntentConsumed = ::consumeLaunchIntent)
             }
         }
+    }
+
+    /**
+     * The launch is over: forget it, and strip what made it a launcher shortcut.
+     *
+     * Nulling the state ends this delivery, but the activity is recreated on a rotation and
+     * re-reads `intent` — so a shortcut extra left on it would fire again, throwing the person
+     * back to the Catalogue tab they had just navigated away from, for the life of the task.
+     * The NFC path does not need the same treatment: a re-delivered tag re-opens the bin that
+     * was tapped, which is where they already are.
+     */
+    private fun consumeLaunchIntent() {
+        intent?.removeExtra(Shortcuts.EXTRA)
+        launchIntent = null
     }
 
     override fun onNewIntent(intent: Intent) {

@@ -58,6 +58,12 @@ data class CachedItem(
      * tell apart (no bin, no location, same name) they were also hardest to recognise.
      */
     val photoCount: Int = 0,
+    /**
+     * The bin's colour, hex-resolved server-side, riding on the item for the same reason
+     * `toteCode` does: an offline search hit has to draw the bin it names without a join the
+     * cache cannot reliably reproduce.
+     */
+    val toteColorHex: String? = null,
 )
 
 @Entity(tableName = "cached_totes")
@@ -70,6 +76,24 @@ data class CachedTote(
     val itemCount: Int,
     val outCount: Int,
     val archived: Boolean,
+    /**
+     * The bin's colour as a server-resolved hex string, for the glyph that lets a row be
+     * matched against the physical object. Null draws the neutral glyph — the client never
+     * maps colour names itself.
+     */
+    val colorHex: String? = null,
+    /**
+     * When the bin's contents were last confirmed at the open lid — the server's ISO stamp,
+     * stored verbatim like every date the DTOs carry. The client formats and compares; it
+     * never rewrites. Null means never verified, which the LIST renders calmly.
+     */
+    val lastVerifiedAt: String? = null,
+    /**
+     * Whether the bin's location has a photograph, denormalised onto the bin because the
+     * location group header that wants a banner is built from these rows offline, where
+     * `/locations` cannot be asked.
+     */
+    val locationHasPhoto: Boolean = false,
 )
 
 @Dao
@@ -164,7 +188,7 @@ interface CatalogDao {
  */
 @Database(
     entities = [CachedItem::class, CachedTote::class, CaptureQueueEntity::class],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class ToteDatabase : RoomDatabase() {

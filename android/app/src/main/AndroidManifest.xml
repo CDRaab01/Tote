@@ -68,6 +68,14 @@
                     android:port="8448"
                     android:pathPrefix="/t/" />
             </intent-filter>
+
+            <!-- Long-press the icon: search, or photograph something. Declared on this activity
+                 because static shortcuts are only published from the one holding MAIN/LAUNCHER.
+                 The intents target this class explicitly and carry a `tote.shortcut` extra that
+                 ToteNavHost reads once per launch; see the Shortcuts object beside it. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
 
         <!-- AppAuth themes its AuthorizationManagementActivity as AppCompat but leaves

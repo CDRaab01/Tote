@@ -115,6 +115,29 @@ object ToteMigrations {
     }
 
     /**
+     * v6 — the bin as something you can see and vouch for (colour glyphs, verify stamps,
+     * location photos).
+     *
+     * Four plain `ADD COLUMN`s, all on the cache tables, all additive for the same reason as
+     * v5: these tables could in principle be rebuilt, but a rebuild empties the offline
+     * catalogue until the next successful sync, and the attic is precisely where that sync
+     * cannot happen.
+     *
+     * `locationHasPhoto` is NOT NULL with a default of 0, which is also the honest value —
+     * every row already cached was written before location photos existed. The rest are
+     * nullable TEXT with no default, the one other shape SQLite alters in place. Note that
+     * `cached_totes` has carried `locationId` since the beginning; only the flag is new here.
+     */
+    private val MIGRATION_5_6 = Migration(5, 6) { db ->
+        db.execSQL("ALTER TABLE `cached_totes` ADD COLUMN `colorHex` TEXT")
+        db.execSQL("ALTER TABLE `cached_totes` ADD COLUMN `lastVerifiedAt` TEXT")
+        db.execSQL(
+            "ALTER TABLE `cached_totes` ADD COLUMN `locationHasPhoto` INTEGER NOT NULL DEFAULT 0"
+        )
+        db.execSQL("ALTER TABLE `cached_items` ADD COLUMN `toteColorHex` TEXT")
+    }
+
+    /**
      * Passed to `Room.databaseBuilder(...).addMigrations(*ALL)`.
      *
      * Order does not matter to Room — it finds a path through the graph — but keeping them in
@@ -125,5 +148,6 @@ object ToteMigrations {
         MIGRATION_2_3,
         MIGRATION_3_4,
         MIGRATION_4_5,
+        MIGRATION_5_6,
     )
 }

@@ -1,5 +1,9 @@
 package com.tote.ui.totes
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,14 +14,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.outlined.AddAPhoto
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.MaterialTheme
@@ -30,22 +39,31 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.tote.data.local.CachedTote
 import com.tote.data.local.CachedItem
 import com.tote.data.remote.LocationDto
 import com.tote.data.remote.ItemDto
+import com.tote.data.remote.PhotoUrls
 import com.tote.ui.components.PickerDialog
 import com.tote.ui.components.PickerField
 import com.tote.ui.components.PickerOption
 import com.tote.ui.components.RefreshOnResume
 import com.tote.ui.components.ToteButton
+import com.tote.ui.components.ToteGlyph
 import com.tote.ui.items.ItemSheetViewModel
 import com.tote.ui.items.ItemSheet
 import com.tote.ui.theme.ToteTheme
@@ -55,6 +73,8 @@ import design.pulse.ui.components.EmptyState
 import design.pulse.ui.components.ErrorState
 import design.pulse.ui.components.PanelCard
 import design.pulse.ui.components.SectionHeader
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 
 /** The heading a bin with nowhere recorded sits under. Last, always — see [byLocation]. */
 internal const val NO_LOCATION = "No location yet"
@@ -76,6 +96,22 @@ fun ToteListScreen(
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     var showCreate by remember { mutableStateOf(false) }
 
+    // Which place the picker was opened for. The system picker hands back a Uri and nothing
+    // else, so the question it was launched to answer has to be held here — the same shape as
+    // the capture flow's pending camera target. Saved rather than remembered because the picker
+    // is a whole other app: this one can be killed behind it, and the result registry redelivers
+    // the Uri to a process that would otherwise no longer know which shelf it was a picture of.
+    var photographing by rememberSaveable { mutableStateOf<String?>(null) }
+    val photoPicker = rememberLauncherForActivityResult(
+        // The photo picker, not a storage permission: it hands over the one image the person
+        // chose and needs no access to the rest of the gallery.
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        val locationId = photographing
+        photographing = null
+        if (uri != null && locationId != null) viewModel.setLocationPhoto(locationId, uri)
+    }
+
     RefreshOnResume(viewModel::refresh)
 
     ToteListContent(
@@ -88,6 +124,12 @@ fun ToteListScreen(
         archived = archived,
         unfiled = unfiled,
         onOpenUnfiledList = onOpenUnfiledList,
+        onAddLocationPhoto = { locationId ->
+            photographing = locationId
+            photoPicker.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+        },
         unreachable = unreachable,
         loading = loading,
         refreshing = refreshing,
@@ -141,6 +183,8 @@ fun ToteListContent(
     unfiled: List<CachedItem> = emptyList(),
     onOpenUnfiled: (ItemDto) -> Unit = {},
     onOpenUnfiledList: () -> Unit = {},
+    /** Photograph a place, by its location id — the group headers' one write. */
+    onAddLocationPhoto: (String) -> Unit = {},
     unreachable: Boolean = false,
     loading: Boolean = false,
     refreshing: Boolean = false,
@@ -228,9 +272,15 @@ fun ToteListContent(
             // having to remember.
             groups.forEach { (place, bins) ->
                 item(key = "head-$place") {
-                    SectionHeader(
-                        label = place,
-                        channel = if (place == NO_LOCATION) colors.attention.base else colors.slate.base,
+                    LocationHeader(
+                        place = place,
+                        // Every bin in a group is in the same place, so the first one carries
+                        // its identity; `any` rather than `first` for the photo flag because a
+                        // half-refreshed cache should still draw the banner it has.
+                        locationId = bins.firstOrNull()?.locationId
+                            ?.takeIf { place != NO_LOCATION },
+                        hasPhoto = bins.any { it.locationHasPhoto },
+                        onAddPhoto = onAddLocationPhoto,
                     )
                 }
                 items(bins, key = { it.id }) { tote ->
@@ -278,20 +328,153 @@ internal fun byLocation(totes: List<CachedTote>): List<Pair<String, List<CachedT
         .sortedWith(compareBy({ it.first == NO_LOCATION }, { it.first.lowercase() }))
         .map { (place, bins) -> place to bins.sortedBy { it.code.lowercase() } }
 
+/**
+ * A place, as the thing you are about to go and stand in.
+ *
+ * With a photograph of the shelf it becomes a banner, because "the attic" is a word and the
+ * corner of the attic where the bins actually are is a picture — the same argument that put
+ * photographs on item rows, one level up. Without one it stays the plain header it always was:
+ * a banner-shaped grey box for every place nobody has photographed would be worse than the
+ * word alone.
+ *
+ * The camera icon is on the header rather than in a settings screen because the moment you know
+ * what a place looks like is the moment you are standing in it with the phone out.
+ */
+@Composable
+private fun LocationHeader(
+    place: String,
+    locationId: String?,
+    hasPhoto: Boolean,
+    onAddPhoto: (String) -> Unit,
+) {
+    val colors = ToteTheme.colors
+    val spacing = ToteTheme.spacing
+
+    if (locationId != null && hasPhoto) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(84.dp)
+                .clip(RoundedCornerShape(12.dp))
+                // Behind the photograph, so a banner that has not loaded yet (or at all — this
+                // list is read where the Wi-Fi is worst) is a dark card with a legible name on
+                // it rather than a hole in the list.
+                .background(colors.panelHigh),
+        ) {
+            AsyncImage(
+                // Authed, like every photo in this app — the OkHttp client ToteApp hands Coil
+                // is what makes this a picture instead of a 401.
+                model = PhotoUrls.location(locationId),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            // The name has to survive whatever the photograph is, so it gets its own darkness
+            // rather than trusting the picture to be dark where the words land.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f))
+                        )
+                    )
+            )
+            Box(Modifier.align(Alignment.BottomStart).padding(spacing.md)) {
+                Caption(text = place, color = Color.White)
+            }
+            IconButton(
+                onClick = { onAddPhoto(locationId) },
+                modifier = Modifier.align(Alignment.TopEnd),
+            ) {
+                // Its own darkness, for the same reason the place name has one — and more
+                // urgently, because the scrim above is a vertical gradient that is fully
+                // TRANSPARENT exactly here. A white glyph at the top of an arbitrary
+                // photograph is invisible the moment somebody photographs a bright shelf or a
+                // window, and it is invisible without ever looking broken. The disc is black at
+                // 0.55, which holds white to 4.75:1 even over pure white.
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Outlined.AddAPhoto,
+                        // The verb changes with the state, the way the hero's tag icon does.
+                        contentDescription = "Replace the photo of $place",
+                        tint = Color.White,
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        SectionHeader(
+            label = place,
+            channel = if (place == NO_LOCATION) colors.attention.base else colors.slate.base,
+            modifier = Modifier.weight(1f),
+        )
+        // Not offered on the loose-ends heading: "No location yet" is not a place, and there is
+        // nothing to point a camera at.
+        if (locationId != null) {
+            IconButton(onClick = { onAddPhoto(locationId) }) {
+                Icon(
+                    Icons.Outlined.AddAPhoto,
+                    contentDescription = "Add a photo of $place",
+                    // `hairlineStrong` is the app's tint for a placeholder mark sitting inside a
+                    // filled panel (ItemThumbnail, ItemCell); on the screen's own background it
+                    // measured 1.56:1 in dark and 1.60:1 in light — invisible, and invisible on
+                    // exactly the places that have no photograph, which is where the invitation
+                    // is. Quiet icons that can be pressed use onSurfaceVariant here.
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * How long a verified bin stays verified.
+ *
+ * A year, because the things this app holds are seasonal: a bin opened every Christmas is
+ * checked every Christmas, and marking it stale at six months would put a rose caption on the
+ * whole attic every summer. The attention channel only works while it is rare.
+ */
+internal const val STALE_AFTER_MONTHS = 12L
+
+/**
+ * Whole months since an ISO stamp — null when it never happened, or cannot be read.
+ *
+ * Null for unparseable rather than zero: "verified this month" is a claim, and inventing it
+ * from a string this client did not understand is exactly the kind of quiet lie the verify
+ * pass exists to remove. Dates arrive verbatim from the server and only the day part matters,
+ * so the time is dropped rather than parsed.
+ */
+internal fun monthsSince(iso: String?, today: LocalDate = LocalDate.now()): Long? =
+    iso?.let {
+        runCatching { ChronoUnit.MONTHS.between(LocalDate.parse(it.take(10)), today) }.getOrNull()
+    }
+
 @Composable
 private fun ToteRow(tote: CachedTote, onClick: () -> Unit) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
+    // Only a bin that WAS verified can go stale. A bin nobody has ever checked gets no mark at
+    // all on this list: every bin filed before verification existed is in that state, and a
+    // fourteen-row rose column says nothing about which one is actually worth opening.
+    val staleMonths = remember(tote.lastVerifiedAt) {
+        monthsSince(tote.lastVerifiedAt)?.takeIf { it > STALE_AFTER_MONTHS }
+    }
 
     PanelCard(onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // The code is the thing written on the physical card, so it leads — that is what
-            // someone is matching against a bin in front of them.
-            Text(
-                tote.code,
-                style = ToteTheme.dataType.dataLarge,
-                color = colors.slate.base,
-            )
+            // The bin as a swatch, not its code in grey text: the code is what is written on the
+            // physical card, and the colour is what the eye finds on the shelf before the code
+            // is ever read. The glyph carries both.
+            ToteGlyph(code = tote.code, colorHex = tote.colorHex)
             Spacer(Modifier.width(spacing.md))
             Column(Modifier.weight(1f)) {
                 Text(
@@ -309,6 +492,13 @@ private fun ToteRow(tote: CachedTote, onClick: () -> Unit) {
                     // The location is the section heading now, so it is not repeated on the row.
                 }
                 Caption(text = counts)
+                staleMonths?.let { months ->
+                    Spacer(Modifier.height(spacing.xs))
+                    Caption(
+                        text = "Not verified in $months months",
+                        color = colors.attention.base,
+                    )
+                }
             }
         }
     }
@@ -476,9 +666,15 @@ private fun ToteListPreview() {
     ToteTheme(darkTheme = true) {
         ToteListContent(
             totes = listOf(
-                CachedTote("1", "A14", "Christmas decor", null, "Attic", 37, 0, false),
-                CachedTote("2", "A15", "Winter clothes 4T", null, "Attic", 12, 3, false),
-                CachedTote("3", "G01", "Power tools", null, "Garage rack B", 8, 1, false),
+                CachedTote(
+                    "1", "A14", "Christmas decor", "l1", "Attic", 37, 0, false,
+                    colorHex = "#7A1F2B", lastVerifiedAt = "2024-12-02",
+                ),
+                CachedTote(
+                    "2", "A15", "Winter clothes 4T", "l1", "Attic", 12, 3, false,
+                    colorHex = "#2F6F4E", lastVerifiedAt = "2026-07-19",
+                ),
+                CachedTote("3", "G01", "Power tools", "l2", "Garage rack B", 8, 1, false),
             ),
             onOpenTote = {},
             onNewTote = {},

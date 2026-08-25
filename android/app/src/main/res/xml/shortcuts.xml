@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The two things this app is opened to do, one long-press away from the home screen.
+
+  Static rather than dynamic: both are always available and neither depends on any data, so
+  publishing them at runtime would only add a code path that can fail. There are exactly two,
+  because a shortcut menu that lists everything is a menu nobody reads — find something, or
+  photograph something. There is deliberately no "scan a tag" entry (see the Shortcuts object
+  in ToteNav.kt: reading a tag is the system's job, not a screen's).
+
+  The extras are the whole payload. `tote.shortcut` is read once per intent in ToteNavHost and
+  its values are matched there by name — these two files are one mechanism split in half.
+
+  ACTION_VIEW rather than ACTION_MAIN: MainActivity is `singleTask`, and an intent that
+  `filterEquals` the launcher's own MAIN/LAUNCHER one can be treated as "bring the task
+  forward" with no new intent delivered — which would land the person wherever they were, the
+  extras never read. The component is explicit, so no intent filter has to match it.
+
+  No icon on purpose: the launcher falls back to the app's, and the alternative is inventing
+  two pieces of artwork whose contrast against an unknown launcher background nothing here can
+  render or check.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:shortcutId="search"
+        android:enabled="true"
+        android:shortcutShortLabel="@string/shortcut_search_short"
+        android:shortcutLongLabel="@string/shortcut_search_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.tote"
+            android:targetClass="com.tote.MainActivity">
+            <extra android:name="tote.shortcut" android:value="search" />
+        </intent>
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="capture"
+        android:enabled="true"
+        android:shortcutShortLabel="@string/shortcut_capture_short"
+        android:shortcutLongLabel="@string/shortcut_capture_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.tote"
+            android:targetClass="com.tote.MainActivity">
+            <extra android:name="tote.shortcut" android:value="capture" />
+        </intent>
+    </shortcut>
+
+</shortcuts>

@@ -29,6 +29,18 @@ interface ApiService {
     @POST("locations")
     suspend fun createLocation(@Body body: LocationIn): LocationDto
 
+    /** One photograph of the place itself — the shelf, not the bins on it. Replaces any prior;
+     *  jpeg/png, downscaled client-side like every upload. Served back via `PhotoUrls.location`. */
+    @Multipart
+    @POST("locations/{id}/photo")
+    suspend fun uploadLocationPhoto(
+        @Path("id") id: String,
+        @Part photo: MultipartBody.Part,
+    ): LocationDto
+
+    @DELETE("locations/{id}/photo")
+    suspend fun deleteLocationPhoto(@Path("id") id: String)
+
     @GET("categories")
     suspend fun categories(): List<CategoryDto>
 
@@ -98,6 +110,16 @@ interface ApiService {
     @POST("totes/{id}/repack")
     suspend fun repack(@Path("id") id: String, @Body body: BulkMove): List<MovementDto>
 
+    /**
+     * A verify pass: every STORED item in the bin declared present or missing, in one body.
+     *
+     * The server stamps `last_verified_at`, marks the missing ones `out` (`out_reason =
+     * 'missing'`, one `corrected` ledger row each), and 422s with a sentence on partial
+     * coverage — see [VerifyIn] for why partial is refused rather than accepted quietly.
+     */
+    @POST("totes/{id}/verify")
+    suspend fun verifyTote(@Path("id") id: String, @Body body: VerifyIn): VerifyOutDto
+
     // ── Items ────────────────────────────────────────────────────────────────
 
     @GET("items")
@@ -144,8 +166,25 @@ interface ApiService {
     @GET("nfc/base")
     suspend fun nfcBase(): NfcBaseDto
 
+    /**
+     * Full-text search, optionally narrowed by size.
+     *
+     * `size` narrows server-side through the ladder — not here — because the ladder has one
+     * implementation and a client copy would drift from it. `includeClose` asks for the trigram
+     * fallback: hits flagged `close_match`, added ONLY when full-text found nothing, so a typo
+     * gets an answer instead of a shrug.
+     */
     @GET("search")
-    suspend fun search(@Query("q") q: String): List<SearchHitDto>
+    suspend fun search(
+        @Query("q") q: String,
+        @Query("size") size: String? = null,
+        @Query("include_close") includeClose: Boolean = true,
+    ): List<SearchHitDto>
+
+    /** The Find screen's two forward-looking cards. Either half is null when it has nothing
+     *  worth saying — see [HomeDto]. */
+    @GET("home")
+    suspend fun home(): HomeDto
 
     // ── Capture ──────────────────────────────────────────────────────────────
 

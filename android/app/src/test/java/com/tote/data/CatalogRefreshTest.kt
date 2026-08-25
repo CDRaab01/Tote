@@ -1,10 +1,14 @@
 package com.tote.data
 
+import com.tote.data.local.CachedItem
+import com.tote.data.local.CachedTote
 import com.tote.data.local.CatalogDao
 import com.tote.data.remote.ApiService
+import com.tote.data.remote.ItemDto
 import com.tote.data.remote.LocationDto
 import com.tote.data.remote.ToteDto
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -14,6 +18,7 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.doSuspendableAnswer
 import org.mockito.kotlin.mock
@@ -117,6 +122,47 @@ class CatalogRefreshTest {
 
         verify(dao, org.mockito.kotlin.times(2)).replaceAll(any(), any())
     }
+
+    @Test
+    fun `the snapshot carries the bin's colour, its verify stamp, and the place's photo flag`() =
+        runTest {
+            // Every new contract field must survive the sync, or the offline catalogue quietly
+            // becomes a stripped-down copy of the online one — the reconstruction gap, again.
+            api.stub {
+                onBlocking { totes(anyOrNull(), any()) } doReturn listOf(
+                    ToteDto(
+                        id = "t1",
+                        code = "A14",
+                        locationId = "l1",
+                        colorHex = "#B03030",
+                        lastVerifiedAt = "2026-08-01T10:00:00Z",
+                    ),
+                )
+                onBlocking { items(anyOrNull(), anyOrNull()) } doReturn listOf(
+                    ItemDto(
+                        id = "i1",
+                        name = "Lights",
+                        status = "stored",
+                        currentToteId = "t1",
+                        toteColorHex = "#B03030",
+                    ),
+                )
+                onBlocking { locations() } doReturn listOf(
+                    LocationDto(id = "l1", name = "Attic", hasPhoto = true),
+                )
+            }
+
+            repo().refresh()
+
+            val totes = argumentCaptor<List<CachedTote>>()
+            val items = argumentCaptor<List<CachedItem>>()
+            verifyBlocking(dao) { replaceAll(totes.capture(), items.capture()) }
+            val tote = totes.firstValue.single()
+            assertEquals("#B03030", tote.colorHex)
+            assertEquals("2026-08-01T10:00:00Z", tote.lastVerifiedAt)
+            assertTrue(tote.locationHasPhoto, "the location's photo flag should reach its bins")
+            assertEquals("#B03030", items.firstValue.single().toteColorHex)
+        }
 
     @Test
     fun `an unreachable locations call does not take the catalogue down with it`() = runTest {
