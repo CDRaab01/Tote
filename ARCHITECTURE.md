@@ -1068,6 +1068,43 @@ They are mapped to different outcomes because they need different responses from
 Collapsing the two would make a dead container and a bad model pin indistinguishable from a
 blurry photograph.
 
+### A failed identification is recoverable, and that is what the ordering buys
+
+`POST /drafts/{id}/rescan` re-runs identification against the photographs already on the volume.
+It is not a retry wrapper around the scan endpoint — nothing is uploaded, because step 1 of the
+pipeline already saved the only artefact that could not be recreated. The endpoint is the payoff
+for that ordering finally being reachable from the app.
+
+It exists because the recovery had to be done by hand once. On **2026-08-25** LM Studio came back
+with `google/gemma-4-e4b` loaded onto the integrated GPU; every vision call ran past the 60 s
+timeout and **twenty consecutive captures** were filed as `identify_unavailable`. Nothing was
+lost, and proving that took a script written against production. There are two ways in now: the
+endpoint, per draft, offered as a button in review; and `server/scripts/rescan_failed_drafts.py`,
+which walks every failed draft in one pass for when an outage lands a batch of them.
+
+Four decisions worth keeping:
+
+- **Steps 3 and 4 are one function.** `identify_into` is shared by `scan_photos` and the endpoint,
+  so a re-scan cannot drift into giving a different shape of answer than a scan does.
+- **It is offered on ANY draft, not only a failed one.** A confidently wrong answer is at least as
+  worth re-rolling as a missing one, and gating on `scan_error` would mean the outage it was
+  built for is the only case it covers.
+- **Every model-owned field is replaced, including with null** — name, description, condition,
+  quantity, confidence, category, and the apparel row. `item.apparel = None` before the label pass
+  is not tidiness: that pass only assigns when it actually reads a tag, so without the clear, a
+  draft re-identified as a saucepan keeps the size read from the same photograph back when the
+  model thought it was a jumper, with nothing on screen saying so.
+- **An unreachable model is a 503 with the draft untouched**, deliberately unlike `/items/scan`,
+  which records `scan_error` and carries on. The two differ because the stakes do: a scan is
+  holding a photograph that exists nowhere else and must not lose it, while a re-scan risks
+  nothing and is answering somebody watching a spinner. A missing *file* is a **409** instead —
+  no retry will produce it, so "try again later" would be pointing at a button that cannot work.
+
+**Fixed here, and the reason it went unnoticed:** `draft_tote_id` used to be the last line of the
+happy path, so the `identify_unavailable` branch returned before reaching it. A model outage
+silently discarded the bin the person chose at capture time — on exactly the drafts already
+needing the most hand-editing. It is set before identification now.
+
 ### The model may only use the user's own vocabulary
 
 Categories are listed in the prompt and matched back **case-insensitively against the real list**.
@@ -2019,6 +2056,39 @@ because the server went to trouble to keep them distinct and collapsing them her
 that. The first means the model could not be reached and nobody looked at this photograph at all;
 the second means it looked and found the photo hard. Merged into one "check this", a server
 outage would send someone off to reshoot a perfectly good picture.
+
+### Asking the model again is a button, not a decision
+
+The re-scan button sits **below the scan notice and above the fields** — the notice is the reason
+to tap it, the fields are what it rewrites — and deliberately *not* in the action row at the
+bottom. That row is Confirm / Skip / Discard, which are decisions about the object; this is not
+one, and a fourth button there would be the "three identical tonal buttons" trap one entry down.
+
+**The answer replaces the form.** `DraftEdits` is reseated from the returned draft, so edits in
+progress on that draft are dropped. A re-scan is a fresh reading and half of one reading beside
+half of another is a state nobody can interpret — and the confirm body is built from the edits, so
+leaving the old ones on screen would file the placeholder over the new answer.
+
+Three client rules, each with a test behind it:
+
+- **`saving` is claimed synchronously, before the coroutine launches.** Inside `launch` the guard
+  is not a guard: the body does not run until the dispatcher reaches it, so two taps in one frame
+  both read `saving = false` and both proceed — two model calls, with the loser's answer
+  overwriting the winner's. (`confirm` and `discard` still have the older shape. Their second call
+  404s on a draft that no longer exists rather than duplicating anything, so it is a confusing
+  message rather than a wrong catalogue — but it is the same defect.)
+- **The result is written by id, never by index.** A re-scan takes as long as a scan, and Skip is
+  one tap: writing to `index` would land the drill's answer on whichever photograph happened to
+  be on screen when it returned. For the same reason the coroutine must not publish a state
+  snapshot captured before the tap — doing so silently undid an intervening Skip.
+- **The 503 names the host, not the phone.** "The vision model still can't be reached. Check LM
+  Studio is running with a model loaded" is the whole point of the button; "HTTP 503" sends
+  somebody to look at the wrong machine.
+
+**`ScanTimeoutInterceptor` needed a new case.** It matches on path *suffix*, and
+`/drafts/{id}/rescan` does not end with `/items/scan` — the same trap its `scan-isbn` comment
+already documents. Without `RESCAN_PATH` every re-scan would fail at OkHttp's 10 s default while
+the server answered normally. Read timeout only: the request body is empty, which is the point.
 
 ### Destructive actions speak in the error voice
 

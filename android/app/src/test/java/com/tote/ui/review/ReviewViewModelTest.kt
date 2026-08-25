@@ -82,6 +82,115 @@ class ReviewViewModelTest {
         return ReviewViewModel(api, dao, repo, feedback, captureQueue)
     }
 
+    // ── Re-scan ─────────────────────────────────────────────────────────
+
+    @Test
+    fun `a re-scan replaces the draft and reseats the editor from it`() = runTest {
+        val vm = vmWith(
+            DraftDto(id = "d1", name = "Unidentified item", scanError = "identify_unavailable"),
+            draft("d2", "Ratchet set"),
+        )
+        dispatcher.scheduler.advanceUntilIdle()
+
+        api.stub {
+            onBlocking { rescanDraft("d1") } doReturn
+                DraftDto(id = "d1", name = "Cordless drill", scanConfidence = "high")
+        }
+
+        vm.rescan()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val s = vm.state.value
+        // The answer lands on the draft AND in the form. Leaving the editor showing
+        // "Unidentified item" over a draft that now says "Cordless drill" would file the
+        // placeholder, because the confirm body is built from the edits.
+        assertEquals("Cordless drill", s.drafts[0].name)
+        assertNull(s.drafts[0].scanError)
+        assertEquals("Cordless drill", s.edits.name)
+        // Position held: the stack is not re-fetched, so somebody ten items in stays there.
+        assertEquals(0, s.index)
+        assertEquals(2, s.drafts.size)
+        assertFalse(s.saving)
+    }
+
+    @Test
+    fun `a re-scan writes to the draft it asked about, not to the current position`() = runTest {
+        // A re-scan takes as long as a scan does, and Skip is one tap. Writing by index would
+        // land the drill's answer on whichever photograph happened to be on screen when it
+        // returned — silently, and on a screen whose whole job is being trusted.
+        val vm = vmWith(draft("d1", "Unidentified item"), draft("d2", "Ratchet set"))
+        dispatcher.scheduler.advanceUntilIdle()
+
+        api.stub {
+            onBlocking { rescanDraft("d1") } doReturn DraftDto(id = "d1", name = "Cordless drill")
+        }
+
+        vm.rescan()
+        vm.skip()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        val s = vm.state.value
+        assertEquals("Cordless drill", s.drafts[0].name)
+        assertEquals("Ratchet set", s.drafts[1].name)
+        // Moved on, so the editor belongs to d2 and must not have been reseated from d1.
+        assertEquals(1, s.index)
+        assertEquals("Ratchet set", s.edits.name)
+    }
+
+    @Test
+    fun `a re-scan against a model that is still down leaves the draft alone and says why`() =
+        runTest {
+            val vm = vmWith(
+                DraftDto(
+                    id = "d1",
+                    name = "Unidentified item",
+                    scanError = "identify_unavailable",
+                )
+            )
+            dispatcher.scheduler.advanceUntilIdle()
+
+            api.stub {
+                onBlocking { rescanDraft("d1") } doAnswer {
+                    throw retrofit2.HttpException(
+                        retrofit2.Response.error<Any>(
+                            503,
+                            okhttp3.ResponseBody.create(null, ""),
+                        )
+                    )
+                }
+            }
+
+            vm.rescan()
+            dispatcher.scheduler.advanceUntilIdle()
+
+            val s = vm.state.value
+            // Untouched — the server does not write on a 503 either, so the two agree.
+            assertEquals("Unidentified item", s.drafts[0].name)
+            assertEquals("identify_unavailable", s.drafts[0].scanError)
+            assertFalse(s.saving)
+            // Names the thing to check. "HTTP 503" sends somebody to look at the phone, and the
+            // fault is on the host.
+            assertTrue(s.error!!.contains("LM Studio"), s.error!!)
+        }
+
+    @Test
+    fun `a second tap while one re-scan is in flight is ignored`() = runTest {
+        // The call takes tens of seconds and the button stays on screen throughout. Two in
+        // flight would spend the GPU twice and let the loser's answer overwrite the winner's.
+        val vm = vmWith(draft("d1", "Unidentified item"))
+        dispatcher.scheduler.advanceUntilIdle()
+
+        api.stub {
+            onBlocking { rescanDraft("d1") } doReturn DraftDto(id = "d1", name = "Cordless drill")
+        }
+
+        vm.rescan()
+        vm.rescan()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        verify(api, org.mockito.kotlin.times(1)).rescanDraft("d1")
+    }
+
     @Test
     fun `the stack loads with the first draft's own values in the editor`() = runTest {
         val vm = vmWith(draft("d1", "Red storage box", toteId = "t1"))

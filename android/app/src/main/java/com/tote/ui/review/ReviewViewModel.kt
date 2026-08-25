@@ -317,6 +317,67 @@ class ReviewViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Ask the model again about the draft on screen.
+     *
+     * The photographs are already on the server — the pipeline saves them before it calls the
+     * model — so this costs nothing but the model call, and a draft that came back empty during
+     * an outage recovers with one tap instead of being typed in by hand.
+     *
+     * **The answer REPLACES the form.** Edits in progress on this draft are dropped, because a
+     * re-scan is a fresh reading and keeping half of the old one on screen would leave nobody
+     * able to tell which half they were looking at. That is why the button says what it does and
+     * sits with the notice rather than beside Confirm.
+     *
+     * Position is preserved by replacing the draft in place rather than re-fetching the stack:
+     * a refresh here would drop somebody ten items into a batch back at the top of it.
+     */
+    fun rescan() {
+        val s = _state.value
+        val draft = s.current ?: return
+        if (s.saving) return
+        // Claimed SYNCHRONOUSLY, before the launch, and both halves of that matter.
+        //
+        // Inside the coroutine the guard above is not a guard: the body does not run until the
+        // dispatcher gets to it, so two taps in one frame both read `saving = false` and both
+        // proceed — two model calls, and the loser's answer overwriting the winner's.
+        //
+        // And writing `s.copy(...)` in there would publish a snapshot taken before the tap: a
+        // Skip between the tap and the dispatch would be silently undone, putting the person
+        // back on a draft they had moved off. Both were caught by ReviewViewModelTest, and
+        // neither is visible by reading the happy path.
+        _state.value = s.copy(saving = true, error = null)
+
+        viewModelScope.launch {
+            try {
+                val updated = api.rescanDraft(draft.id)
+                val current = _state.value
+                // By id, not by index. A re-scan takes as long as a scan does, and the stack can
+                // have moved underneath it — writing to `index` would put the new answer on
+                // somebody else's photograph.
+                val at = current.drafts.indexOfFirst { it.id == updated.id }
+                if (at < 0) {
+                    _state.value = current.copy(saving = false)
+                    return@launch
+                }
+                _state.value = current.copy(
+                    drafts = current.drafts.toMutableList().also { it[at] = updated },
+                    saving = false,
+                    edits = if (current.index == at) DraftEdits.from(updated) else current.edits,
+                )
+                feedback.say(
+                    if (updated.scanConfidence == "low") {
+                        "Read again as \"${updated.name}\" — low confidence, so check it"
+                    } else {
+                        "Read again as \"${updated.name}\""
+                    }
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(saving = false, error = rescanError(e))
+            }
+        }
+    }
+
     fun discard() {
         val draft = _state.value.current ?: return
         viewModelScope.launch {
@@ -351,6 +412,24 @@ class ReviewViewModel @Inject constructor(
             saving = false,
             error = null,
         )
+    }
+
+    /**
+     * Why a re-scan failed, in words that name the next action.
+     *
+     * 503 is the one worth spelling out: it is the exact situation this button exists for, and
+     * "HTTP 503" sends somebody to look at the phone when the thing to check is on the host.
+     */
+    private fun rescanError(e: Exception): String = when {
+        e is retrofit2.HttpException && e.code() == 503 ->
+            "The vision model still can't be reached. Check LM Studio is running with a model " +
+                "loaded, then try again \u2014 the photographs are safe either way."
+        e is retrofit2.HttpException && e.code() == 409 ->
+            "This draft's photographs are missing from the server, so there is nothing to " +
+                "re-read."
+        e is retrofit2.HttpException && e.code() == 404 ->
+            "That draft is gone \u2014 it may have been filed on another device."
+        else -> e.message ?: "Couldn't ask the model again"
     }
 
     private fun filingError(e: Exception): String = when {

@@ -119,6 +119,7 @@ fun ReviewScreen(
         onChoose = { choosing = true },
         onBack = viewModel::back,
         onRetry = viewModel::refresh,
+        onRescan = viewModel::rescan,
     )
 
     if (choosing && state.drafts.isNotEmpty()) {
@@ -231,6 +232,8 @@ fun ReviewContent(
     onSkip: () -> Unit,
     onBack: () -> Unit,
     onRetry: () -> Unit,
+    /** Ask the model again about this draft, using the photographs the server already holds. */
+    onRescan: () -> Unit = {},
     onPhotographSomething: () -> Unit = {},
     modifier: Modifier = Modifier,
     photoUrlFor: (String, Int) -> String = { id, order -> PhotoUrls.item(id, order, w = 512) },
@@ -366,6 +369,28 @@ fun ReviewContent(
                             )
                         }
                     }
+                }
+
+                // ── Ask the model again ─────────────────────────────────────
+                //
+                // Offered on EVERY draft, not only a failed one. The photographs are already on
+                // the server — the pipeline saves them before it calls the model — so this costs
+                // nothing but the call, and a confidently wrong answer is as worth re-rolling as
+                // a missing one. Gating it on `scanError` would mean the outage it was built for
+                // is the only case it covers.
+                //
+                // Below the notice and above the fields, because the notice is the reason to tap
+                // it and the fields are what it rewrites. Its own row rather than a fourth button
+                // in the action bar: that row is Confirm/Skip/Discard — decisions — and this is
+                // not one.
+                item {
+                    ToteButton(
+                        text = if (state.saving) "Asking the model…" else "Re-run AI analysis",
+                        onClick = onRescan,
+                        tonal = true,
+                        compact = true,
+                        enabled = !state.saving,
+                    )
                 }
 
                 // ── What it is ───────────────────────────────────────────────
@@ -645,7 +670,8 @@ fun ReviewContent(
 private fun scanNotice(draft: DraftDto): String? = when {
     draft.scanError == "identify_unavailable" ->
         "Nothing was identified — the vision model could not be reached when this uploaded. " +
-            "The photographs are safe; fill the details in yourself, or file it and edit later."
+            "The photographs are safe on the server: once it is back, Re-run AI analysis reads " +
+            "them again. Or fill the details in yourself."
     draft.scanConfidence == "low" ->
         "Low confidence. The photograph was hard to read, so check the name and category before " +
             "filing."
@@ -702,6 +728,29 @@ private fun QuantityStepper(quantity: Int, onChange: (Int) -> Unit) {
             onClick = { onChange(quantity + 1) },
             tonal = true,
             compact = true,
+        )
+    }
+}
+
+@Preview(name = "Review — nothing identified")
+@Composable
+private fun ReviewUnavailablePreview() {
+    ToteTheme(darkTheme = true) {
+        ReviewContent(
+            state = ReviewUiState(
+                drafts = listOf(
+                    DraftDto(
+                        id = "1",
+                        name = "Unidentified item",
+                        scanError = "identify_unavailable",
+                        photoCount = 2,
+                    )
+                ),
+                edits = DraftEdits(name = "Unidentified item"),
+                loading = false,
+            ),
+            onEdit = {}, onEditApparel = {}, onConfirm = {}, onDiscard = {}, onSkip = {},
+            onBack = {}, onRetry = {}, photoUrlFor = { _, _ -> "" },
         )
     }
 }

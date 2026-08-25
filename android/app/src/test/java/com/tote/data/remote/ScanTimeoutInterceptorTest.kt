@@ -70,6 +70,22 @@ class ScanTimeoutInterceptorTest {
     }
 
     @Test
+    fun `the rescan path gets the long read timeout`() {
+        // The same pair of model calls as a scan, so the same read budget. This is exactly the
+        // trap the isbn case above documents: "/drafts/{id}/rescan" does NOT end with
+        // "/items/scan", so without its own case it would fall through to the client default and
+        // every re-scan would fail at 10 s while the server answered normally.
+        call("/drafts/8a1f/rescan")
+
+        assertEquals(
+            ScanTimeoutInterceptor.SCAN_READ_TIMEOUT_SECONDS * 1000,
+            observedReadMillis,
+        )
+        // No upload: the request body is empty, which is the entire point of the endpoint.
+        assertEquals(30_000, observedWriteMillis)
+    }
+
+    @Test
     fun `an ordinary call keeps the client's own timeouts`() {
         call("/search?q=ratchet")
 

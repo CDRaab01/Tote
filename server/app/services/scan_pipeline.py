@@ -12,6 +12,7 @@ contents until a human confirms it. That is the house AI rule and Tote has no ex
 import asyncio
 import logging
 import uuid
+from pathlib import Path
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -46,6 +47,59 @@ async def _categories_for(db: AsyncSession, household_id: uuid.UUID) -> list[str
         .all()
     )
     return list(rows)
+
+
+# Extension back to content type, for photographs read off the volume rather than off a request.
+# `save_original` chose the extension from the upload's content type, so this is that decision
+# read back rather than a guess.
+_TYPE_FOR_EXT = {
+    ext: content_type for content_type, ext in photo_store.ALLOWED_CONTENT_TYPES.items()
+}
+
+
+class NoStoredPhotos(Exception):
+    """An item has no readable original on the volume, so there is nothing to re-read."""
+
+
+async def stored_photo_urls(db: AsyncSession, item: Item) -> list[str]:
+    """Data URLs for an item's ORIGINAL photographs, straight off the volume.
+
+    The re-scan path's counterpart to the uploads a fresh scan holds in memory. Originals, never
+    the cleaned copies, for the reason step 3 gives: background removal is unpredictable on some
+    subjects and a cropped photo cannot be un-cropped for the model.
+
+    Raises [NoStoredPhotos] when there is nothing to send. A row whose file is missing is a
+    genuinely different situation from a model outage — no number of retries will fix it — so it
+    must not come back as "try again later".
+    """
+    photos = (
+        (
+            await db.execute(
+                select(ItemPhoto).where(ItemPhoto.item_id == item.id).order_by(ItemPhoto.order)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    urls: list[str] = []
+    for photo in photos:
+        try:
+            data = photo_store.read_bytes(photo.original_path)
+        except OSError:
+            # Logged at error, not warning: the database says this file exists and it does not,
+            # which is the one failure here that no retry can clear.
+            logger.error(
+                "item %s photo %s: original missing at %s",
+                item.id,
+                photo.order,
+                photo.original_path,
+            )
+            continue
+        ext = Path(photo.original_path).suffix.lower()
+        urls.append(data_url(data, _TYPE_FOR_EXT.get(ext, "image/jpeg")))
+    if not urls:
+        raise NoStoredPhotos
+    return urls
 
 
 async def scan_photos(
@@ -167,19 +221,63 @@ async def scan_photos(
         item.processed_at = _now()
         return item
 
-    categories = await _categories_for(db, household_id)
+    # The destination is remembered but NOT applied: an item only enters a tote when a human
+    # confirms the draft, and applying it here would put an unreviewed guess into a bin's
+    # contents. Confirmation is what writes the `initial` movement row.
+    #
+    # Set BEFORE identification, not after, and that ordering is a fix rather than a tidy-up. It
+    # used to be the last line of the happy path, so the `identify_unavailable` branch returned
+    # without ever reaching it — a model outage silently threw away the bin the person chose at
+    # capture time, on exactly the drafts already facing the most hand-editing.
+    item.draft_tote_id = tote_id
 
     try:
-        draft = await identify_item(urls, categories, client=client)
+        await identify_into(db, item, urls, household_id=household_id, client=client)
     except HTTPException as e:
         # Transport failure: the model was unreachable or rejected the request. Record it and
         # keep the draft — the photos are already saved and a human can fill in the rest. Logged
         # as well as stored, because a stored-but-unlogged failure leaves `docker logs` silent
         # during exactly the outage someone is trying to diagnose.
+        #
+        # Recoverable, and that is why it is stored rather than only logged: `POST
+        # /drafts/{id}/rescan` replays the identification against the photos already on the
+        # volume, so an outage costs a tap later instead of a second trip to the attic.
         logger.warning("identify unavailable for item %s: %s", item.id, e.detail)
         item.scan_error = SCAN_UNAVAILABLE
         item.processed_at = _now()
         return item
+
+    item.processed_at = _now()
+    return item
+
+
+async def identify_into(
+    db: AsyncSession,
+    item: Item,
+    urls: list[str],
+    *,
+    household_id: uuid.UUID,
+    client=None,
+) -> None:
+    """Ask the model what this is, and write the answer onto `item`.
+
+    Steps 3 and 4 of a scan, extracted because a **re-scan** replays exactly them: the photos are
+    persisted before the model is ever called, so a failed identification is recoverable without
+    re-photographing anything. One implementation rather than two — two would drift, and the
+    drift would surface as "the retry gives a different shape of answer than the scan did".
+
+    **Raises** `HTTPException` when the model cannot be reached, and the two callers want
+    opposite things from that. A scan records `scan_error` and keeps the draft, because the
+    photograph it has just taken must not be lost. A re-scan lets it become a 503: nothing is at
+    risk, and somebody who asked for a retry needs to be told it failed rather than watch it
+    silently no-op.
+
+    Every field the model owns is REPLACED, including with `None`. A re-scan is a fresh answer,
+    not a merge onto a stale one — leaving the previous run's condition or category behind would
+    produce a draft that is half one reading and half another, with nothing on screen saying so.
+    """
+    categories = await _categories_for(db, household_id)
+    draft = await identify_item(urls, categories, client=client)
 
     if draft.name:
         item.name = draft.name
@@ -189,6 +287,12 @@ async def scan_photos(
     if draft.quantity:
         item.quantity = draft.quantity
     item.scan_confidence = draft.confidence
+    item.scan_error = None
+    item.category_id = None
+    # Cleared rather than left to be overwritten, because the label pass below only assigns when
+    # it actually reads a tag. Without this, re-scanning something the model now calls a saucepan
+    # keeps the size it read from the same photo when it thought the object was a jumper.
+    item.apparel = None
 
     if draft.category:
         match = (
@@ -215,13 +319,6 @@ async def scan_photos(
     await _read_the_label(
         db, item, urls, household_id=household_id, category_name=draft.category, client=client
     )
-
-    # The destination is remembered but NOT applied: an item only enters a tote when a human
-    # confirms the draft, and applying it here would put an unreviewed guess into a bin's
-    # contents. Confirmation is what writes the `initial` movement row.
-    item.draft_tote_id = tote_id
-    item.processed_at = _now()
-    return item
 
 
 async def _read_the_label(

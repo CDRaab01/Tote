@@ -7,7 +7,8 @@ import okhttp3.Interceptor
 import okhttp3.Response
 
 /**
- * Gives `POST /items/scan` — and only that call — a timeout long enough to survive it.
+ * Gives the calls that wait on the vision model — and only those — timeouts long enough to
+ * survive them.
  *
  * Tote's scan endpoint is **synchronous**. It persists the photos, runs rembg/Pillow cleanup on
  * each one, sends the originals to the vision model and saves the draft, all before it writes a
@@ -31,6 +32,14 @@ class ScanTimeoutInterceptor @Inject constructor() : Interceptor {
         val request = chain.request()
         val path = request.url.encodedPath
         // NOTE: scan-isbn does NOT end with "/items/scan" — the two paths need their own cases.
+        // Nor does `/drafts/{id}/rescan`, which is the same pair of model calls with no upload:
+        // matching on a suffix means every new slow route has to be added here by hand, and one
+        // that is missed fails at OkHttp's 10 s default rather than doing anything visible.
+        if (path.endsWith(RESCAN_PATH)) {
+            return chain
+                .withReadTimeout(SCAN_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .proceed(request)
+        }
         if (path.endsWith(ISBN_PATH)) {
             return chain
                 .withReadTimeout(ISBN_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -46,6 +55,16 @@ class ScanTimeoutInterceptor @Inject constructor() : Interceptor {
     companion object {
         const val SCAN_PATH = "/items/scan"
         const val ISBN_PATH = "/items/scan-isbn"
+
+        /**
+         * `POST /drafts/{id}/rescan` — identify plus the label pass, against photographs the
+         * server already holds.
+         *
+         * Reuses the scan READ timeout because it is the same work, and needs no raised write
+         * timeout because the request body is empty: nothing is uploaded, which is the entire
+         * point of the endpoint.
+         */
+        const val RESCAN_PATH = "/rescan"
 
         /** Server-side worst case is roughly eight cleanups plus a 60 s model call; this is that
          *  with room to spare, so a timeout here means something is genuinely wrong. */
