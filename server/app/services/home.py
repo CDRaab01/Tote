@@ -105,7 +105,9 @@ async def seasonal_card(
     )
 
 
-def _stored_in_band(household_id: uuid.UUID, systems: list[str], ordinal: float) -> tuple:
+def _stored_in_band(
+    household_id: uuid.UUID, systems: list[str], ordinal: float, floor: float
+) -> tuple:
     """`within_tolerance` in SQL form, over garments that are actually IN a bin.
 
     `size_system.in_(systems)` is the comparability gate, built by fits' `_systems_for` so a
@@ -113,12 +115,18 @@ def _stored_in_band(household_id: uuid.UUID, systems: list[str], ordinal: float)
     `fits_query` — which deliberately reports garments wherever they are — this filters
     `status == 'stored'`: the card's promise is "already waiting in a bin", and a garment that
     is lent out, unpacked or disposed of is not.
+
+    `floor` is the wearer's CURRENT ordinal, and the band is open below it: the symmetric
+    tolerance around the next rung otherwise reaches back to sizes the person wears today
+    (9-12M sits 0.125 under 12M), and a card that counts the clothes already on their back as
+    "waiting in the next size" is advertising a bin trip for nothing.
     """
     return (
         Item.household_id == household_id,
         Item.is_draft.is_(False),
         Item.status == "stored",
         ItemApparel.size_system.in_(systems),
+        ItemApparel.size_ordinal > floor,
         ItemApparel.size_ordinal.between(
             ordinal - _NEXT_SIZE_TOLERANCE, ordinal + _NEXT_SIZE_TOLERANCE
         ),
@@ -163,16 +171,16 @@ async def next_size_card(db: AsyncSession, household_id: uuid.UUID) -> NextSizeC
                     select(func.count())
                     .select_from(Item)
                     .join(ItemApparel, ItemApparel.item_id == Item.id)
-                    .where(*_stored_in_band(household_id, systems, rung.ordinal))
+                    .where(*_stored_in_band(household_id, systems, rung.ordinal, size.size_ordinal))
                 )
             ).scalar_one()
             if count == 0:
                 continue
             if best is None or count > best[0] or (count == best[0] and person.name < best[1]):
-                best = (count, person.name, person.id, rung, systems)
+                best = (count, person.name, person.id, rung, systems, size.size_ordinal)
     if best is None:
         return None
-    count, person_name, person_id, rung, systems = best
+    count, person_name, person_id, rung, systems, current_ordinal = best
 
     # Where to go: the bins holding those garments, most first. Three is enough to say where,
     # and `stored` guarantees every counted garment IS in one of them.
@@ -183,7 +191,7 @@ async def next_size_card(db: AsyncSession, household_id: uuid.UUID) -> NextSizeC
             .select_from(Item)
             .join(ItemApparel, ItemApparel.item_id == Item.id)
             .join(Tote, Item.current_tote_id == Tote.id)
-            .where(*_stored_in_band(household_id, systems, rung.ordinal))
+            .where(*_stored_in_band(household_id, systems, rung.ordinal, current_ordinal))
             .group_by(Tote.id)
             .order_by(held.desc(), Tote.code)
             .limit(3)

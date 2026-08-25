@@ -6,6 +6,7 @@ same seam the QR test does: what actually reaches the canvas during a real rende
 magic bytes that prove a card came out the other end.
 """
 
+from reportlab.lib.colors import HexColor
 from reportlab.pdfgen.canvas import Canvas
 
 
@@ -101,3 +102,32 @@ async def test_a_non_latin1_label_degrades_instead_of_500ing(auth_client):
         location_id=loc["id"],
     )
     assert len(await _card(auth_client, t["id"])) > 1000
+
+
+async def test_the_spine_is_painted_the_glyphs_own_hex(auth_client, monkeypatch):
+    """Counting rects (above) proves A spine appears for a resolvable colour; this pins WHAT
+    colour fills it, so card.py can never hardcode a divergent hex or grow its own mapping —
+    the card, the row and the bin agreeing is the entire point of the band."""
+    fills: list = []
+    painted: list = []
+    orig_fill = Canvas.setFillColor
+    orig_rect = Canvas.rect
+
+    def capture_fill(self, colour, *a, **kw):
+        fills.append(colour)
+        return orig_fill(self, colour, *a, **kw)
+
+    def capture_rect(self, x, y, w, h, *a, **kw):
+        painted.append(((x, y, w, h), fills[-1] if fills else None))
+        return orig_rect(self, x, y, w, h, *a, **kw)
+
+    monkeypatch.setattr(Canvas, "setFillColor", capture_fill)
+    monkeypatch.setattr(Canvas, "rect", capture_rect)
+
+    green = await _tote(auth_client, "S04", color="green")
+    await _card(auth_client, green["id"])
+
+    # The spine is the only full-height rect anchored at the origin, a hole-punch width wide.
+    spines = [f for (x, y, w, h), f in painted if x == 0 and y == 0 and w < 20]
+    assert len(spines) == 1
+    assert str(spines[0]) == str(HexColor("#2A5240"))

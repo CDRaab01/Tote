@@ -275,3 +275,24 @@ async def test_the_person_with_more_garments_waiting_wins(auth_client):
     assert card["person_name"] == "Zed"
     assert card["next_label"] == "5T"
     assert card["garment_count"] == 3
+
+
+async def test_the_clothes_they_wear_today_are_not_the_next_size(auth_client):
+    """The half-rung tolerance around the next rung reaches BELOW the wearer's current size
+    (9-12M sits 0.125 under 12M), and a card that counts the clothes already on the person's
+    back as "waiting in the next size" advertises a bin trip for nothing. The band is open
+    below the wearer's own ordinal — current and outgrown sizes never count."""
+    person = await _person(auth_client)
+    await _size(auth_client, person["id"], "9-12M")
+    t = await _tote(auth_client)
+    await _garment(auth_client, t["id"], "Sleepsuit", "12-18M")
+    await _garment(auth_client, t["id"], "Vest", "12-18M")
+    # Stored right beside them: the size they wear now, and one they have outgrown. Both sit
+    # inside a naive symmetric band around 12M (1.0); neither is a reason to open the bin.
+    await _garment(auth_client, t["id"], "Bodysuit they wear now", "9-12M")
+    await _garment(auth_client, t["id"], "Outgrown bodysuit", "6-9M")
+
+    card = (await _home(auth_client))["next_size"]
+    assert card is not None
+    assert card["next_label"] == "12M"
+    assert card["garment_count"] == 2

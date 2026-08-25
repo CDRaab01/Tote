@@ -188,3 +188,23 @@ async def test_inbound_corrected_still_files_into_a_bin(auth_client):
     assert got["status"] == "stored"
     assert got["current_tote_id"] == b["id"]
     assert got["out_reason"] is None
+
+
+async def test_a_move_can_correct_a_bin_out_of_the_record_directly(auth_client):
+    """Outbound `corrected` is public contract now, not just verify's private mechanism: "the
+    catalogue is wrong, it is not in there" is POST /items/{id}/move with no destination.
+    Pinned so a well-meant "restore the 422" guard on MoveIn cannot silently delete the
+    documented behaviour while every verify test stays green (verify calls record_move
+    directly and would never notice)."""
+    t = await _tote(auth_client)
+    item = await _item(auth_client, "Extension reel", tote_id=t["id"])
+    r = await auth_client.post(f"/items/{item['id']}/move", json={"reason": "corrected"})
+    assert r.status_code == 200, r.text
+    after = (await auth_client.get(f"/items/{item['id']}")).json()
+    assert after["status"] == "out"
+    assert after["out_reason"] == "missing"
+    assert after["current_tote_id"] is None
+    moves = (await auth_client.get(f"/items/{item['id']}/movements")).json()
+    assert moves[0]["reason"] == "corrected"
+    assert moves[0]["from_tote_id"] == t["id"]
+    assert moves[0]["to_tote_id"] is None

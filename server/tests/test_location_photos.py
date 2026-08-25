@@ -142,3 +142,31 @@ async def test_has_photo_reports_the_truth_on_the_list(auth_client):
 
     rows = (await auth_client.get("/locations")).json()
     assert {row["name"]: row["has_photo"] for row in rows} == {"Attic": False, "Garage": True}
+
+
+async def test_a_rejected_replacement_leaves_the_current_photo_untouched(auth_client):
+    """The rejection tests above run against photo-less locations, so they cannot see the
+    difference between "validate, then replace" and "replace, then validate". Today the old
+    file survives only because the handler validates before photo_store unlinks {id}.* — the
+    natural stream-to-disk-first refactor would destroy the previous photo on a 413 with the
+    suite green. This pins the contract: a refused upload changes NOTHING."""
+    loc = await _loc(auth_client)
+    original = photo_bytes()
+    r = await auth_client.post(f"/locations/{loc['id']}/photo", files=_files(original))
+    assert r.status_code == 200, r.text
+    served_before = (await auth_client.get(f"/locations/{loc['id']}/photo")).content
+
+    r = await auth_client.post(
+        f"/locations/{loc['id']}/photo",
+        files=_files(b"x" * (settings.photo_max_bytes + 1)),
+    )
+    assert r.status_code == 413
+    r = await auth_client.post(
+        f"/locations/{loc['id']}/photo", files=_files(b"GIF89a...", "image/gif", "x.gif")
+    )
+    assert r.status_code == 422
+
+    r = await auth_client.get(f"/locations/{loc['id']}/photo")
+    assert r.status_code == 200
+    assert r.content == served_before
+    assert (await auth_client.get("/locations")).json()[0]["has_photo"] is True
