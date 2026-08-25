@@ -44,6 +44,10 @@ class LocationOut(BaseModel):
     name: str
     parent_id: uuid.UUID | None
     sort_order: int
+    # Whether a photo of the place itself exists (POST /locations/{id}/photo). A bool rather
+    # than the path: the path is server-internal, and the client only needs to know whether to
+    # render the header image at all.
+    has_photo: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -156,7 +160,14 @@ class ToteOut(BaseModel):
     # So the app can surface the bins that have never been labelled — the ones that will be a
     # mystery in six months.
     card_printed_at: datetime.datetime | None
+    # When a human last confirmed this bin's contents against reality (the Verify flow). Null =
+    # never. The client renders staleness from it; the server never editorialises a threshold.
+    last_verified_at: datetime.datetime | None = None
     created_at: datetime.datetime
+    # The bin's colour resolved to a hex the client can actually paint (services/colors.py owns
+    # the one free-text-to-hex mapping in the suite). Null when the colour is unset or unknown —
+    # the glyph falls back to a neutral swatch, it never guesses.
+    color_hex: str | None = None
     # Computed, never stored: a denormalised count is the first thing to drift, and here the
     # drift would be printed on an index card and written into an NFC tag.
     item_count: int = 0
@@ -315,6 +326,9 @@ class ItemOut(BaseModel):
     # answer the only question that matters: which bin, and where is it.
     tote_code: str | None = None
     location_name: str | None = None
+    # The bin's colour as a paintable hex, resolved by services/colors.py — the glyph beside a
+    # search hit is how a row is matched to a physical bin by sight. Null = neutral swatch.
+    tote_color_hex: str | None = None
     # Computed server-side (clients display, never compute) so "overdue" means the same thing
     # everywhere, including in a notification composed without a UI.
     is_overdue: bool = False
@@ -446,6 +460,11 @@ class MovementOut(BaseModel):
 class SearchHit(BaseModel):
     item: ItemOut
     rank: float
+    # True only for hits produced by the trigram fallback (nothing matched the query exactly and
+    # the caller opted in with include_close). Labelled rather than silently mixed in: offline
+    # results already taught that presenting a different notion of "matches" identically quietly
+    # teaches people that search is inconsistent.
+    close_match: bool = False
 
 
 class ToteDetail(ToteOut):

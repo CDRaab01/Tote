@@ -143,3 +143,38 @@ def delete_item_photos(item_id: uuid.UUID) -> None:
     import shutil
 
     shutil.rmtree(Path(settings.photos_dir) / str(item_id), ignore_errors=True)
+
+
+# ── Location photos ──────────────────────────────────────────────────────────
+#
+# One optional photo of the place itself (the shelf, the rack), under
+# ``{photos_dir}/locations/`` beside the per-item directories — a name no item directory can
+# collide with, because those are all bare UUIDs. Named by the location's id, server-derived
+# like every other filename here, so a location has at most one file and a crafted upload name
+# cannot traverse paths.
+
+
+def save_location_photo(location_id: uuid.UUID, data: bytes, ext: str) -> str:
+    """Write THE photo for a location; return its path.
+
+    Any previous file for this location is removed first rather than overwritten in place,
+    because the extension can change between uploads — a ``.jpg`` replaced by a ``.png`` would
+    otherwise leave both on disk with the DB pointing at one, the same orphaning problem
+    :func:`delete_item_photos` exists to prevent.
+    """
+    d = Path(settings.photos_dir) / "locations"
+    d.mkdir(parents=True, exist_ok=True)
+    for old in d.glob(f"{location_id}.*"):
+        old.unlink(missing_ok=True)
+    path = d / f"{location_id}{ext}"
+    path.write_bytes(data)
+    return str(path)
+
+
+def delete_location_photo(path: str) -> None:
+    """Remove a location's photo file, quietly when it is already gone.
+
+    The row is the source of truth for whether a photo exists; a file that vanished on its own
+    must not make clearing the row fail.
+    """
+    Path(path).unlink(missing_ok=True)

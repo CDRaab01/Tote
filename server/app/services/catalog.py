@@ -19,6 +19,7 @@ from app.models.movement import Movement
 from app.models.person import Person
 from app.models.tote import Tote
 from app.schemas.catalog import ApparelOut, ItemOut, ToteOut
+from app.services.colors import color_hex
 from app.sizing import SIZE_SYSTEMS, comparable, parse_size
 
 
@@ -35,6 +36,20 @@ def local_today() -> datetime.date:
     except (ZoneInfoNotFoundError, ValueError):
         tz = datetime.UTC
     return datetime.datetime.now(tz).date()
+
+
+def local_date(moment: datetime.datetime) -> datetime.date:
+    """A stored UTC timestamp's calendar date, in the household's timezone.
+
+    `.date()` on the raw timestamp takes the UTC date — a bin verified at 9pm Eastern is
+    stamped tomorrow. Same degradation rule as `local_today`: an unknown zone falls back to
+    UTC rather than raising.
+    """
+    try:
+        tz = ZoneInfo(settings.local_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = datetime.UTC
+    return moment.astimezone(tz).date()
 
 
 def _photo_count():
@@ -240,6 +255,25 @@ async def location_names(db: AsyncSession, household_id: uuid.UUID) -> dict[uuid
     return {location_id: name for location_id, name in rows}
 
 
+async def tote_color_map(db: AsyncSession, household_id: uuid.UUID) -> dict[uuid.UUID, str]:
+    """Tote id -> paintable hex, for every bin whose free-text colour resolves.
+
+    One map per request (the `location_names` precedent, for the same reason): the swatch sits
+    beside every search hit and item row, and resolving it per row would be an N+1 on exactly
+    the screens someone scans to match a row to a physical bin by sight. Bins whose colour is
+    unset or unrecognised are simply absent — a `.get()` miss reads as null and the client
+    falls back to its neutral swatch rather than guessing.
+    """
+    rows = (
+        await db.execute(
+            select(Tote.id, Tote.color).where(
+                Tote.household_id == household_id, Tote.color.is_not(None)
+            )
+        )
+    ).all()
+    return {tote_id: resolved for tote_id, raw in rows if (resolved := color_hex(raw)) is not None}
+
+
 async def to_tote_out(
     db: AsyncSession,
     tote: Tote,
@@ -257,4 +291,7 @@ async def to_tote_out(
     # "where do I go", and every screen that shows a bin wants the place it is in. Sent here so
     # the client never has to hold a locations table alongside the bins to read one line.
     out.location_name = locations.get(tote.location_id) if tote.location_id else None
+    # Resolved server-side so the swatch on the phone and the colour band on the printed card
+    # can never disagree about what "green" is — services/colors.py owns the one mapping.
+    out.color_hex = color_hex(tote.color)
     return out

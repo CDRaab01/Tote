@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -238,6 +239,103 @@ async def repack(tote_id: uuid.UUID, body: BulkMoveIn, user: CurrentUser, db: Db
     )
     await db.commit()
     return [MovementOut.model_validate(m) for m in moves]
+
+
+class VerifyIn(BaseModel):
+    """The audit sheet for one bin: every stored item claimed as found or not found.
+
+    Inline rather than in schemas/catalog.py because no other endpoint shares the shape — the
+    real contract is the coverage rule in the handler, which the field types alone cannot say.
+    """
+
+    present: list[uuid.UUID] = []
+    missing: list[uuid.UUID] = []
+
+
+class VerifyOut(BaseModel):
+    present_count: int
+    missing_count: int
+    last_verified_at: datetime.datetime
+
+
+@router.post("/{tote_id}/verify", response_model=VerifyOut)
+async def verify_tote(tote_id: uuid.UUID, body: VerifyIn, user: CurrentUser, db: Db):
+    """Reconcile a bin against what a person standing in front of it actually found.
+
+    Every item the catalogue says is stored in this bin must be claimed in exactly one of the
+    two lists — an id in neither, in both, or not stored here is a 422 and NOTHING happens. The
+    coverage rule is the point of the endpoint: an audit that lets items go unmentioned would
+    stamp `last_verified_at` over a bin nobody fully checked, and the stamp would quietly come
+    to mean "somebody opened the lid once". An empty bin verifies trivially — "checked and
+    empty" is exactly as much knowledge as "checked and all present".
+
+    Present items are already where the catalogue says, so they get NO ledger rows — a verify
+    must not fill the history someone reads for "where was this last year" with rows that say
+    nothing moved. Each missing item leaves through `record_move` with the outbound
+    `corrected`: nobody watched it go, the catalogue was simply wrong about it, and recording
+    that honestly is what keeps the ledger worth reading. Items already out of the bin make no
+    claim either way — the bin cannot testify about what is not in it. One transaction, all or
+    nothing, like every bulk path.
+    """
+    tote = await _owned_tote(db, user.household_id, tote_id)
+
+    stored = (
+        (
+            await db.execute(
+                select(Item).where(
+                    Item.household_id == user.household_id,
+                    Item.current_tote_id == tote_id,
+                    Item.is_draft.is_(False),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    present_ids = set(body.present)
+    missing_ids = set(body.missing)
+    contradicted = present_ids & missing_ids
+    if contradicted:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"{len(contradicted)} item(s) are claimed both present and missing",
+        )
+
+    stored_ids = {item.id for item in stored}
+    claimed = present_ids | missing_ids
+    # An unknown id, another household's and an item stored in some other bin all fail
+    # identically: distinguishing them would let an authenticated user probe which ids exist —
+    # the same reasoning as 404-not-403, one level down.
+    strangers = claimed - stored_ids
+    if strangers:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"{len(strangers)} item(s) are not stored in this tote",
+        )
+    unaccounted = stored_ids - claimed
+    if unaccounted:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"{len(unaccounted)} stored item(s) were not accounted for",
+        )
+
+    for item in stored:
+        if item.id in missing_ids:
+            await record_move(
+                db,
+                item=item,
+                reason="corrected",
+                note="Missing at verify",
+                moved_by_user_id=user.id,
+            )
+
+    now = datetime.datetime.now(datetime.UTC)
+    tote.last_verified_at = now
+    await db.commit()
+    return VerifyOut(
+        present_count=len(present_ids), missing_count=len(missing_ids), last_verified_at=now
+    )
 
 
 @router.get("/{tote_id}/card", include_in_schema=False)

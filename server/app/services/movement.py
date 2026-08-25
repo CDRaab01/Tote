@@ -30,11 +30,17 @@ from app.models.item import Item
 from app.models.movement import Movement
 from app.models.tote import Tote
 
-# Which reasons put an item INTO a tote, and which take it out. A reason not in either set is a
+# Which reasons put an item INTO a tote, and which take it out. A reason in no set at all is a
 # programming error rather than a user error, so it raises rather than defaulting — defaulting
 # would silently produce the contradictory state the invariant exists to prevent.
+#
+# `corrected` is in BOTH sets, the only reason that is: a correction states what is actually
+# true, not which way anything travelled, and the truth can be "it was in B07 all along" or "it
+# is not where the catalogue said" (a verify pass finding a bin short). The direction of one
+# call is decided the way this module decides everything else — by whether it carries a
+# destination.
 _INBOUND = {"initial", "moved", "repacked", "returned", "corrected"}
-_OUTBOUND = {"unpacked", "outgrown", "loaned", "disposed", "bin_deleted"}
+_OUTBOUND = {"unpacked", "outgrown", "loaned", "disposed", "bin_deleted", "corrected"}
 
 # The third kind, and the only one that puts an item nowhere: it entered the CATALOGUE without
 # entering a bin. Reviewing a batch and deciding where things go afterwards is a real workflow —
@@ -77,6 +83,7 @@ _OUT_STATUS = {
     "loaned": "loaned",
     "disposed": "disposed",
     "bin_deleted": "out",
+    "corrected": "out",
 }
 
 # The `out_reason` recorded alongside. Deliberately narrower than MOVEMENT_REASONS: "why it left"
@@ -94,6 +101,10 @@ _OUT_REASON = {
     # Its bin was deleted. It IS now unfiled; the ledger row is what preserves that it was once
     # in one, and which one.
     "bin_deleted": "unfiled",
+    # The catalogue said it was in the bin and a person looking into the bin could not find it.
+    # Not `other`: "missing" is the one fact a verify establishes, and a year later it is the
+    # difference between "somebody took this out" and "the catalogue was wrong about this".
+    "corrected": "missing",
 }
 
 
@@ -126,7 +137,13 @@ async def record_move(
     Does NOT commit — the caller owns the transaction, so a bulk unpack of forty items is one
     atomic operation rather than forty chances to half-succeed.
     """
-    if reason in _INBOUND:
+    # `corrected` sits in both sets, so membership alone cannot pick its branch — the presence
+    # of a destination does, exactly as it distinguishes every other call here.
+    inbound = reason in _INBOUND
+    if inbound and reason in _OUTBOUND:
+        inbound = to_tote_id is not None
+
+    if inbound:
         if to_tote_id is None:
             raise HTTPException(
                 http_status.HTTP_422_UNPROCESSABLE_ENTITY,

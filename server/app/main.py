@@ -14,6 +14,7 @@ from app.limiter import limiter
 from app.routers import (
     catalog,
     containers,
+    home,
     household,
     items,
     people,
@@ -117,6 +118,7 @@ async def security_headers(request: Request, call_next):
 app.include_router(suite_auth.router)
 app.include_router(users.router)
 app.include_router(catalog.router)
+app.include_router(home.router)
 app.include_router(totes.router)
 app.include_router(items.router)
 app.include_router(containers.router)

@@ -26,7 +26,13 @@ from app.schemas.catalog import (
 from app.security import CurrentUser
 from app.services import photo_store
 from app.services.apparel_write import apply_apparel
-from app.services.catalog import apply_size_filter, item_query, items_for, to_item_out
+from app.services.catalog import (
+    apply_size_filter,
+    item_query,
+    items_for,
+    to_item_out,
+    tote_color_map,
+)
 from app.services.movement import inbound_reason_for, record_move
 
 router = APIRouter(tags=["items"])
@@ -74,7 +80,13 @@ async def list_items(
         # absent rather than being swept in by a null.
         query = query.join(ItemApparel, ItemApparel.item_id == Item.id)
         query = apply_size_filter(query, size)
-    return await items_for(db, query.order_by(Item.name).limit(limit).offset(offset))
+    items = await items_for(db, query.order_by(Item.name).limit(limit).offset(offset))
+    # One colour map for the whole page, never a resolve per row — the bin swatch sits beside
+    # every row of the app's main list, which is exactly where an N+1 would live.
+    colors = await tote_color_map(db, user.household_id)
+    for item in items:
+        item.tote_color_hex = colors.get(item.current_tote_id)
+    return items
 
 
 @router.post("/items", response_model=ItemOut, status_code=status.HTTP_201_CREATED)
@@ -356,6 +368,8 @@ async def search(
     user: CurrentUser,
     db: Db,
     q: str = Query(min_length=1, max_length=120),
+    size: str | None = Query(default=None, description="e.g. 4T, 6X, W8 — matched approximately"),
+    include_close: bool = Query(default=False),
     limit: int = Query(default=50, le=200),
 ):
     """Full-text search over items — the app's primary entry point.
@@ -366,19 +380,55 @@ async def search(
 
     Results are ordered by rank then name, so ties are stable rather than arbitrary; an unstable
     order in a list someone is scanning reads as the app being broken.
+
+    `size` narrows by the ladder with exactly the `GET /items?size=` semantics, because "4T
+    winter coat" is one question in the person's head, not a search plus a second screen.
+
+    `include_close` adds a trigram fallback that runs ONLY when the full-text pass found
+    nothing: a hit that merely resembles the query must never dilute a page of real matches,
+    so near-misses appear alone, labelled `close_match`, or not at all.
     """
     tsquery = func.websearch_to_tsquery("english", q)
     rank = func.ts_rank(Item.search_vector, tsquery)
+    base = item_query(user.household_id)
+    if size:
+        # Same inner join and same service as GET /items?size= (see list_items): filtering by
+        # size means the caller only wants things that HAVE one, so an item with no apparel row
+        # is correctly absent rather than swept in by a null.
+        base = apply_size_filter(base.join(ItemApparel, ItemApparel.item_id == Item.id), size)
     rows = (
         await db.execute(
-            item_query(user.household_id)
-            .add_columns(rank)
+            base.add_columns(rank)
             .where(Item.search_vector.op("@@")(tsquery))
             .order_by(rank.desc(), Item.name)
             .limit(limit)
         )
     ).all()
-    return [
-        SearchHit(item=to_item_out(item, code, loc, photos, turn), rank=float(r))
-        for item, code, loc, photos, turn, r in rows
-    ]
+    close = False
+    if not rows and include_close:
+        # Nothing matched exactly — only now try trigram similarity, so "sleepsiut" still finds
+        # the Sleepsuit that is sealed in a bin somewhere. The same base query keeps the
+        # household scope and any size filter; the threshold is low enough to survive a
+        # transposed pair in a short word while unrelated names measure at zero.
+        score = func.greatest(
+            func.similarity(Item.name, q),
+            func.similarity(func.coalesce(Item.description, ""), q),
+        )
+        rows = (
+            await db.execute(
+                base.add_columns(score)
+                .where(score > 0.25)
+                .order_by(score.desc(), Item.name)
+                .limit(limit)
+            )
+        ).all()
+        close = True
+    # The swatch beside a hit is how a row is matched to a physical bin by sight — one colour
+    # map for the whole result set, never a resolve per row.
+    colors = await tote_color_map(db, user.household_id) if rows else {}
+    hits = []
+    for item, code, loc, photos, turn, r in rows:
+        out = to_item_out(item, code, loc, photos, turn)
+        out.tote_color_hex = colors.get(item.current_tote_id)
+        hits.append(SearchHit(item=out, rank=float(r), close_match=close))
+    return hits

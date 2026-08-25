@@ -26,7 +26,7 @@ ITEM_STATUSES = ("stored", "out", "loaned", "disposed")
 ITEM_CONDITIONS = ("new", "like_new", "good", "fair", "poor")
 # Why it left the tote. Kept separate from `status` because "out for the holidays" and
 # "outgrown, waiting to be handed down" are the same status and completely different questions.
-OUT_REASONS = ("unpacked", "outgrown", "loaned", "in_use", "unfiled", "other")
+OUT_REASONS = ("unpacked", "outgrown", "loaned", "in_use", "unfiled", "missing", "other")
 
 
 class Item(Base):
