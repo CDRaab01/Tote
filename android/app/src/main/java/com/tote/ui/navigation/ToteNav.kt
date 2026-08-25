@@ -60,6 +60,7 @@ import com.tote.ui.settings.SettingsScreen
 import com.tote.ui.theme.ToteTheme
 import com.tote.ui.totes.ToteListScreen
 import com.tote.ui.totes.UnfiledScreen
+import com.tote.ui.verify.VerifyScreen
 
 /**
  * Five tabs: Find, Totes, People, Catalogue, Review.
@@ -86,9 +87,18 @@ object Routes {
     const val CATEGORY_MANAGER = "settings/categories"
     const val PHOTO_ORIENTATION = "settings/photo-orientation"
     const val TOTE_DETAIL = "totes/{toteId}?mismatch={mismatch}"
+    const val TOTE_VERIFY = "totes/{toteId}/verify"
     const val PERSON_DETAIL = "people/{personId}"
 
     fun toteDetail(id: String, mismatch: Boolean = false) = "totes/$id?mismatch=$mismatch"
+
+    /**
+     * The verify pass over one bin.
+     *
+     * A destination rather than a mode on the bin screen: the pass is a posture, not a filter,
+     * and backing out of a half-finished check has to land on the bin with nothing written.
+     */
+    fun toteVerify(id: String) = "totes/$id/verify"
 
     fun personDetail(id: String) = "people/$id"
 
@@ -102,6 +112,29 @@ object Routes {
 /** The tab routes, which is also the set on which the bottom bar is shown. */
 private val TAB_ROUTES =
     setOf(Routes.SEARCH, Routes.TOTES, Routes.PEOPLE, Routes.CAPTURE, Routes.REVIEW)
+
+/**
+ * The launcher's long-press menu, as the app understands it.
+ *
+ * A shortcut names a TAB, never a bin. The two entries are the two things somebody opens this
+ * app to do from a standing start — find something, photograph something — and neither needs to
+ * know anything before it opens. Opening one particular bin is what the tag stuck to that bin
+ * is for, and a launcher list of pinned bins would be a second, hand-maintained copy of the
+ * catalog's own ordering.
+ *
+ * **There is deliberately no "scan a tag" shortcut.** Reading a tag happens through the
+ * system's NFC dispatch, which launches this app with no help from it; a shortcut opening a
+ * screen that only says "hold your phone near a tag" would be a screen pretending to be
+ * hardware, and it would be the only place in the app that reads tags.
+ *
+ * These values are the other half of `res/xml/shortcuts.xml` — the launcher builds the intent
+ * from that file and this reads what it built, so changing one means changing both.
+ */
+object Shortcuts {
+    const val EXTRA = "tote.shortcut"
+    const val SEARCH = "search"
+    const val CAPTURE = "capture"
+}
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -151,7 +184,16 @@ fun ToteNavHost(
 
     LaunchedEffect(launchIntent) {
         if (launchIntent != null) {
-            tapRouter.onIntent(launchIntent)
+            // A shortcut names a tab; a tag names a bin. Branched rather than run one after the
+            // other because they are two different launches arriving through the same door: a
+            // shortcut intent carries no NDEF data at all, so handing it to the tap router could
+            // only ever resolve to nothing, and a shortcut that DID one day carry a code would
+            // otherwise quietly perform two navigations for one press.
+            when (launchIntent.getStringExtra(Shortcuts.EXTRA)) {
+                Shortcuts.SEARCH -> nav.tabTo(Routes.SEARCH)
+                Shortcuts.CAPTURE -> nav.tabTo(Routes.CAPTURE)
+                else -> tapRouter.onIntent(launchIntent)
+            }
             onIntentConsumed()
         }
     }
@@ -292,6 +334,10 @@ fun ToteNavHost(
                     onOpenSettings = { nav.navigate(Routes.SETTINGS) },
                     hasInvite = hasInvite,
                     onOpenCategory = { id, name -> nav.navigate(Routes.categoryItems(id, name)) },
+                    // The next-size card's whole point is that it is about a person: the bins it
+                    // names are the answer, and the person's screen is where the question ("what
+                    // fits her now") already lives.
+                    onOpenPerson = { nav.navigate(Routes.personDetail(it)) },
                 )
             }
             composable(Routes.TOTES) {
@@ -325,7 +371,21 @@ fun ToteNavHost(
                         defaultValue = false
                     },
                 ),
-            ) { ToteDetailScreen(onGone = { nav.navigateUp() }) }
+            ) {
+                ToteDetailScreen(
+                    onGone = { nav.navigateUp() },
+                    onVerify = { nav.navigate(Routes.toteVerify(it)) },
+                )
+            }
+            // Pushed on top of the bin it checks, so finishing pops back onto exactly the screen
+            // whose date just moved — and `RefreshOnResume` there re-reads it without the verify
+            // screen having to know that the bin screen exists.
+            composable(
+                Routes.TOTE_VERIFY,
+                arguments = listOf(navArgument("toteId") { type = NavType.StringType }),
+            ) {
+                VerifyScreen(onDone = { nav.navigateUp() })
+            }
             composable(Routes.SETTINGS) {
                 SettingsScreen(
                     onOpenCategories = { nav.navigate(Routes.CATEGORY_MANAGER) },

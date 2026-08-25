@@ -160,6 +160,36 @@ class ToteListViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Photograph the place a group of bins lives in.
+     *
+     * A place is the one thing in this catalog that is never in a bin, so nothing else in the
+     * app could ever picture it — and "the attic" is a word where "that shelf behind the water
+     * heater" is the actual answer. One photo per location, replacing whatever was there.
+     *
+     * The bytes are read here rather than in the repository because a `content://` Uri only
+     * opens through a ContentResolver, the same as the capture flow's gallery path; the
+     * downscale happens on the way out, in the one place every upload passes through. Both
+     * outcomes speak: this is a user-initiated write, and a silent failure over the attic's
+     * Wi-Fi is exactly how a feature gets reported as "the button does nothing".
+     */
+    fun setLocationPhoto(locationId: String, uri: Uri) {
+        viewModelScope.launch {
+            val bytes = runCatching {
+                app.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            }.getOrNull()
+            if (bytes == null) {
+                // A picked image that will not open is not a network problem, and saying
+                // "check you're on the tailnet" for it would send the diagnosis somewhere else.
+                feedback.say("Couldn't read that picture.")
+                return@launch
+            }
+            runCatching { repo.uploadLocationPhoto(locationId, bytes) }
+                .onSuccess { feedback.say("Photo added to ${it.name}.") }
+                .onFailure { feedback.say(ApiErrors.message(it, "Couldn't add that photo.")) }
+        }
+    }
+
     /** Add a place without leaving the dialog, and select it. */
     fun createLocation(name: String, onCreated: (String) -> Unit) {
         viewModelScope.launch {

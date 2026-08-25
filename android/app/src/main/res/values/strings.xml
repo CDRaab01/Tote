@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Tote</string>
+
+    <!-- Launcher shortcuts (res/xml/shortcuts.xml). The short label is what fits under an icon
+         and the long one is what the menu actually shows, so both name the same verb rather
+         than abbreviating it into something else. "Find" is the tab's own word. -->
+    <string name="shortcut_search_short">Find</string>
+    <string name="shortcut_search_long">Search the catalog</string>
+    <string name="shortcut_capture_short">Photograph</string>
+    <string name="shortcut_capture_long">Photograph an item</string>
 </resources>

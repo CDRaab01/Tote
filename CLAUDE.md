@@ -1250,3 +1250,63 @@ live: latency went `1h3m59s` → `15s`, `Ready: true`, uploads resumed in 135 s.
 **Verified:** 194 Android tests green, `:app:assembleDebug` green, and `UploadWorkerDecisionTest`
 was **checked against the old rule first** — two of its seven cases fail there, and they are
 exactly the two that encode this change.
+
+
+## The bin that checks itself, and the search that forgives a typo (#57, #58)
+
+The first round driven by *design* rather than by a bug: mockups of every screen were approved
+before a line was written, and the build followed them. Two PRs — the server (#57, merged and
+deployed) and the client (#58).
+
+**Verify is the drift-killer, and the coverage rule is the whole design.** The ledger has always
+recorded every *intentional* move; nothing could catch the move nobody recorded, which is what
+eventually kills every inventory system. `POST /totes/{id}/verify` takes a bin's stored contents
+ticked present-or-missing and refuses anything less than **full coverage** — 422, and nothing
+changes. A partial audit stamped "verified" would be the same lie the empty-state rule exists to
+prevent. Missing items become outbound `corrected` moves (`out`/`missing`); present items get
+**no ledger rows** at all, because forty "still here" rows would bury the history the audit
+exists to protect. Staleness is the client's judgement (rose past 12 months); the server records
+`last_verified_at` and never editorialises a threshold.
+
+**`corrected` became valid in both directions**, which is the only movement-semantics change:
+with a destination it is the old fix-the-record filing, without one it is "the catalogue said
+stored and the bin disagreed."
+
+**Close matches are a labelled fallback, not better ranking.** `include_close=true` runs ONE
+trigram pass (`pg_trgm`, similarity > 0.25) and only when full-text matched *nothing*, so a real
+answer is never diluted. Worth knowing before "improving" it: **the stemmer already forgives
+more than you think** — "sleepsuite" IS a full-text match for "Sleepsuit"; the fallback exists
+for transpositions like "sleepsiut" that it genuinely misses.
+
+**The glyph is the round's quiet win, and its bug is the lesson.** A bin is now a *swatch* —
+code on the bin's own colour — everywhere it appears, painted from `services/colors.py`, the one
+free-text-to-hex map, so the phone row, the bin, and the index card's new colour spine can never
+disagree. The first version chose its text with `luminance > 0.5`, which is the obvious way to
+write it and is **wrong**: "clear" (#8C97A6) and "white" (#AEB6C2) both sit under that threshold
+while needing dark text, and rendered white-on-pale at **2.96:1 and 2.04:1**. Nothing caught it —
+every screenshot fixture happens to use a dark colour, so the glyph looked perfect in all 96
+baselines. **Rule: pick the text colour by measuring both candidates, never by a luminance
+threshold**, and when a component's input is a value somebody else chooses, the guard walks the
+whole input set (`ToteGlyphContrastTest`) rather than the one case a fixture happens to hold.
+
+**Two more contrast bugs were found the way the last three were — by looking at the PNG.** The
+add-photo icon on an unphotographed location header was `hairlineStrong` (1.56:1, invisible
+precisely where the invitation mattered), and on a *photographed* header it was white at the TOP
+of the banner, where the scrim gradient is fully transparent — invisible over any pale
+photograph, and invisible without ever looking broken. Both now carry their own darkness, the
+same reasoning the place name already used.
+
+Also in the round: `GET /home` volunteers two cards, both read-side compositions over data the
+catalogue already holds — **seasonal** (grounded in the ledger's own unpacked window from a year
+ago; no holiday calendar, no category hard-coding) and **next-size** (recorded sizes +
+`next_size_up`). The next-size band is **floored at the wearer's current ordinal**: the symmetric
+tolerance around the next rung reaches back past the size they wear today, and a card counting
+the clothes already on the child's back as "waiting in the next size" advertises a trip to the
+attic for nothing. Locations gained one photograph each, so the bins list is navigable by sight.
+
+**Verified:** 512 server tests (the one red is the pre-existing local-only webp case, see #54),
+226 Android tests, migration `0010` round-trips up→down→up, and production serves the new schema
+— `alembic_version` 0010, `pg_trgm` installed, `/home` live. The interaction test and the
+contrast guard were both **checked against the broken code first**: 4 of 6 and 2 of 3 fail there,
+and they are exactly the cases that encode the change.
+

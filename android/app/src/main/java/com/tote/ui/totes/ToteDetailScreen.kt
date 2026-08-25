@@ -69,6 +69,7 @@ import com.tote.ui.components.DateField
 import com.tote.ui.components.PickerDialog
 import com.tote.ui.components.PickerField
 import com.tote.ui.components.PickerOption
+import com.tote.ui.components.RefreshOnResume
 import com.tote.ui.components.asPickerOptions
 import com.tote.ui.components.ToteButton
 import com.tote.ui.items.ItemSheet
@@ -85,6 +86,8 @@ import design.pulse.ui.components.SectionHeader
 @Composable
 fun ToteDetailScreen(
     onGone: () -> Unit = {},
+    /** Open the verify pass for this bin, by id — wired to the route by the nav host. */
+    onVerify: (String) -> Unit = {},
     viewModel: ToteDetailViewModel = hiltViewModel(),
     itemSheet: ItemSheetViewModel = hiltViewModel(),
 ) {
@@ -125,6 +128,12 @@ fun ToteDetailScreen(
         onTag = viewModel::onTagPresented,
     )
 
+    // Re-read on the way back, the same as the person screen. A verify pass happens on its own
+    // screen and can move several items out of this bin at once, so returning to a snapshot
+    // taken before it would show, in detail, a bin that no longer exists — and this screen is
+    // read live for exactly that reason.
+    RefreshOnResume(viewModel::load)
+
     when (val s = state) {
         is UiState.Success -> {
             ToteDetailContent(
@@ -140,6 +149,7 @@ fun ToteDetailScreen(
                 onWriteTag = viewModel::beginWrite,
                 hasNfc = hasNfc(context),
                 onPrintCard = { viewModel.printCard(s.data.code) },
+                onVerify = { onVerify(s.data.id) },
                 tagMismatch = viewModel.tagMismatch,
                 onOpenItem = itemSheet::open,
                 onEditBin = {
@@ -337,6 +347,8 @@ fun ToteDetailContent(
     onWriteTag: () -> Unit = {},
     hasNfc: Boolean = true,
     onPrintCard: () -> Unit = {},
+    /** Start a verify pass — the second line under the hero, beside the labelling one. */
+    onVerify: () -> Unit = {},
     tagMismatch: Boolean = false,
     onEditBin: () -> Unit = {},
     onAddBag: () -> Unit = {},
@@ -399,6 +411,10 @@ fun ToteDetailContent(
                     onWriteTag = onWriteTag,
                     onPrintCard = onPrintCard,
                 )
+            }
+
+            item {
+                VerifyLine(lastVerifiedAt = tote.lastVerifiedAt, onVerify = onVerify)
             }
 
             if (tagMismatch) {
@@ -876,6 +892,47 @@ private fun LabellingLine(
                 },
             ) { Text(label) }
         }
+    }
+}
+
+/**
+ * Whether what the catalog says is in this bin has ever been checked against the bin — one
+ * line, in the same voice as the labelling one directly above it.
+ *
+ * The two lines answer the two halves of trusting a catalogue: the first says whether the bin
+ * can be FOUND, this one says whether its contents can be BELIEVED. A bin nobody has verified
+ * is the ordinary state — every bin filed before this feature existed is in it — so it says so
+ * plainly and stays out of the attention channel. Rose is kept for a bin that WAS checked and
+ * has since gone a year without, which is the only case where the catalog is making a claim old
+ * enough to have quietly stopped being true.
+ */
+@Composable
+private fun VerifyLine(lastVerifiedAt: String?, onVerify: () -> Unit) {
+    val colors = ToteTheme.colors
+    val months = remember(lastVerifiedAt) { monthsSince(lastVerifiedAt) }
+    val stale = months != null && months > STALE_AFTER_MONTHS
+
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            when {
+                // Verbatim date, like the labelling line's — the two sit together and one of
+                // them formatting its date differently would read as two different facts.
+                lastVerifiedAt == null -> "Never verified"
+                stale -> "Verified ${lastVerifiedAt.take(10)} · $months months ago"
+                else -> "Verified ${lastVerifiedAt.take(10)}"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = if (stale) colors.attention.base else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(
+            onClick = onVerify,
+            colors = if (stale) {
+                ButtonDefaults.textButtonColors(contentColor = colors.attention.base)
+            } else {
+                ButtonDefaults.textButtonColors()
+            },
+        ) { Text("Verify contents") }
     }
 }
 

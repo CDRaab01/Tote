@@ -39,9 +39,13 @@ import com.tote.ui.theme.ToteTheme
  * like. Null or unparseable gets the neutral panel treatment — the ordinary state for an
  * uncoloured bin, not an error.
  *
- * The code is white except on a light body (relative luminance > 0.5), where it drops to ink —
- * the theme's yellow lesson applied to colours the user chose: they can be any lightness, and
- * the text has to survive all of them.
+ * The code takes whichever of white or ink CONTRASTS BETTER against the body, measured rather
+ * than guessed. A luminance threshold was the obvious way to write this and it was wrong: at
+ * `> 0.5` the two lightest bin colours the server can send — "clear" (#8C97A6, luminance 0.305)
+ * and "white" (#AEB6C2, 0.463) — both took white text, at 2.96:1 and 2.04:1 against a 4.5:1
+ * floor. The true crossover is near 0.198, but no constant is worth defending here: comparing
+ * the two candidates is self-correcting if `services/colors.py` ever gains a hue, and it says
+ * what it means. Worst case across the current palette is 4.51:1 (beige/tan), which clears AA.
  *
  * Two sizes: the default 50dp for list rows, [compact] 42dp for search hits and chips.
  */
@@ -57,8 +61,7 @@ fun ToteGlyph(
     val body = parsed ?: colors.panelHigh
     val text = when {
         parsed == null -> MaterialTheme.colorScheme.onSurfaceVariant
-        parsed.luminance() > 0.5f -> GlyphInk
-        else -> Color.White
+        else -> glyphTextOn(parsed)
     }
     val shape = RoundedCornerShape(8.dp)
     Column(
@@ -100,6 +103,23 @@ fun ToteGlyph(
 
 /** The light scheme's ink, for the code on a light body — onSurface's charcoal, not pure black. */
 private val GlyphInk = Color(0xFF14181D)
+
+/**
+ * WCAG relative-contrast ratio between two opaque colours, `(lighter + 0.05) / (darker + 0.05)`.
+ *
+ * Compose's [luminance] is already the WCAG relative luminance (the sRGB-linearised
+ * 0.2126/0.7152/0.0722 sum), so this is the whole formula. Small enough to inline, important
+ * enough to name: the point of the glyph is that a code stays readable on a colour somebody
+ * else chose.
+ */
+internal fun glyphTextOn(body: Color): Color =
+    if (contrastRatio(GlyphInk, body) > contrastRatio(Color.White, body)) GlyphInk else Color.White
+
+internal fun contrastRatio(a: Color, b: Color): Float {
+    val la = a.luminance()
+    val lb = b.luminance()
+    return (maxOf(la, lb) + 0.05f) / (minOf(la, lb) + 0.05f)
+}
 
 /**
  * `#RRGGBB` (case-insensitive, `#` optional) to a [Color], or null for anything else.
