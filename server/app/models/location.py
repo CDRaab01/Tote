@@ -34,6 +34,10 @@ class Location(Base):
         ForeignKey("locations.id", ondelete="SET NULL"), nullable=True
     )
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Server-derived path of the one optional photo of the place itself (the shelf, the rack) —
+    # set/replaced via POST /locations/{id}/photo. The DB stores the path, the volume the bytes,
+    # exactly like item photographs.
+    photo_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

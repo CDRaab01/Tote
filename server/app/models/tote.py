@@ -60,6 +60,12 @@ class Tote(Base):
     card_printed_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # When a human last stood in front of this bin and confirmed the catalogue against what is
+    # physically inside (the Verify flow). Null = never. The ledger records every *intentional*
+    # move; this is the one defence against the moves nobody recorded.
+    last_verified_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
