@@ -12,6 +12,7 @@ Two things are tested here that a mocked pipeline cannot see:
 
 import io
 import json
+import shutil
 import uuid
 
 import httpx
@@ -354,6 +355,197 @@ async def test_an_unreachable_model_still_produces_a_draft_with_the_photo(auth_c
     assert body["is_draft"] is True
     assert body["scan_error"] == "identify_unavailable"
     assert body["photo_count"] == 1
+
+
+# ── Re-scan: asking again with the photographs already on the volume ────────────
+
+
+async def test_a_failed_draft_can_be_re_identified_from_the_stored_photo(auth_client, monkeypatch):
+    """The recovery the whole pipeline ordering exists to make possible.
+
+    Twenty drafts landed as `identify_unavailable` in production on 2026-08-25 because the model
+    had loaded onto the wrong GPU and every call passed the timeout. Nothing was lost — the
+    originals are persisted before the model is ever called — but only a hand-run script could
+    prove it. This is that proof, as a test.
+    """
+    from fastapi import HTTPException
+
+    import app.services.scan_pipeline as pipeline
+
+    async def unreachable(urls, categories=None, client=None):
+        raise HTTPException(503, "Couldn't reach LM Studio. Is it running?")
+
+    monkeypatch.setattr(pipeline, "identify_item", unreachable)
+    draft = (await _scan(auth_client, photo_bytes())).json()
+    assert draft["scan_error"] == "identify_unavailable"
+    assert draft["name"] == "Unidentified item"
+
+    async def recovered(urls, categories=None, client=None):
+        from app.services.ai.identify_prompts import IdentifyDraft
+
+        return IdentifyDraft(name="Cordless drill", confidence="high")
+
+    monkeypatch.setattr(pipeline, "identify_item", recovered)
+
+    r = await auth_client.post(f"/drafts/{draft['id']}/rescan")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["name"] == "Cordless drill"
+    assert body["scan_confidence"] == "high"
+    # Cleared, not merely overwritten: a draft that still reported an error while showing an
+    # answer would keep the review screen telling somebody nobody had looked at the photograph.
+    assert body["scan_error"] is None
+    # Still a draft, and still holding its photograph. A re-scan is the model talking again, not
+    # a decision — the human confirm is unchanged.
+    assert body["is_draft"] is True
+    assert body["photo_count"] == 1
+    assert (await auth_client.get("/items")).json() == []
+
+
+async def test_a_rescan_while_the_model_is_still_down_changes_nothing(auth_client, monkeypatch):
+    """503, and the draft exactly as it was.
+
+    Deliberately unlike `/items/scan`, which records the outage and keeps going because it is
+    holding a photograph that exists nowhere else. Nothing is at risk here, and somebody who
+    tapped a retry needs to hear that it failed rather than watch it silently no-op.
+    """
+    from fastapi import HTTPException
+
+    import app.services.scan_pipeline as pipeline
+
+    async def unreachable(urls, categories=None, client=None):
+        raise HTTPException(503, "Couldn't reach LM Studio. Is it running?")
+
+    monkeypatch.setattr(pipeline, "identify_item", unreachable)
+    draft = (await _scan(auth_client, photo_bytes())).json()
+
+    r = await auth_client.post(f"/drafts/{draft['id']}/rescan")
+    assert r.status_code == 503
+
+    after = (await auth_client.get("/drafts")).json()[0]
+    assert after["scan_error"] == "identify_unavailable"
+    assert after["name"] == "Unidentified item"
+    assert after["photo_count"] == 1
+
+
+async def test_a_rescan_replaces_the_previous_answer_rather_than_merging_it(
+    auth_client, monkeypatch
+):
+    """A re-scan is a fresh reading, and half of one reading plus half of another is a lie.
+
+    The size is the case that matters: the label pass only assigns when it reads a tag, so
+    without an explicit clear a garment re-identified as a saucepan keeps the size read from the
+    photograph back when the model thought it was a jumper — with nothing on screen to say so.
+    """
+    import app.services.scan_pipeline as pipeline
+    from app.services.ai.identify_prompts import IdentifyDraft
+    from app.services.ai.label_prompts import LabelDraft
+
+    async def a_jumper(urls, categories=None, client=None):
+        return IdentifyDraft(name="Wool jumper", category="Clothing", confidence="high")
+
+    async def reads_a_tag(urls, client=None):
+        return LabelDraft(size="4T")
+
+    monkeypatch.setattr(pipeline, "identify_item", a_jumper)
+    monkeypatch.setattr(pipeline, "read_label", reads_a_tag)
+    await auth_client.post("/categories", json={"name": "Clothing"})
+    draft = (await _scan(auth_client, photo_bytes())).json()
+    assert draft["apparel"]["size_raw"] == "4T"
+
+    async def a_saucepan(urls, categories=None, client=None):
+        return IdentifyDraft(name="Saucepan", category="Tools", confidence="high")
+
+    monkeypatch.setattr(pipeline, "identify_item", a_saucepan)
+
+    body = (await auth_client.post(f"/drafts/{draft['id']}/rescan")).json()
+    assert body["name"] == "Saucepan"
+    assert body["apparel"] is None
+
+
+async def test_a_rescan_keeps_the_bin_chosen_at_capture(auth_client, monkeypatch):
+    """The destination is the person's decision, not the model's, so a re-read must not lose it.
+
+    It used to be lost by the *scan* rather than the re-scan: `draft_tote_id` was the last line
+    of the happy path, so the `identify_unavailable` branch returned before reaching it and an
+    outage silently discarded the bin — on exactly the drafts already needing the most editing.
+    """
+    from fastapi import HTTPException
+
+    import app.services.scan_pipeline as pipeline
+    from app.services.ai.identify_prompts import IdentifyDraft
+
+    tote = (await auth_client.post("/totes", json={"code": "R01"})).json()
+
+    async def unreachable(urls, categories=None, client=None):
+        raise HTTPException(503, "Couldn't reach LM Studio. Is it running?")
+
+    monkeypatch.setattr(pipeline, "identify_item", unreachable)
+    draft = (await _scan(auth_client, photo_bytes(), tote_id=tote["id"])).json()
+    assert draft["draft_tote_id"] == tote["id"]
+
+    async def recovered(urls, categories=None, client=None):
+        return IdentifyDraft(name="Cordless drill", confidence="high")
+
+    monkeypatch.setattr(pipeline, "identify_item", recovered)
+
+    body = (await auth_client.post(f"/drafts/{draft['id']}/rescan")).json()
+    assert body["draft_tote_id"] == tote["id"]
+
+
+async def test_a_rescan_needs_a_photograph_that_is_actually_there(auth_client, monkeypatch):
+    """A missing file is not an outage, and must not come back as one.
+
+    409 rather than 503, because no number of retries will produce the file — telling somebody
+    to try again later would be sending them back to a button that cannot ever work.
+    """
+    import app.services.scan_pipeline as pipeline
+    from app.services.ai.identify_prompts import IdentifyDraft
+
+    async def fake_identify(urls, categories=None, client=None):
+        return IdentifyDraft(name="Cordless drill", confidence="high")
+
+    monkeypatch.setattr(pipeline, "identify_item", fake_identify)
+    draft = (await _scan(auth_client, photo_bytes())).json()
+
+    from app.services import photo_store
+
+    shutil.rmtree(photo_store.item_dir(uuid.UUID(draft["id"])))
+
+    r = await auth_client.post(f"/drafts/{draft['id']}/rescan")
+    assert r.status_code == 409
+    assert "photograph" in r.json()["detail"]
+
+
+async def test_another_households_draft_cannot_be_rescanned(auth_client, client, monkeypatch):
+    """Same scoping as confirm and discard — and it is a model call, so an unscoped one would
+    also let a stranger spend this household's GPU on their own photographs."""
+    import app.services.scan_pipeline as pipeline
+    from app.database import AsyncSessionLocal
+    from app.models.user import User, UserSettings
+    from app.security import create_access_token
+    from app.services.ai.identify_prompts import IdentifyDraft
+    from app.services.household_service import create_household
+
+    async def fake_identify(urls, categories=None, client=None):
+        return IdentifyDraft(name="Cordless drill", confidence="high")
+
+    monkeypatch.setattr(pipeline, "identify_item", fake_identify)
+    draft = (await _scan(auth_client, photo_bytes())).json()
+
+    async with AsyncSessionLocal() as db:
+        other = User(name="O", email=f"o-{uuid.uuid4().hex[:8]}@e.com")
+        db.add(other)
+        await db.flush()
+        await create_household(db, other.id)
+        db.add(UserSettings(user_id=other.id))
+        await db.commit()
+        token = create_access_token(str(other.id))
+
+    r = await client.post(
+        f"/drafts/{draft['id']}/rescan", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert r.status_code == 404
 
 
 async def test_discarding_a_draft_removes_its_photos(auth_client, monkeypatch):

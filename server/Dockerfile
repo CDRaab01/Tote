@@ -20,6 +20,10 @@ RUN pip install --no-cache-dir .
 # build time makes the container self-contained and the first scan as fast as the hundredth.
 RUN python -c "from rembg import new_session; new_session('u2net')"
 
+# Maintenance scripts (bulk re-scan, and whatever joins it). Copied AFTER the rembg layer on
+# purpose: editing one must not invalidate the ~170 MB weight bake above it.
+COPY scripts ./scripts
+
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 # Strip any CR so a Windows (CRLF) checkout doesn't break the shebang (exit 127).
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \

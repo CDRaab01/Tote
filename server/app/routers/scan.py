@@ -38,7 +38,12 @@ from app.services.apparel_write import apply_apparel
 from app.services.books import LookupUnavailable, description_for, fetch_cover, lookup_isbn
 from app.services.catalog import item_query, to_item_out
 from app.services.movement import record_move
-from app.services.scan_pipeline import scan_photos
+from app.services.scan_pipeline import (
+    NoStoredPhotos,
+    identify_into,
+    scan_photos,
+    stored_photo_urls,
+)
 
 router = APIRouter(tags=["scan"])
 
@@ -481,6 +486,48 @@ async def confirm(draft_id: uuid.UUID, body: DraftConfirm, user: CurrentUser, db
 
     row = (await db.execute(item_query(user.household_id).where(Item.id == item.id))).one()
     return to_item_out(*row)
+
+
+@router.post("/drafts/{draft_id}/rescan", response_model=DraftOut)
+async def rescan(draft_id: uuid.UUID, user: CurrentUser, db: Db):
+    """Ask the model again, using the photographs already on the volume.
+
+    The scan pipeline persists the originals **before** it calls the model, so an identification
+    that failed is recoverable without going back to the attic. That property was already true
+    and only reachable by hand: on 2026-08-25 twenty drafts came back as `identify_unavailable`
+    because LM Studio had loaded onto the integrated GPU and every call passed the 60 s timeout,
+    and clearing them meant running a script against production. This is that script, as a tap.
+
+    Offered on **any** draft, not only a failed one. A wrong-but-confident answer is at least as
+    worth re-rolling as a missing one, and gating it on `scan_error` would mean the one case the
+    endpoint exists for is the only one it does not cover the second time it happens.
+
+    **Every model-owned field is replaced**, size included — see `identify_into`. Nothing else is
+    touched: the photographs, the bin chosen at capture, and the item's identity all survive, so
+    a re-scan can be repeated and cannot lose anything. The draft stays a draft; this is still
+    the model talking, and the house rule that a human confirms it is unchanged.
+
+    A model that cannot be reached is a **503 with the draft left exactly as it was**, rather
+    than the scan endpoint's "record it and carry on". The two differ because the stakes do: a
+    scan is holding a photograph that does not exist anywhere else and must not lose it, while a
+    re-scan risks nothing and is answering somebody who is watching a spinner.
+    """
+    item = await _owned_draft(db, user.household_id, draft_id)
+    household_id = user.household_id
+
+    try:
+        urls = await stored_photo_urls(db, item)
+    except NoStoredPhotos:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This draft has no photograph to re-read.",
+        ) from None
+
+    await identify_into(db, item, urls, household_id=household_id, client=None)
+    item.processed_at = datetime.datetime.now(datetime.UTC)
+    await db.commit()
+    await db.refresh(item)
+    return await _to_draft_out(db, item)
 
 
 @router.delete("/drafts/{draft_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -246,6 +246,25 @@ interface ApiService {
     @POST("drafts/{id}/confirm")
     suspend fun confirmDraft(@Path("id") id: String, @Body body: DraftConfirm): ItemDto
 
+    /**
+     * Ask the model again, using the photographs the server already has.
+     *
+     * Nothing is uploaded: the scan pipeline persists the originals before it ever calls the
+     * model, so a draft that came back as `identify_unavailable` is recoverable without going
+     * back to the bin. That is the case this exists for — twenty drafts landed empty on
+     * 2026-08-25 because LM Studio had loaded onto the wrong GPU — but it is offered on any
+     * draft, because a confidently wrong answer is as worth re-rolling as a missing one.
+     *
+     * **Replaces every field the model owns, size included.** The response is the new draft, and
+     * the caller must reseat its form from it rather than merging.
+     *
+     * Runs on the SCAN timeout, not the default one: this is the same pair of vision calls a
+     * capture makes, and at OkHttp's 10 s every one of them would fail. See
+     * `ScanTimeoutInterceptor` — its path match covers this route too.
+     */
+    @POST("drafts/{id}/rescan")
+    suspend fun rescanDraft(@Path("id") id: String): DraftDto
+
     /** Throw a draft away, photos and all. */
     @DELETE("drafts/{id}")
     suspend fun discardDraft(@Path("id") id: String)
