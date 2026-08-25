@@ -70,6 +70,18 @@ services:
       # host.docker.internal is the host from in here.
       LM_STUDIO_BASE_URL: ${LM_STUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
       LM_STUDIO_VISION_MODEL: ${LM_STUDIO_VISION_MODEL:-google/gemma-4-e4b}
+      # How long ONE vision call may take. Measured on this host, not guessed: a two-photo
+      # identify runs ~73 s idle, and a scan makes TWO such calls (identify, then the narrow
+      # label pass), so the old 60 s budget failed every single scan — silently, as
+      # `identify_unavailable` drafts nobody could tell apart from a model that had simply
+      # looked and shrugged.
+      #
+      # 180 s is per call, and deliberately not larger: the client gives the whole synchronous
+      # scan 240 s (ScanTimeoutInterceptor), so two calls plus cleanup have to fit under that.
+      # If this ever needs to exceed ~110 s, the client's budget is the thing to raise first —
+      # a server that outlives the client's patience just moves the failure somewhere the
+      # phone reports worse.
+      LM_STUDIO_TIMEOUT: "180"
       # Where item photos live inside the container; the volume below maps it out.
       PHOTOS_DIR: /data/photos
       # Overdue-loan nudges. LITERALS, and the self-hosted ntfy only.
