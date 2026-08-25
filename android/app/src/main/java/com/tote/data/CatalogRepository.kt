@@ -4,8 +4,10 @@ import com.tote.data.local.CachedItem
 import com.tote.data.local.CachedTote
 import com.tote.data.local.CatalogDao
 import com.tote.data.remote.ApiService
+import com.tote.data.remote.ApparelDto
 import com.tote.data.remote.BulkMove
 import com.tote.data.remote.CategoryDto
+import com.tote.data.remote.HomeDto
 import com.tote.data.remote.ItemCreate
 import com.tote.data.remote.ItemDto
 import com.tote.data.remote.ItemUpdate
@@ -14,6 +16,9 @@ import com.tote.data.remote.MoveRequest
 import com.tote.data.remote.MovementDto
 import com.tote.data.remote.ToteCreate
 import com.tote.data.remote.ToteDetailDto
+import com.tote.data.remote.VerifyIn
+import com.tote.data.remote.VerifyOutDto
+import com.tote.util.ImageBytes
 import javax.inject.Inject
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -21,9 +26,23 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 
-/** A search result, plus whether it came from the server or the offline snapshot. */
-data class SearchResult(val items: List<ItemDto>, val offline: Boolean)
+/**
+ * A search result, plus whether it came from the server or the offline snapshot.
+ *
+ * `items` is the exact hits — the name every consumer already reads, and the only kind the
+ * offline path can produce. `close` is the server's trigram fallback ("wellies" for "welles"),
+ * and it is non-empty ONLY when `items` is empty: the server adds close matches precisely
+ * because full-text found nothing, so the two lists never compete for the screen.
+ */
+data class SearchResult(
+    val items: List<ItemDto>,
+    val offline: Boolean,
+    val close: List<ItemDto> = emptyList(),
+)
 
 /**
  * The single place the app talks to the catalog.
@@ -97,7 +116,11 @@ class CatalogRepository @Inject constructor(
         val totes = totesCall.await()
         val items = itemsCall.await()
         val locationsByTote = totes.associate { it.id to it.locationId }
-        val locationNames = namesCall.await().associate { it.id to it.name }
+        val locations = namesCall.await()
+        val locationNames = locations.associate { it.id to it.name }
+        // Denormalised onto the bin at sync time, because the location group header that wants
+        // a photo banner is built from cached bins offline, where `/locations` cannot be asked.
+        val locationHasPhoto = locations.associate { it.id to it.hasPhoto }
 
         dao.replaceAll(
             totes = totes.map {
@@ -112,6 +135,9 @@ class CatalogRepository @Inject constructor(
                     itemCount = it.itemCount,
                     outCount = it.outCount,
                     archived = it.archived,
+                    colorHex = it.colorHex,
+                    lastVerifiedAt = it.lastVerifiedAt,
+                    locationHasPhoto = it.locationId?.let(locationHasPhoto::get) ?: false,
                 )
             },
             items = items.map { it.toCached(locationNames, locationsByTote) },
@@ -138,17 +164,30 @@ class CatalogRepository @Inject constructor(
         // So "4T" finds the coat offline, which is the one place someone types it.
         sizeRaw = apparel?.sizeRaw,
         photoCount = photoCount,
+        toteColorHex = toteColorHex,
     )
 
     /**
      * Search the server, falling back to the offline snapshot.
      *
+     * `size` narrows server-side through the ladder, and the fallback IGNORES it: the LIKE scan
+     * has no ladder to narrow with, and the size chips are hidden offline anyway — an unfiltered
+     * honest answer beats a filter the cache could only fake by string equality.
+     *
      * The fallback is flagged rather than silent. Offline results come from a LIKE scan and will
      * not match the server's stemming, so presenting them identically would quietly teach the
-     * user that search is inconsistent.
+     * user that search is inconsistent. `close` stays empty offline for the same reason — the
+     * cache has no trigram index to be close with.
      */
-    suspend fun search(q: String): SearchResult =
-        runCatching { SearchResult(api.search(q).map { it.item }, offline = false) }
+    suspend fun search(q: String, size: String? = null): SearchResult =
+        runCatching {
+            val (close, exact) = api.search(q, size = size).partition { it.closeMatch }
+            SearchResult(
+                items = exact.map { it.item },
+                offline = false,
+                close = close.map { it.item },
+            )
+        }
             .getOrElse {
                 SearchResult(
                     dao.search(q).map { c ->
@@ -163,11 +202,25 @@ class CatalogRepository @Inject constructor(
                             toteCode = c.toteCode,
                             locationName = c.locationName,
                             isOverdue = c.isOverdue,
+                            // The cache carries these precisely so an offline hit is not a
+                            // stripped-down row: the thumbnail, the size and the bin's colour
+                            // are what let a person recognise the thing where the signal is
+                            // worst. Dropping them here is how offline results silently
+                            // diverged once already.
+                            photoCount = c.photoCount,
+                            toteColorHex = c.toteColorHex,
+                            apparel = c.sizeRaw?.let { raw -> ApparelDto(sizeRaw = raw) },
                         )
                     },
                     offline = true,
                 )
             }
+
+    /**
+     * The Find screen's forward-looking cards. Uncached and API-only like the overdue list:
+     * the cards are an invitation, not a report, and are simply absent offline.
+     */
+    suspend fun home(): HomeDto = api.home()
 
     suspend fun stats(): Triple<Int, Int, Int> =
         Triple(dao.toteCount(), dao.itemCount(), dao.outCount())
@@ -197,6 +250,26 @@ class CatalogRepository @Inject constructor(
     suspend fun createLocation(name: String): LocationDto =
         api.createLocation(com.tote.data.remote.LocationIn(name.trim()))
 
+    /**
+     * Photograph a place, from the picker's raw bytes.
+     *
+     * Downscaled through [ImageBytes] like every upload — a raw camera frame clears the server's
+     * cap on its own — and then force-refreshed so `locationHasPhoto` reaches the cached bins
+     * whose group header is about to draw the banner.
+     */
+    suspend fun uploadLocationPhoto(locationId: String, bytes: ByteArray): LocationDto {
+        val jpeg = ImageBytes.downscaleToJpeg(bytes)
+        val part = MultipartBody.Part.createFormData(
+            "photo",
+            "location.jpg",
+            jpeg.toRequestBody("image/jpeg".toMediaType()),
+        )
+        return api.uploadLocationPhoto(locationId, part).also { refresh(force = true) }
+    }
+
+    suspend fun deleteLocationPhoto(locationId: String) =
+        api.deleteLocationPhoto(locationId).also { refresh(force = true) }
+
     suspend fun createItem(body: ItemCreate) = api.createItem(body).also { refresh(force = true) }
 
     suspend fun patchItem(id: String, body: ItemUpdate) = api.patchItem(id, body).also { refresh(force = true) }
@@ -211,6 +284,19 @@ class CatalogRepository @Inject constructor(
 
     suspend fun repack(toteId: String, itemIds: List<String>? = null) =
         api.repack(toteId, BulkMove(itemIds)).also { refresh(force = true) }
+
+    /**
+     * A verify pass over one bin — see [ApiService.verifyTote] for the contract. A write like
+     * any other: the force refresh is what moves the fresh stamp, and any newly-missing items,
+     * into the snapshot the list and detail screens read.
+     */
+    suspend fun verifyTote(
+        toteId: String,
+        present: List<String>,
+        missing: List<String>,
+    ): VerifyOutDto =
+        api.verifyTote(toteId, VerifyIn(present = present, missing = missing))
+            .also { refresh(force = true) }
 
     suspend fun bulkMove(
         itemIds: List<String>,

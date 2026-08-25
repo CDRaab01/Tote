@@ -26,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -40,9 +41,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tote.data.remote.ItemDto
+import com.tote.data.remote.NextSizeCardDto
+import com.tote.data.remote.SeasonalCardDto
 import com.tote.ui.components.HazardRule
 import com.tote.ui.components.RefreshOnResume
 import com.tote.ui.components.ItemThumbnail
+import com.tote.ui.components.ToteGlyph
 import com.tote.ui.items.ItemSheet
 import com.tote.ui.items.ItemSheetViewModel
 import com.tote.ui.theme.ToteTheme
@@ -52,6 +56,9 @@ import design.pulse.ui.components.HeroPanel
 import design.pulse.ui.components.PanelCard
 import design.pulse.ui.components.SectionHeader
 import design.pulse.ui.components.StatTile
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /** How many overdue rows the card names before it summarises — enough to act on, short
  *  enough that the card never pushes the search box off the screen. */
@@ -63,6 +70,7 @@ fun SearchScreen(
     onOpenSettings: () -> Unit = {},
     hasInvite: Boolean = false,
     onOpenCategory: (String, String) -> Unit = { _, _ -> },
+    onOpenPerson: (String) -> Unit = {},
     viewModel: SearchViewModel = hiltViewModel(),
     itemSheet: ItemSheetViewModel = hiltViewModel(),
 ) {
@@ -79,6 +87,8 @@ fun SearchScreen(
         onOpenSettings = onOpenSettings,
         hasInvite = hasInvite,
         onOpenCategory = onOpenCategory,
+        onSizeSelect = viewModel::onSizeSelect,
+        onOpenPerson = onOpenPerson,
     )
 
     // A hit opens the item, not the bin. Tapping one used to be guarded on `currentToteId`, so a
@@ -105,6 +115,8 @@ fun SearchContent(
     modifier: Modifier = Modifier,
     hasInvite: Boolean = false,
     onOpenCategory: (String, String) -> Unit = { _, _ -> },
+    onSizeSelect: (String?) -> Unit = {},
+    onOpenPerson: (String) -> Unit = {},
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -190,6 +202,34 @@ fun SearchContent(
                 }
             }
 
+            // Narrow by size, between the field and the results. The vocabulary is the sizes
+            // present in the unfiltered hits — a chip for a size with no hits would be an
+            // invitation to an empty screen — and "Any size" is the way back out. Hidden
+            // offline: the fallback cannot filter through the ladder, and a chip that silently
+            // does nothing teaches distrust of every other one.
+            if (state.searched && !state.offline && state.sizes.isNotEmpty()) {
+                item {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(spacing.xs),
+                    ) {
+                        FilterChip(
+                            selected = state.sizeFilter == null,
+                            onClick = { onSizeSelect(null) },
+                            label = { Text("Any size") },
+                        )
+                        state.sizes.forEach { size ->
+                            FilterChip(
+                                selected = state.sizeFilter == size,
+                                onClick = { onSizeSelect(size) },
+                                // Verbatim — this is the tag's own words, same as on the rows.
+                                label = { Text(size) },
+                            )
+                        }
+                    }
+                }
+            }
+
             // The attention card, above the stats and below the search box — idle only, for the
             // same reason as the stats: mid-search it would sit between someone and the answer
             // they came for. A lent thing is remembered by exactly one person and they are not
@@ -229,6 +269,16 @@ fun SearchContent(
             // Stats only while idle: once someone is searching, a row of counts is noise between
             // them and the answer.
             if (!state.searched) {
+                // The two forward-looking cards, after the attention card and before the counts:
+                // urgency first, invitations second, furniture last. Each is simply absent when
+                // the server had nothing to say — or could not be asked (the 0-out rule).
+                state.seasonal?.let { card ->
+                    item { SeasonalCard(card) }
+                }
+                state.nextSize?.let { card ->
+                    item { NextSizeCard(card, onOpenPerson = onOpenPerson) }
+                }
+
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(spacing.md)) {
                         StatTile("Totes", state.totes.toString(), channel = colors.slate.base, modifier = Modifier.weight(1f))
@@ -267,7 +317,14 @@ fun SearchContent(
                 }
             }
 
-            if (state.searched) {
+            // The near-miss state: nothing exact, but the server's trigram fallback has
+            // candidates (never offline — the cache has no trigram index to be close with).
+            // The "Results" header is suppressed for it: a header announcing results over zero
+            // rows, stacked on the "Close matches" header, would be furniture, and the caption
+            // below already says what the empty state would have said.
+            val closeOnly = state.searched && state.results.isEmpty() && state.close.isNotEmpty()
+
+            if (state.searched && !closeOnly) {
                 item {
                     SectionHeader(
                         label = if (state.offline) "Results · offline" else "Results",
@@ -284,7 +341,9 @@ fun SearchContent(
                 }
             }
 
-            if (state.searched && state.results.isEmpty() && !state.searching) {
+            if (state.searched && state.results.isEmpty() && state.close.isEmpty() &&
+                !state.searching
+            ) {
                 item {
                     EmptyState(
                         icon = Icons.Filled.Search,
@@ -296,6 +355,21 @@ fun SearchContent(
 
             items(state.results, key = { it.id }) { item ->
                 SearchHitRow(item = item, onClick = { onOpenItem(item) })
+            }
+
+            if (closeOnly) {
+                item { SectionHeader(label = "Close matches", channel = colors.search.base) }
+                item {
+                    // A near-miss must say it is one: rendered as ordinary results, "wellies"
+                    // for "welles" would quietly teach that search returns things nobody typed.
+                    Caption(
+                        text = "Nothing matches “${state.query}” exactly — these are spelled " +
+                            "almost the same.",
+                    )
+                }
+                items(state.close, key = { "close-${it.id}" }) { item ->
+                    SearchHitRow(item = item, onClick = { onOpenItem(item) })
+                }
             }
         }
     }
@@ -325,21 +399,31 @@ internal fun SearchHitRow(item: ItemDto, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(spacing.xs))
-                val where = when {
-                    item.toteCode != null && item.locationName != null ->
-                        "${item.toteCode} · ${item.locationName}"
-                    item.toteCode != null -> item.toteCode
-                    // An item with no bin is a normal state, not an error — say what it is.
-                    item.status == "loaned" -> "Lent out"
-                    item.status == "out" -> "Out of its tote"
-                    else -> "Not in a tote"
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // The bin as a swatch, not a code in grey text: "the red one" is matched
+                    // by sight before A14 is ever read, and the answer to "which bin" should
+                    // look like the bin. Absent when the item is in none — there is no object
+                    // to miniature, and the words below already say what the state is.
+                    if (item.toteCode != null) {
+                        ToteGlyph(code = item.toteCode, colorHex = item.toteColorHex, compact = true)
+                        Spacer(Modifier.width(spacing.sm))
+                    }
+                    val where = when {
+                        // The glyph carries the code now; the words carry the place.
+                        item.toteCode != null -> item.locationName
+                        // An item with no bin is a normal state, not an error — say what it is.
+                        item.status == "loaned" -> "Lent out"
+                        item.status == "out" -> "Out of its tote"
+                        else -> "Not in a tote"
+                    }
+                    // The size rides on the same line as the bin rather than earning a row of
+                    // its own: the question is "which bin", and a second line would compete
+                    // with the answer. Shown verbatim — this is the tag's own words.
+                    val caption = listOfNotNull(where, item.apparel?.sizeRaw).joinToString(" · ")
+                    if (caption.isNotEmpty()) {
+                        Caption(text = caption)
+                    }
                 }
-                // The size rides on the same line as the bin rather than earning a row of its
-                // own: the question is "which bin", and a second line would compete with the
-                // answer. Shown verbatim — this is the tag's own words.
-                Caption(
-                    text = item.apparel?.sizeRaw?.let { "$where · $it" } ?: where,
-                )
             }
             if (item.isOverdue) {
                 Spacer(Modifier.width(spacing.sm))
@@ -352,6 +436,105 @@ internal fun SearchHitRow(item: ItemDto, onClick: () -> Unit) {
         }
     }
 }
+
+/**
+ * The seasonal invitation: the bins that were unpacked around this time last year, surfaced
+ * before anyone has to remember they exist. Slate, not attention — this is tote identity
+ * speaking ("your Christmas bins"), and nothing here is late or wrong.
+ */
+@Composable
+private fun SeasonalCard(card: SeasonalCardDto) {
+    val colors = ToteTheme.colors
+    val spacing = ToteTheme.spacing
+
+    PanelCard(channel = colors.slate.base) {
+        Text(
+            card.categoryName ?: "Seasonal bins",
+            style = MaterialTheme.typography.titleMedium,
+            color = colors.slate.base,
+        )
+        Spacer(Modifier.height(spacing.xs))
+        // Body text, not Caption — same reason as the overdue card: this is a sentence, and
+        // Pulse's caption is upper-cased and letter-spaced, which is right for a label.
+        Text(
+            buildString {
+                append("Last year you unpacked these on ${formatDay(card.unpackedOn)}.")
+                card.locationName?.let { append(" They're in $it.") }
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(spacing.sm))
+        // The bins themselves, as swatches: the card's job is to be matched against a memory
+        // of coloured boxes on an attic shelf, and a list of codes cannot do that.
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+            verticalArrangement = Arrangement.spacedBy(spacing.xs),
+        ) {
+            card.totes.forEach { tote ->
+                ToteGlyph(code = tote.code, colorHex = tote.colorHex, compact = true)
+            }
+        }
+        Spacer(Modifier.height(spacing.xs))
+        Caption(text = "${card.itemCount} items")
+    }
+}
+
+/**
+ * The wearer closest to outgrowing what they wear, and where the next size already waits.
+ * Provenance — the ladder's channel, same as the size mark on an item row. The whole card is
+ * the door: it opens the person screen, which holds the full fits list this summarises.
+ */
+@Composable
+private fun NextSizeCard(card: NextSizeCardDto, onOpenPerson: (String) -> Unit) {
+    val colors = ToteTheme.colors
+    val spacing = ToteTheme.spacing
+
+    PanelCard(onClick = { onOpenPerson(card.personId) }, channel = colors.provenance.base) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "${card.personName} is nearly into",
+                style = MaterialTheme.typography.titleMedium,
+                color = colors.provenance.base,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(spacing.sm))
+            // The label as a mono mark rather than words in the sentence — the same voice as
+            // the size on an item row, because it is the same kind of fact.
+            Text(
+                card.nextLabel,
+                style = ToteTheme.dataType.dataMedium,
+                color = colors.provenance.base,
+                maxLines = 1,
+            )
+        }
+        Spacer(Modifier.height(spacing.xs))
+        Text(
+            "${card.garmentCount} garments already catalogued — one trip to the bins.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(spacing.sm))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(spacing.sm),
+            verticalArrangement = Arrangement.spacedBy(spacing.xs),
+        ) {
+            card.totes.forEach { tote ->
+                ToteGlyph(code = tote.code, colorHex = tote.colorHex, compact = true)
+            }
+        }
+    }
+}
+
+/**
+ * `2025-11-28` → "November 28". The sentence around it already says which year, and a month
+ * name reads at a glance where an ISO date has to be decoded. Anything unparseable renders
+ * verbatim — a raw date is still a date, and a formatting crash would take the card with it.
+ */
+private fun formatDay(iso: String): String =
+    runCatching {
+        LocalDate.parse(iso).format(DateTimeFormatter.ofPattern("MMMM d", Locale.getDefault()))
+    }.getOrDefault(iso)
 
 @Preview(name = "Search — results, dark")
 @Composable

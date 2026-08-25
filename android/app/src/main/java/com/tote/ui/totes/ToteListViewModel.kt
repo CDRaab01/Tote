@@ -1,5 +1,7 @@
 package com.tote.ui.totes
 
+import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tote.data.CatalogRepository
@@ -21,6 +23,9 @@ import kotlinx.coroutines.launch
 
 @HiltViewModel
 class ToteListViewModel @Inject constructor(
+    // For reading a picked photo back out of the system picker — a `content://` Uri only opens
+    // through a ContentResolver, same as the capture flow's gallery path.
+    private val app: Application,
     private val repo: CatalogRepository,
     // Filing a selection is a user-initiated write, so it speaks — success and failure both.
     private val feedback: FeedbackBus,

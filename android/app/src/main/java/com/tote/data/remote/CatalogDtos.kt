@@ -9,6 +9,10 @@ data class LocationDto(
     val name: String,
     @SerialName("parent_id") val parentId: String? = null,
     @SerialName("sort_order") val sortOrder: Int = 0,
+    // Whether a photograph of the place exists. A flag rather than a URL, for the same reason
+    // as ItemDto.photoCount: the client decides whether to draw a banner at all, instead of
+    // firing a request per group header and rendering whatever a 404 looks like.
+    @SerialName("has_photo") val hasPhoto: Boolean = false,
 )
 
 @Serializable
@@ -45,9 +49,16 @@ data class ToteDto(
     val notes: String? = null,
     @SerialName("bin_kind") val binKind: String? = null,
     val color: String? = null,
+    // `color` rendered: a hex string resolved SERVER-side from whatever the colour field says.
+    // The client draws it and never maps colour names itself, so two screens cannot disagree
+    // about what "dark green" looks like. Null is an uncoloured bin, not an error.
+    @SerialName("color_hex") val colorHex: String? = null,
     val archived: Boolean = false,
     @SerialName("nfc_tag_uid") val nfcTagUid: String? = null,
     @SerialName("nfc_written_at") val nfcWrittenAt: String? = null,
+    // When someone last stood at the open bin and confirmed its contents against the catalog.
+    // Null means never — the ordinary state for a bin filed before verification existed.
+    @SerialName("last_verified_at") val lastVerifiedAt: String? = null,
     @SerialName("item_count") val itemCount: Int = 0,
     @SerialName("out_count") val outCount: Int = 0,
 )
@@ -83,12 +94,16 @@ data class ToteDetailDto(
     @SerialName("location_id") val locationId: String? = null,
     @SerialName("location_name") val locationName: String? = null,
     val notes: String? = null,
+    // Server-resolved hex, same field and same rule as [ToteDto.colorHex].
+    @SerialName("color_hex") val colorHex: String? = null,
     val archived: Boolean = false,
     @SerialName("item_count") val itemCount: Int = 0,
     @SerialName("out_count") val outCount: Int = 0,
     @SerialName("nfc_tag_uid") val nfcTagUid: String? = null,
     @SerialName("nfc_written_at") val nfcWrittenAt: String? = null,
     @SerialName("card_printed_at") val cardPrintedAt: String? = null,
+    // See [ToteDto.lastVerifiedAt]. Null means never verified.
+    @SerialName("last_verified_at") val lastVerifiedAt: String? = null,
     /** The bags in this bin. Empty is ordinary — most bins are not subdivided. */
     val containers: List<ContainerDto> = emptyList(),
     val items: List<ItemDto> = emptyList(),
@@ -121,6 +136,36 @@ data class ContainerIn(val name: String, val notes: String? = null)
 @Serializable
 data class ContainerPatch(val name: String, val notes: String?)
 
+/**
+ * A verify pass over one bin — the answer sheet for everything currently STORED in it.
+ *
+ * Every stored item must appear in exactly one list or the server refuses the pass (422, with a
+ * sentence in `detail`): a verification that skipped half the bin would stamp "checked" over
+ * items nobody looked at. Both lists are always present in the body — they are required here,
+ * and `encodeDefaults` would serialise them even if they were not — so "none missing" reaches
+ * the server as an explicit `[]` rather than an absence it would have to guess about.
+ */
+@Serializable
+data class VerifyIn(
+    val present: List<String>,
+    val missing: List<String>,
+)
+
+/**
+ * What a verify pass changed.
+ *
+ * `lastVerifiedAt` is the stamp the server just wrote, echoed back so the screen can say the
+ * date without refetching the bin. The missing items became status `out` with one `corrected`
+ * ledger row each — the ledger keeps the history, which is what makes marking something missing
+ * safe to do.
+ */
+@Serializable
+data class VerifyOutDto(
+    @SerialName("present_count") val presentCount: Int,
+    @SerialName("missing_count") val missingCount: Int,
+    @SerialName("last_verified_at") val lastVerifiedAt: String,
+)
+
 @Serializable
 data class ItemDto(
     val id: String,
@@ -140,6 +185,9 @@ data class ItemDto(
     // request per row.
     @SerialName("tote_code") val toteCode: String? = null,
     @SerialName("location_name") val locationName: String? = null,
+    // The bin's colour, hex-resolved server-side alongside its code, so a hit can DRAW the bin
+    // it names — people match "the red one" by sight before they read A14.
+    @SerialName("tote_color_hex") val toteColorHex: String? = null,
     // Computed server-side so a screen and a notification cannot disagree about "overdue".
     @SerialName("is_overdue") val isOverdue: Boolean = false,
     // Who has it, for a loaned item. Resolved server-side from the LEDGER (the newest `loaned`
@@ -200,8 +248,64 @@ data class ApparelPatch(
     val season: String? = null,
 )
 
+/**
+ * One search hit.
+ *
+ * `closeMatch` marks the trigram fallback rows the server adds ONLY when full-text found
+ * nothing — "wellies" for "welles" — so a typo gets an answer instead of a shrug. The two kinds
+ * never share a response: close matches exist precisely because there were no exact ones, and
+ * the UI leans on that.
+ */
 @Serializable
-data class SearchHitDto(val item: ItemDto, val rank: Float)
+data class SearchHitDto(
+    val item: ItemDto,
+    val rank: Float,
+    @SerialName("close_match") val closeMatch: Boolean = false,
+)
+
+/**
+ * The Find screen's forward-looking cards, computed server-side from the ledger and the size
+ * histories. Either half is null when there is nothing worth saying, and the client renders
+ * nothing rather than an empty shell — these are invitations, not reports.
+ */
+@Serializable
+data class HomeDto(
+    val seasonal: SeasonalCardDto? = null,
+    @SerialName("next_size") val nextSize: NextSizeCardDto? = null,
+)
+
+/** A bin as a home card names it: enough to draw the glyph and open the bin, nothing more. */
+@Serializable
+data class SeasonalToteDto(
+    val id: String,
+    val code: String,
+    @SerialName("color_hex") val colorHex: String? = null,
+)
+
+/**
+ * "Last year you unpacked these on…" — the bins whose moment is coming round again.
+ *
+ * `unpackedOn` is what the ledger recorded, which is the point: the card is the ledger
+ * answering a question nobody thought to ask it.
+ */
+@Serializable
+data class SeasonalCardDto(
+    val totes: List<SeasonalToteDto> = emptyList(),
+    @SerialName("location_name") val locationName: String? = null,
+    @SerialName("unpacked_on") val unpackedOn: String,
+    @SerialName("item_count") val itemCount: Int = 0,
+    @SerialName("category_name") val categoryName: String? = null,
+)
+
+/** The wearer closest to their next size, and where that size already waits. */
+@Serializable
+data class NextSizeCardDto(
+    @SerialName("person_id") val personId: String,
+    @SerialName("person_name") val personName: String,
+    @SerialName("next_label") val nextLabel: String,
+    @SerialName("garment_count") val garmentCount: Int = 0,
+    val totes: List<SeasonalToteDto> = emptyList(),
+)
 
 /**
  * A scanned item awaiting a human decision.

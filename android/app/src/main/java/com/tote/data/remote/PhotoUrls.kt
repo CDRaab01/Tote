@@ -56,4 +56,20 @@ object PhotoUrls {
         "${baseUrl.trimEnd('/')}/items/$itemId/photos/$order?cleaned=$cleaned" +
             (w?.let { "&w=$it" } ?: "") +
             (if (rotation != 0) "&r=$rotation" else "")
+
+    /**
+     * Where the photograph of a location lives — same authed-client rule as [item]: it is a
+     * picture of the inside of someone's house and only loads through the app's own OkHttp
+     * client.
+     *
+     * No width or rotation terms: the upload path already downscales to the item-photo cap, and
+     * a location photo carries no recorded rotation. That leaves the URL stable — which also
+     * means REPLACING a location's photo can serve the old banner from Coil's disk cache for a
+     * while. The ordinary case, a first photo of a place, has no stale entry to fight.
+     */
+    fun location(locationId: String): String = locationUrl(BuildConfig.SERVER_URL, locationId)
+
+    /** The pure half, testable without a BuildConfig — the same split as [url]. */
+    fun locationUrl(baseUrl: String, locationId: String): String =
+        "${baseUrl.trimEnd('/')}/locations/$locationId/photo"
 }
