@@ -38,6 +38,20 @@ def local_today() -> datetime.date:
     return datetime.datetime.now(tz).date()
 
 
+def local_date(moment: datetime.datetime) -> datetime.date:
+    """A stored UTC timestamp's calendar date, in the household's timezone.
+
+    `.date()` on the raw timestamp takes the UTC date — a bin verified at 9pm Eastern is
+    stamped tomorrow. Same degradation rule as `local_today`: an unknown zone falls back to
+    UTC rather than raising.
+    """
+    try:
+        tz = ZoneInfo(settings.local_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = datetime.UTC
+    return moment.astimezone(tz).date()
+
+
 def _photo_count():
     """How many photos an item has, as a correlated scalar subquery.
 

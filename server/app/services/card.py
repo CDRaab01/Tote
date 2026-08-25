@@ -8,7 +8,6 @@ with both arms — a QR on the same card costs nothing, reads from across a room
 any phone. It encodes **exactly the same URI** as the tag, so the two are never a fork.
 """
 
-import datetime
 import io
 
 import qrcode
@@ -18,6 +17,7 @@ from reportlab.pdfgen import canvas
 
 from app.config import settings
 from app.models.tote import Tote
+from app.services.catalog import local_date, local_today
 from app.services.colors import color_hex
 
 # A standard 5x3in index card, landscape — the thing people already own and already tape to bins.
@@ -123,9 +123,11 @@ def render_card(
         # Only when a human has actually checked the contents against reality. When they never
         # have, the line is omitted entirely — "Verified never" would print the card's most
         # trust-building word on exactly the bins that have earned it least.
-        c.drawString(margin, y, f"Verified {tote.last_verified_at.date().isoformat()}")
+        # Household-local, not `.date()` on the raw UTC timestamp: a bin verified at 9pm
+        # Eastern would otherwise print tomorrow's date on the card's most trust-building line.
+        c.drawString(margin, y, f"Verified {local_date(tote.last_verified_at).isoformat()}")
         y += 0.18 * inch
-    today = datetime.datetime.now(datetime.UTC).date().isoformat()
+    today = local_today().isoformat()
     c.drawString(
         margin,
         y,

@@ -194,3 +194,22 @@ async def test_the_tote_itself_reports_its_resolved_colour(auth_client):
     by_code = {t["code"]: t["color_hex"] for t in totes}
     assert by_code["S14"] == "#2A5240"
     assert by_code["S15"] is None
+
+
+async def test_the_fallback_floor_and_ordering_have_teeth(auth_client):
+    """Every other fallback test seeds one candidate, so the 0.25 floor, the STRICT >, and the
+    similarity ordering had no exclusion-side coverage — three mutants (>=, a lowered floor, a
+    dropped order_by) all survived with the suite green. Four seeds close all three at once,
+    with pg_trgm's own arithmetic: against "sleepsiut", Sleepsuit ~0.43, "Sleeping bag" ~0.28
+    (in, and second), "Sled" exactly 0.25 (out — only because the floor is strict), Hammer 0.0.
+    The weaker match is seeded FIRST so heap order alone can never fake the ranking."""
+    await _item(auth_client, "Sleeping bag")
+    await _item(auth_client, "Sleepsuit")
+    await _item(auth_client, "Sled")
+    await _item(auth_client, "Hammer")
+
+    hits = (
+        await auth_client.get("/search", params={"q": "sleepsiut", "include_close": "true"})
+    ).json()
+    assert [h["item"]["name"] for h in hits] == ["Sleepsuit", "Sleeping bag"]
+    assert all(h["close_match"] for h in hits)
