@@ -157,7 +157,16 @@ class CaptureQueueRepository @Inject constructor(
         var uploaded = 0
 
         for (entry in dao.listUploadable()) {
-            if (attempted >= maxItems || System.currentTimeMillis() - startedAtMs >= budgetMs) {
+            // `attempted > 0` makes the FIRST row unconditional, and that is the livelock guard
+            // rather than a nicety. Without it, a budget already spent when the loop starts
+            // returns `morePending = true` having done nothing, the worker re-enqueues, and the
+            // queue never moves — the exact shape #53 spent a day on. It was only ever avoided
+            // by accident, because `elapsed` is usually 0 on the first pass, which is also what
+            // made the test for it flaky: it could observe one row or two depending on how fast
+            // the machine was.
+            if (attempted > 0 &&
+                (attempted >= maxItems || System.currentTimeMillis() - startedAtMs >= budgetMs)
+            ) {
                 return DrainResult(allClear = allClear, morePending = true, uploaded = uploaded)
             }
             attempted++
