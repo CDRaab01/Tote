@@ -295,6 +295,14 @@ data class SeasonalCardDto(
     @SerialName("unpacked_on") val unpackedOn: String,
     @SerialName("item_count") val itemCount: Int = 0,
     @SerialName("category_name") val categoryName: String? = null,
+    /**
+     * How many bins the count actually spans, which may exceed [totes].
+     *
+     * The server caps the swatch list; the count does not. Without this the card showed six
+     * glyphs beside a number covering nine bins, so somebody could visit every swatch and still
+     * be short. Defaulted, so an older server (which omits it) simply draws no overflow mark.
+     */
+    @SerialName("tote_count") val toteCount: Int = 0,
 )
 
 /** The wearer closest to their next size, and where that size already waits. */
@@ -305,6 +313,14 @@ data class NextSizeCardDto(
     @SerialName("next_label") val nextLabel: String,
     @SerialName("garment_count") val garmentCount: Int = 0,
     val totes: List<SeasonalToteDto> = emptyList(),
+    /**
+     * How many bins the count actually spans, which may exceed [totes].
+     *
+     * The server caps the swatch list; the count does not. Without this the card showed six
+     * glyphs beside a number covering nine bins, so somebody could visit every swatch and still
+     * be short. Defaulted, so an older server (which omits it) simply draws no overflow mark.
+     */
+    @SerialName("tote_count") val toteCount: Int = 0,
 )
 
 /**

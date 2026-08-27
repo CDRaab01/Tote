@@ -48,7 +48,7 @@ class CatalogRefreshTest {
         dao = mock()
         api = mock {
             onBlocking { totes(anyOrNull(), any()) } doReturn listOf(ToteDto(id = "t1", code = "A14"))
-            onBlocking { items(anyOrNull(), anyOrNull()) } doReturn emptyList()
+            onBlocking { items(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doReturn emptyList()
             onBlocking { locations() } doReturn listOf(LocationDto(id = "l1", name = "Attic"))
         }
     }
@@ -66,7 +66,7 @@ class CatalogRefreshTest {
                 totesGate.await()
                 listOf(ToteDto(id = "t1", code = "A14"))
             }
-            onBlocking { items(anyOrNull(), anyOrNull()) } doSuspendableAnswer {
+            onBlocking { items(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doSuspendableAnswer {
                 started += "items"
                 emptyList()
             }
@@ -138,7 +138,7 @@ class CatalogRefreshTest {
                         lastVerifiedAt = "2026-08-01T10:00:00Z",
                     ),
                 )
-                onBlocking { items(anyOrNull(), anyOrNull()) } doReturn listOf(
+                onBlocking { items(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doReturn listOf(
                     ItemDto(
                         id = "i1",
                         name = "Lights",
@@ -175,5 +175,87 @@ class CatalogRefreshTest {
 
         // The bins and items still landed; only the name fallback was lost.
         verify(dao).replaceAll(any(), any())
+    }
+
+    // ── Paging ───────────────────────────────────────────────────────────────
+
+    private fun page(size: Int, from: Int = 0) =
+        (from until from + size).map { ItemDto(id = "i$it", name = "Item $it", status = "stored") }
+
+    @Test
+    fun `the whole catalogue is fetched, not the first page`() = runTest {
+        // `GET /items` caps at 200 by default and the client used to send no limit at all, so
+        // the "snapshot" was the alphabetically-first page. Measured in production: 200 of 578
+        // items cached, which made the Out tile read 0 and offline search cover a third of the
+        // catalogue while saying nothing about the rest.
+        api.stub {
+            onBlocking { items(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) }
+                .doSuspendableAnswer { call ->
+                    val offset = call.getArgument<Int?>(3) ?: 0
+                    if (offset == 0) page(500) else page(78, from = 500)
+                }
+        }
+
+        repo().refresh()
+
+        val items = argumentCaptor<List<CachedItem>>()
+        verifyBlocking(dao) { replaceAll(any(), items.capture()) }
+        assertEquals(578, items.firstValue.size)
+
+        val offsets = argumentCaptor<Int>()
+        verifyBlocking(api, org.mockito.kotlin.times(2)) {
+            items(anyOrNull(), anyOrNull(), anyOrNull(), offsets.capture())
+        }
+        assertEquals(listOf(0, 500), offsets.allValues)
+    }
+
+    @Test
+    fun `paging stops at a short page`() = runTest {
+        // The endpoint reports no total, so a short page is the only end signal. One request
+        // for an ordinary household, not two.
+        api.stub {
+            onBlocking { items(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doReturn
+                page(200)
+        }
+
+        repo().refresh()
+
+        verifyBlocking(api, org.mockito.kotlin.times(1)) {
+            items(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull())
+        }
+    }
+
+    @Test
+    fun `a page that fails leaves the last good snapshot alone`() = runTest {
+        // `replaceAll` clears before it inserts, so writing a partial walk would replace a
+        // complete snapshot with a truncated one — the very defect being fixed, and worse than
+        // a stale cache: stale is labelled "from the last sync", truncated silently says an
+        // item does not exist.
+        api.stub {
+            onBlocking { items(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) }
+                .doSuspendableAnswer { call ->
+                    val offset = call.getArgument<Int?>(3) ?: 0
+                    if (offset == 0) page(500) else throw java.io.IOException("Wi-Fi died")
+                }
+        }
+
+        runCatching { repo().refresh() }
+
+        verifyBlocking(dao, org.mockito.kotlin.never()) { replaceAll(any(), any()) }
+    }
+
+    @Test
+    fun `a server that ignores offset cannot loop forever`() = runTest {
+        // Defensive, and cheap: an endpoint that dropped `offset` would otherwise hand back
+        // page one until the app died, growing a list of duplicates in memory.
+        api.stub {
+            onBlocking { items(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doReturn
+                page(500)
+        }
+
+        val failed = runCatching { repo().refresh() }
+
+        assertTrue(failed.isFailure, "a walk that makes no progress must not be written")
+        verifyBlocking(dao, org.mockito.kotlin.never()) { replaceAll(any(), any()) }
     }
 }

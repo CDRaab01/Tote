@@ -1,12 +1,14 @@
 package com.tote.ui.search
 
 import com.tote.data.CatalogRepository
+import com.tote.data.CatalogStats
 import com.tote.data.remote.ApiService
 import com.tote.data.remote.CategoryDto
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -31,7 +33,7 @@ class SearchBrowseTest {
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         repo = mock {
-            onBlocking { stats() } doReturn Triple(2, 43, 6)
+            on { cachedStats } doReturn flowOf(CatalogStats(2, 43, 6))
         }
         api = mock {
             onBlocking { overdue() } doReturn emptyList()

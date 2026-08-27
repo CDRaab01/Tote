@@ -122,10 +122,24 @@ interface ApiService {
 
     // ── Items ────────────────────────────────────────────────────────────────
 
+    /**
+     * A page of the catalogue.
+     *
+     * `limit`/`offset` are nullable and omitted when null, so a caller that wants the server's
+     * own modest default (200) simply does not ask. The snapshot builder DOES ask — see
+     * `CatalogRepository.pagedItems`. It has to: this endpoint has always been capped, the
+     * client never paged, and for weeks production cached 200 of 578 items, which is to say
+     * offline search silently covered a third of the catalogue.
+     *
+     * The server orders by `(name, id)` and that is a paging contract, not presentation: a tie
+     * on `name` under an unstable sort puts one row on two pages and another on none.
+     */
     @GET("items")
     suspend fun items(
         @Query("tote_id") toteId: String? = null,
         @Query("category_id") categoryId: String? = null,
+        @Query("limit") limit: Int? = null,
+        @Query("offset") offset: Int? = null,
     ): List<ItemDto>
 
     @POST("items")

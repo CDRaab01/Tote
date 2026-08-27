@@ -141,24 +141,24 @@ class ScreenshotTest {
     )
 
     @Test fun search_idle_light() = capture("search_idle_light", dark = false) {
-        SearchContent(SearchUiState(totes = 14, items = 213, out = 6), {}, {})
+        SearchContent(SearchUiState(totes = 14, items = 213, notInABin = 6), {}, {})
     }
 
     @Test fun search_idle_dark() = capture("search_idle_dark", dark = true) {
-        SearchContent(SearchUiState(totes = 14, items = 213, out = 6), {}, {})
+        SearchContent(SearchUiState(totes = 14, items = 213, notInABin = 6), {}, {})
     }
 
     // The mark on the door to Settings. Only a rendered frame proves a badge is actually
     // positioned on the icon rather than clipped by the hero it sits in.
     @Test fun search_invite_waiting_dark() = capture("search_invite_waiting_dark", dark = true) {
         SearchContent(
-            SearchUiState(totes = 14, items = 213, out = 6), {}, {}, hasInvite = true,
+            SearchUiState(totes = 14, items = 213, notInABin = 6), {}, {}, hasInvite = true,
         )
     }
 
     @Test fun search_invite_waiting_light() = capture("search_invite_waiting_light", dark = false) {
         SearchContent(
-            SearchUiState(totes = 14, items = 213, out = 6), {}, {}, hasInvite = true,
+            SearchUiState(totes = 14, items = 213, notInABin = 6), {}, {}, hasInvite = true,
         )
     }
 
@@ -570,7 +570,7 @@ class ScreenshotTest {
     @Test fun search_overdue_dark() = capture("search_overdue_dark", dark = true) {
         SearchContent(
             SearchUiState(
-                totes = 14, items = 213, out = 6,
+                totes = 14, items = 213, notInABin = 6,
                 overdue = listOf(
                     ItemDto(
                         id = "i9", name = "Cordless drill", status = "loaned",
@@ -850,14 +850,14 @@ class ScreenshotTest {
 
     @Test fun search_browse_chips_dark() = capture("search_browse_chips_dark", dark = true) {
         SearchContent(
-            SearchUiState(totes = 14, items = 213, out = 6, usedCategories = usedCategories),
+            SearchUiState(totes = 14, items = 213, notInABin = 6, usedCategories = usedCategories),
             {}, {},
         )
     }
 
     @Test fun search_browse_chips_light() = capture("search_browse_chips_light", dark = false) {
         SearchContent(
-            SearchUiState(totes = 14, items = 213, out = 6, usedCategories = usedCategories),
+            SearchUiState(totes = 14, items = 213, notInABin = 6, usedCategories = usedCategories),
             {}, {},
         )
     }
@@ -1478,6 +1478,26 @@ class ScreenshotTest {
     }
 
     /**
+     * The same two cards when the count spans more bins than the card can draw.
+     *
+     * `garment_count` and `item_count` are household-wide while the swatch lists are capped at
+     * three and six, so without the "+N" mark somebody could visit every glyph on screen and
+     * still be short of what the sentence promised. Baselined because the mark sits at the end
+     * of a FlowRow and is exactly the sort of thing that collides with the last swatch.
+     */
+    @Test fun search_home_cards_overflow_dark() =
+        capture("search_home_cards_overflow_dark", dark = true) {
+            SearchContent(
+                homeCards.copy(
+                    seasonal = homeCards.seasonal?.copy(itemCount = 137, toteCount = 9),
+                    nextSize = homeCards.nextSize?.copy(garmentCount = 54, toteCount = 7),
+                ),
+                {},
+                {},
+            )
+        }
+
+    /**
      * The bins list doing all three of its new jobs at once: coloured glyphs, a photographed
      * place as a banner, and a bin nobody has checked in over a year.
      *
@@ -1576,7 +1596,7 @@ class ScreenshotTest {
     private val homeCards = SearchUiState(
         totes = 14,
         items = 213,
-        out = 6,
+        notInABin = 6,
         overdue = listOf(
             ItemDto(
                 id = "o1", name = "Cordless drill", quantity = 1, status = "loaned",

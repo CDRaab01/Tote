@@ -201,13 +201,20 @@ async def test_next_size_counts_the_stored_garments_one_rung_up(auth_client):
     assert card is not None
     assert card["person_id"] == person["id"]
     assert card["person_name"] == "Emma"
-    # The ladder's rung above 9-12M (0.875) is 12M (1.0) — that is the label, always a rung of
-    # the ladder and never a tag's words. The 12-18M tags index to the 15M rung (1.25), inside
-    # the half-rung tolerance, so they are exactly what the card counts.
-    assert card["next_label"] == "12M"
+    # The label is the GARMENTS' own tag, and the count is exactly the rung it names.
+    #
+    # This assertion used to read `next_label == "12M"` with `garment_count == 3`, explained by
+    # a comment saying the 12-18M tags "sit inside the half-rung tolerance, so they are exactly
+    # what the card counts". That was the defect written down as a rule: 12M and 12-18M are
+    # different rungs (1.0 and 1.25), and a card naming one while counting the other is how
+    # production ended up announcing "9-12M · 58 garments" to a household owning nothing at
+    # 9-12M. Nothing here is at the 12M rung, so 12M is not what the card says.
+    assert card["next_label"] == "12-18M"
     assert card["garment_count"] == 3
     # Bin references, most garments first, so the card says where to go.
     assert [b["code"] for b in card["totes"]] == ["A14", "B02"]
+    # And it owns up to how many bins the count really spans.
+    assert card["tote_count"] == 2
 
 
 async def test_only_garments_actually_in_a_bin_count(auth_client):
@@ -278,10 +285,13 @@ async def test_the_person_with_more_garments_waiting_wins(auth_client):
 
 
 async def test_the_clothes_they_wear_today_are_not_the_next_size(auth_client):
-    """The half-rung tolerance around the next rung reaches BELOW the wearer's current size
-    (9-12M sits 0.125 under 12M), and a card that counts the clothes already on the person's
-    back as "waiting in the next size" advertises a bin trip for nothing. The band is open
-    below the wearer's own ordinal — current and outgrown sizes never count."""
+    """Current and outgrown sizes never count — the card is about a trip worth making.
+
+    A band around the next rung used to be symmetric and half a rung wide, which reached BELOW
+    the wearer's own size (9-12M sits 0.125 under 12M) and counted the clothes already on their
+    back. The band now comes from `rung_band`, so it cannot reach across a rung at all, and the
+    floor at the wearer's ordinal stays as a second, explicit guard.
+    """
     person = await _person(auth_client)
     await _size(auth_client, person["id"], "9-12M")
     t = await _tote(auth_client)
@@ -294,5 +304,105 @@ async def test_the_clothes_they_wear_today_are_not_the_next_size(auth_client):
 
     card = (await _home(auth_client))["next_size"]
     assert card is not None
-    assert card["next_label"] == "12M"
+    # Was "12M" — the ladder key for a rung nothing here is tagged with. The two 12-18M
+    # garments are the only ones above the wearer, and they are what the card names.
+    assert card["next_label"] == "12-18M"
     assert card["garment_count"] == 2
+
+
+# ── The card and its number must describe one set ────────────────────────────────────────────
+
+
+async def test_the_card_never_counts_a_rung_it_did_not_name(auth_client):
+    """The production failure of 2026-08-26, in miniature.
+
+    A 9-month-old, 54 garments tagged `12M`, 4 tagged `12-18M`, and nothing at all at the rung
+    directly above them (`9-12M`). The card announced **"9-12M · 58 garments"** — a size the
+    household owned nothing in, over a count of two other sizes — because the band was a fixed
+    ±0.5, which on the infant ladder spans about four rungs.
+
+    Scaled down here (5 and 4 rather than 54 and 4) so the fixture stays quick; the shape is
+    what reproduces, not the magnitude.
+    """
+    person = await _person(auth_client, "Cedric")
+    await _size(auth_client, person["id"], "9 month")
+    bin_a = await _tote(auth_client, "D3")
+    bin_b = await _tote(auth_client, "D6")
+    for i in range(5):
+        await _garment(auth_client, bin_a["id"], f"Sleepsuit {i}", "12M")
+    for i in range(4):
+        await _garment(auth_client, bin_b["id"], f"Romper {i}", "12-18M")
+
+    card = (await _home(auth_client))["next_size"]
+    assert card is not None
+    # 9-12M is the ladder's literal next rung and the household owns nothing there, so it is
+    # skipped rather than named over somebody else's garments.
+    assert card["next_label"] != "9-12M"
+    assert card["next_label"] == "12M"
+    # Five, not nine: the 12-18M garments are a rung further up and are a different trip.
+    assert card["garment_count"] == 5
+    assert [b["code"] for b in card["totes"]] == ["D3"]
+
+
+async def test_a_rung_the_catalogue_holds_nothing_in_is_skipped_not_named(auth_client):
+    """Naming an empty rung is what forced the band to be wide enough to find something."""
+    person = await _person(auth_client, "Cedric")
+    await _size(auth_client, person["id"], "9 month")
+    t = await _tote(auth_client, "D9")
+    await _garment(auth_client, t["id"], "Dungarees", "12M")
+
+    card = (await _home(auth_client))["next_size"]
+    assert card is not None
+    assert card["next_label"] == "12M"
+    assert card["garment_count"] == 1
+
+
+async def test_a_size_two_rungs_and_a_year_away_is_not_nearly(auth_client):
+    """Looking past an empty rung must not become looking past a whole year of a child.
+
+    Toddler rungs are 1.0 apart, so 3T -> 5T is two years. Nothing to wear now, and a card
+    advertising it would send somebody to the attic for clothes that do not fit yet.
+    """
+    person = await _person(auth_client, "Zed")
+    await _size(auth_client, person["id"], "3T")
+    t = await _tote(auth_client, "C01")
+    await _garment(auth_client, t["id"], "Snowsuit", "5T")
+
+    assert (await _home(auth_client))["next_size"] is None
+
+
+async def test_the_swatches_and_the_count_describe_the_same_bins(auth_client):
+    """Five bins, three swatches, and a number that says so.
+
+    The count spans every bin while the swatch list is capped at three, so without `tote_count`
+    somebody could visit all three glyphs and still be two bins short of the garments promised.
+    """
+    person = await _person(auth_client, "Emma")
+    await _size(auth_client, person["id"], "9-12M")
+    for i in range(5):
+        t = await _tote(auth_client, f"E0{i}")
+        await _garment(auth_client, t["id"], f"Vest {i}", "12-18M")
+
+    card = (await _home(auth_client))["next_size"]
+    assert card is not None
+    assert card["garment_count"] == 5
+    assert len(card["totes"]) == 3
+    assert card["tote_count"] == 5
+
+
+async def test_a_reading_too_long_to_be_a_mark_falls_back_to_the_rung(auth_client):
+    """A real bilingual Canadian tag: `12-18 months/mois`, seventeen characters.
+
+    It parses (that is what #55 added), and it is genuinely what is printed on the garment — but
+    it is a sentence, not a mark, and the card renders the label as a mono data mark beside a
+    person's name. Past a dozen characters the ladder's own key says the same thing and fits.
+    """
+    person = await _person(auth_client, "Emma")
+    await _size(auth_client, person["id"], "9-12M")
+    t = await _tote(auth_client, "F01")
+    await _garment(auth_client, t["id"], "Cardigan", "12-18 months/mois")
+
+    card = (await _home(auth_client))["next_size"]
+    assert card is not None
+    assert card["next_label"] == "15M", "an over-long reading falls back to the rung key"
+    assert card["garment_count"] == 1

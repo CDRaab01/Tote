@@ -1,6 +1,7 @@
 package com.tote.ui.search
 
 import com.tote.data.CatalogRepository
+import com.tote.data.CatalogStats
 import com.tote.data.SearchResult
 import com.tote.data.remote.ApiService
 import com.tote.data.remote.ApparelDto
@@ -14,6 +15,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -55,7 +58,7 @@ class SearchViewModelTest {
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         repo = mock {
-            onBlocking { stats() } doReturn Triple(0, 0, 0)
+            on { cachedStats } doReturn flowOf(CatalogStats(0, 0, 0))
         }
         api = mock {
             onBlocking { overdue() } doReturn emptyList()
@@ -214,5 +217,27 @@ class SearchViewModelTest {
 
         assertNull(model.state.value.seasonal)
         assertNull(model.state.value.nextSize)
+    }
+
+    @Test
+    fun `the counts follow the cache rather than a one-shot read`() = runTest {
+        // They used to be sampled once, straight after `refresh()` — which had two faults at
+        // once. A later cache write never reached them, and `refresh(force = false)` returns
+        // immediately when another refresh already holds the lock, so the sample could be taken
+        // from the snapshot that was about to be replaced.
+        val counts = MutableStateFlow(CatalogStats(0, 0, 0))
+        repo.stub { on { cachedStats } doReturn counts }
+
+        val model = vm()
+        dispatcher.scheduler.advanceUntilIdle()
+        assertEquals(0, model.state.value.items)
+
+        // No refresh() here on purpose: the write to the cache is the whole signal.
+        counts.value = CatalogStats(totes = 7, items = 578, notInABin = 20)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(7, model.state.value.totes)
+        assertEquals(578, model.state.value.items)
+        assertEquals(20, model.state.value.notInABin)
     }
 }

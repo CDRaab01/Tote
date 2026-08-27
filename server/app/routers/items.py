@@ -67,6 +67,20 @@ async def list_items(
     limit: int = Query(default=200, le=500),
     offset: int = Query(default=0, ge=0),
 ):
+    """The catalogue, a page at a time.
+
+    **The ordering is a paging contract, not a presentation choice.** A client that walks this
+    endpoint with `offset` is assembling a snapshot, and an unstable sort silently corrupts it:
+    Postgres makes no promise about the order of rows with equal `name`, so between two requests
+    it may return a tied row on both pages and another on neither. This catalogue has real
+    duplicate names — six rows reading "Shirt" is what prompted #36 — so the tie is ordinary,
+    not theoretical, and the damage is an item that exists and cannot be found offline.
+    `Item.id` breaks every tie and is unique, which makes the order total.
+
+    `limit` defaults to 200 deliberately. The Android client asks for `le=500` explicitly and
+    pages; the small default protects every other caller, and the cap stops any client asking
+    the server to materialise a whole household in one query.
+    """
     query = item_query(user.household_id)
     if tote_id:
         query = query.where(Item.current_tote_id == tote_id)
@@ -80,7 +94,7 @@ async def list_items(
         # absent rather than being swept in by a null.
         query = query.join(ItemApparel, ItemApparel.item_id == Item.id)
         query = apply_size_filter(query, size)
-    items = await items_for(db, query.order_by(Item.name).limit(limit).offset(offset))
+    items = await items_for(db, query.order_by(Item.name, Item.id).limit(limit).offset(offset))
     # One colour map for the whole page, never a resolve per row — the bin swatch sits beside
     # every row of the app's main list, which is exactly where an N+1 would live.
     colors = await tote_color_map(db, user.household_id)
