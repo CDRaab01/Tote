@@ -1,5 +1,6 @@
 package com.tote.ui.search
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tote.data.CatalogRepository
@@ -88,7 +89,19 @@ data class SearchUiState(
 class SearchViewModel @Inject constructor(
     private val repo: CatalogRepository,
     private val api: ApiService,
+    savedState: SavedStateHandle,
 ) : ViewModel() {
+
+    /**
+     * A bin code handed over by a tag that resolved to nothing.
+     *
+     * `Routes.SEARCH` has declared a `q` argument since #23 and the dead-tag path has always
+     * passed one — and nothing ever read it, so the documented "an unresolvable tag pre-fills
+     * search with the code instead of discarding it" has never once happened. The code was
+     * spoken in a snackbar and dropped, which is exactly the information someone standing in
+     * front of an unlabelled bin has and cannot retype.
+     */
+    private val handedOver: String = savedState.get<String>("q").orEmpty()
 
     private val _state = MutableStateFlow(SearchUiState())
     val state: StateFlow<SearchUiState> = _state.asStateFlow()
@@ -109,6 +122,25 @@ class SearchViewModel @Inject constructor(
             }
         }
         refresh()
+        if (handedOver.isNotBlank()) {
+            // Straight to the answer, no debounce: this query was not typed, so there is no
+            // next keystroke to wait for.
+            _state.value = _state.value.copy(query = handedOver)
+            runSearch(handedOver, size = null, debounce = false)
+        }
+    }
+
+    /**
+     * The keyboard's Search key.
+     *
+     * `keyboardOptions` set the action and nothing handled it, so the key drew a magnifier and
+     * did nothing — an affordance that lies. Skips the debounce, because pressing Search IS the
+     * statement that you have finished typing.
+     */
+    fun onSearchAction() {
+        val s = _state.value
+        if (s.query.isBlank()) return
+        runSearch(s.query, size = s.sizeFilter, debounce = false)
     }
 
     fun refresh() {
