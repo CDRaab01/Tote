@@ -57,6 +57,9 @@ import design.pulse.ui.components.SectionHeader
  * select"* (filing was one trip through the item sheet per item).
  */
 @OptIn(ExperimentalMaterial3Api::class)
+/** `items.status` for something lent out — the one loose end that is not filed from here. */
+private const val LOANED = "loaned"
+
 @Composable
 fun UnfiledScreen(
     onOpenTote: (String) -> Unit,
@@ -82,7 +85,12 @@ fun UnfiledScreen(
             onOpen = itemSheet::open,
             onBegin = viewModel::beginFiling,
             onToggle = viewModel::toggleUnfiled,
-            onSelectAll = { viewModel.selectAllUnfiled(unfiled.map { it.id }) },
+            // Loans excluded: ticking them would arm "File into…" over rows whose whole
+            // point is that somebody else has them, and bulkMove would move a lent item into a
+            // bin it is not in.
+            onSelectAll = {
+                viewModel.selectAllUnfiled(unfiled.filterNot { it.status == LOANED }.map { it.id })
+            },
             onCancel = viewModel::cancelFiling,
             onFile = { choosingBin = true },
         )
@@ -160,6 +168,7 @@ fun UnfiledContent(
         item(key = "bar") {
             UnfiledBar(
                 total = unfiled.size,
+                lent = unfiled.count { it.status == LOANED },
                 selection = selection,
                 onBegin = { onBegin(null) },
                 onSelectAll = onSelectAll,
@@ -172,7 +181,12 @@ fun UnfiledContent(
             val item = cached.toItemDto()
             ItemRow(
                 item = item,
-                actionLabel = "File…",
+                // No File button on something Dave has. The query deliberately does not
+                // separate these — `unfiledItems()` is about what has no bin, and the ledger
+                // keeps *why* — but the AFFORDANCE has to, because filing a lent item is the
+                // one thing on this screen you cannot do. The row already names the person, so
+                // the reason is on screen; what changes is that it stops inviting the action.
+                actionLabel = if (cached.status == LOANED) "" else "File…",
                 onAction = { onOpen(item) },
                 onOpen = { onOpen(item) },
                 selected = selection?.contains(cached.id),
@@ -196,6 +210,8 @@ fun UnfiledContent(
 @Composable
 private fun UnfiledBar(
     total: Int,
+    /** How many of [total] are on loan, and so cannot be filed from here. */
+    lent: Int = 0,
     selection: Set<String>?,
     onBegin: () -> Unit,
     onSelectAll: () -> Unit,
@@ -210,8 +226,15 @@ private fun UnfiledBar(
             // Boxed with the weight, because `Caption` takes no modifier: unweighted it claims
             // the whole row and squeezes the button until "Select" wraps to "Sele / ct".
             Box(Modifier.weight(1f)) {
+                // The count says what is actually waiting for a decision. Counting a lent
+                // drill as "waiting for somewhere to go" reads as a chore that is not one.
+                val waiting = total - lent
                 Caption(
-                    text = "$total item${if (total == 1) "" else "s"} waiting for somewhere to go",
+                    text = buildString {
+                        append("$waiting item${if (waiting == 1) "" else "s"} ")
+                        append("waiting for somewhere to go")
+                        if (lent > 0) append(" · $lent lent out")
+                    },
                 )
             }
             Spacer(Modifier.width(spacing.sm))

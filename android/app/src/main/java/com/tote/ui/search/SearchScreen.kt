@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Settings
@@ -102,6 +104,7 @@ fun SearchScreen(
         onOpenTotes = onOpenTotes,
         onOpenNotInABin = onOpenNotInABin,
         onOpenTote = onOpenTote,
+        onSearchAction = viewModel::onSearchAction,
     )
 
     // A hit opens the item, not the bin. Tapping one used to be guarded on `currentToteId`, so a
@@ -134,8 +137,10 @@ fun SearchContent(
     onOpenNotInABin: () -> Unit = {},
     /** One bin, from a card's swatch. A search HIT still opens the item sheet, not the bin. */
     onOpenTote: (String) -> Unit = {},
+    onSearchAction: () -> Unit = {},
 ) {
     val colors = ToteTheme.colors
+    val keyboard = LocalSoftwareKeyboardController.current
     val spacing = ToteTheme.spacing
 
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -211,6 +216,10 @@ fun SearchContent(
                     // The keyboard's action key says Search rather than newline-into-a-single-
                     // line-field, which does nothing.
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = {
+                        onSearchAction()
+                        keyboard?.hide()
+                    }),
                 )
                 // `searching` was tracked and never rendered: a slow attic query looked exactly
                 // like a frozen screen still showing the previous results.

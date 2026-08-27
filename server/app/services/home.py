@@ -111,8 +111,12 @@ async def seasonal_card(
             )
         )
     return SeasonalCard(
-        # Capped: the card is a glance, and six bin glyphs is already a shelf's worth.
+        # Capped: the card is a glance, and six bin glyphs is already a shelf's worth — which is
+        # exactly why `tote_count` has to carry the real number. `item_count` above sums EVERY
+        # qualifying bin, so without it the card can promise 137 items over six swatches that
+        # hold fewer, and somebody visits every glyph on screen and comes up short.
         totes=[SeasonalTote(id=t.id, code=t.code, color_hex=color_hex(t.color)) for t in totes[:6]],
+        tote_count=len(totes),
         location_name=location_name,
         # The EARLIEST qualifying date — when the unpacking STARTED last year.
         unpacked_on=min(first for _, first in rows),

@@ -218,7 +218,15 @@ fun ToteNavHost(
                 // with the code discarded left no way to tell a deleted bin from being off the
                 // tailnet from a tap that never registered — and threw away the one piece of
                 // information the person had.
-                nav.tabTo(Routes.search(t.code))
+                // NOT `tabTo`: that restores the saved back-stack entry, and Search is the
+                // start destination — so the restored entry keeps its OLD arguments and the code
+                // is dropped on the floor a second time. `restoreState` is deliberately omitted
+                // here so the entry is recreated with this tag's code. Only a real tag exercises
+                // this, so it is on the on-device list.
+                nav.navigate(Routes.search(t.code)) {
+                    popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                    launchSingleTop = true
+                }
                 feedback.bus.say(
                     "Nothing answers to “${t.code}” — it may have been deleted, or you may be " +
                         "off the tailnet."

@@ -1151,6 +1151,23 @@ class ScreenshotTest {
         UnfiledContent(unfiled = loose, selection = setOf("u1", "u2", "u3"))
     }
 
+    /**
+     * A lent thing sitting among the loose ends.
+     *
+     * `unfiledItems()` sweeps loans in — they have no bin, which is the query's whole predicate
+     * — but filing one is the one action on this screen you cannot take. The row must therefore
+     * drop its File button and the caption must stop counting it as waiting, and both are only
+     * visible side by side.
+     */
+    @Test fun unfiled_loaned_dark() = capture("unfiled_loaned_dark", dark = true) {
+        UnfiledContent(
+            unfiled = loose.take(2) + CachedItem(
+                "u9", "Cordless drill", "Dave has it", null, 1,
+                "loaned", null, null, null, false, null, 1,
+            ),
+        )
+    }
+
     @Test fun unfiled_empty_dark() = capture("unfiled_empty_dark", dark = true) {
         UnfiledContent(unfiled = emptyList())
     }

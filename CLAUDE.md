@@ -1373,3 +1373,57 @@ Find-tab baselines re-recorded and looked at — which is how the first draft's 
 caught wrapping to two lines and making that tile taller than its neighbours. The blue-on-panel
 contrast was **measured off the rendered PNGs** rather than eyeballed (4.87:1 dark, 5.20:1 light);
 it looked weak in dark mode and is fine.
+
+
+## Finishing what #61 left (#62)
+
+Owner asked what we missed. Three things, and the first is the one worth the entry.
+
+**`SeasonalCard.tote_count` was half-wired.** #61 added the field to the schema, to the DTO and to
+the client's "+N" overflow mark — and populated it on the next-size card only. The seasonal card
+carried it at its default of 0 for the whole round. Nothing caught it because **the seasonal card
+cannot render at all** on this household: it needs `unpacked` ledger rows from a year ago and the
+ledger starts 2026-08-16, so it returns `None` and will until roughly **August 2027**. That is now
+written down in ARCHITECTURE.md, because a feature that renders nothing on correct code is
+indistinguishable from a broken one, and because anything added to that card needs its own test —
+using the app will not tell you.
+
+**A lent thing is not a loose end.** `unfiledItems()` sweeps loans in (they have no bin, which is
+the predicate) and the screen offered every row a **File…** button — the one action you cannot
+take on something Dave has, and `bulkMove` would have moved it into a bin it is not in. The query
+is deliberately unchanged (it is about what to do next, not why, and changing it would move the
+Totes-tab count too); the **affordance** carries the distinction now: no File on a loaned row, the
+caption counts only what is waiting and names the loans beside it, select-all skips them. Zero
+live impact today — nothing is on loan — but #61 made that screen reachable for the first time,
+so it was armed.
+
+**Two dead affordances, both documented as working.** `Routes.SEARCH` has declared a `q` argument
+since #23 and the NFC dead-tag path has always passed one, and **nothing ever read it** — so "an
+unresolvable tag pre-fills search with the code" has never once happened; the code was said in a
+snackbar and dropped, which is exactly the information the person standing at an unlabelled bin
+has and cannot retype. And the search box set `keyboardOptions` with no `keyboardActions`, so the
+keyboard's Search key drew a magnifier and did nothing.
+
+The nav half has a trap worth keeping: the dead-tag path used `tabTo`, whose `restoreState = true`
+restores the saved entry — and Search **is** the start destination, so the restored entry keeps
+its OLD arguments and the code is dropped a second time. It navigates with `restoreState` omitted
+now. Only a real tag exercises that, so it joins the on-device list; the ViewModel half is tested.
+
+**Process note, recorded because it is the actual lesson:** #61 shipped 5 of its 7 planned steps
+and the completion report did not say so. Steps 6 and 7 above were dropped silently. If a plan
+step is abandoned, say which and why at the time — the work being small is what makes it easy to
+lose, not a reason it does not matter.
+
+**Still open, deliberately:** the `_LOOKAHEAD_RUNGS` / `_LOOKAHEAD_ORDINAL` unit mismatch
+(ARCHITECTURE.md, next-size section) and `ReviewViewModel.confirm`/`discard`'s pre-launch-guard
+shape, which `rescan` was fixed for in #60. And `CaptureQueueRepositoryTest`'s
+"a run always attempts at least one row" is **timing-flaky on CI** — it asserts *exactly* one row
+against a 1 ms wall-clock budget, passes locally, and when it trips it reds main, which skips
+Deploy **and** gates Release, so the server ships while the phone does not. Re-run **both**
+workflows, not just CI.
+
+**Verified:** 534 server tests (the one red is the pre-existing local-only webp case, #54), 362
+Android, `:app:assembleDebug` green. Each fix-encoding test was checked against the broken code
+first: the seasonal `tote_count` test reports `assert 0 == 8` there, both unfiled-loan cases fail,
+and both search-wiring cases fail. `unfiled_dark` re-recorded and `unfiled_loaned_dark` added and
+looked at.

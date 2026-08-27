@@ -30,6 +30,10 @@ import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.isNull
 import org.mockito.kotlin.mock
+import kotlin.test.assertFalse
+import org.mockito.kotlin.any
+import org.mockito.kotlin.verifyBlocking
+import androidx.lifecycle.SavedStateHandle
 import org.mockito.kotlin.stub
 import org.mockito.kotlin.verify
 
@@ -59,6 +63,9 @@ class SearchViewModelTest {
         Dispatchers.setMain(dispatcher)
         repo = mock {
             on { cachedStats } doReturn flowOf(CatalogStats(0, 0, 0))
+            // A default answer for any query. Individual tests override it; without it a test
+            // that merely proves a search WAS run NPEs on the null a bare mock returns.
+            onBlocking { search(any(), anyOrNull()) } doReturn SearchResult(items = emptyList(), offline = false)
         }
         api = mock {
             onBlocking { overdue() } doReturn emptyList()
@@ -69,7 +76,7 @@ class SearchViewModelTest {
     @After
     fun tearDown() = Dispatchers.resetMain()
 
-    private fun vm() = SearchViewModel(repo, api)
+    private fun vm() = SearchViewModel(repo, api, SavedStateHandle())
 
     // ---- size chips -------------------------------------------------------------------------
 
@@ -239,5 +246,57 @@ class SearchViewModelTest {
         assertEquals(7, model.state.value.totes)
         assertEquals(578, model.state.value.items)
         assertEquals(20, model.state.value.notInABin)
+    }
+
+    // ── The code a dead tag hands over ───────────────────────────────────────
+
+    @Test
+    fun `a code handed over by a dead tag pre-fills and searches`() = runTest {
+        // `Routes.SEARCH` has declared a `q` argument since #23 and the NFC dead-tag path has
+        // always passed one — and nothing read it, so the documented behaviour has never once
+        // happened. The code was said in a snackbar and dropped, which is precisely the piece
+        // of information the person standing at the bin has and cannot retype.
+        val model = SearchViewModel(repo, api, SavedStateHandle(mapOf("q" to "A14")))
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("A14", model.state.value.query)
+        verifyBlocking(repo) { search(eq("A14"), isNull()) }
+    }
+
+    @Test
+    fun `an ordinary open does not search for nothing`() = runTest {
+        val model = SearchViewModel(repo, api, SavedStateHandle())
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals("", model.state.value.query)
+        assertFalse(model.state.value.searched)
+        verifyBlocking(repo, org.mockito.kotlin.never()) { search(any(), anyOrNull()) }
+    }
+
+    @Test
+    fun `the search key runs the query without waiting for the debounce`() = runTest {
+        // `keyboardOptions` set the action and nothing handled it, so the key drew a magnifier
+        // and did nothing. Pressing Search IS the statement that you have finished typing, so
+        // it must not sit behind the 250 ms that exists for the next keystroke.
+        val model = vm()
+        dispatcher.scheduler.advanceUntilIdle()
+        model.onQueryChange("ratchet")
+
+        model.onSearchAction()
+        dispatcher.scheduler.advanceTimeBy(10)
+        dispatcher.scheduler.runCurrent()
+
+        verifyBlocking(repo) { search(eq("ratchet"), isNull()) }
+    }
+
+    @Test
+    fun `the search key on an empty box does nothing`() = runTest {
+        val model = vm()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        model.onSearchAction()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        verifyBlocking(repo, org.mockito.kotlin.never()) { search(any(), anyOrNull()) }
     }
 }

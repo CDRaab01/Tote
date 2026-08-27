@@ -698,6 +698,22 @@ labels with two different numbers on two different tabs, which is how one fact c
 two; the tile is now "No bin" and opens the list the Totes tab already links to. If you change one
 of those queries, change the other.
 
+## The seasonal card is dormant until roughly August 2027
+
+Worth writing down because it is invisible and looks like a bug: `seasonal_card` needs `unpacked`
+rows dated `[today-1y, today-1y+8w]`, and this household's ledger begins **2026-08-16**. So one of
+the two things `GET /home` volunteers **cannot render at all** until the ledger is a year deep,
+and it returns `None` on completely correct code.
+
+Do not "fix" it by widening the window to any prior year: the card's claim is *around this time
+last year*, and a bin unpacked twenty months ago is not a reason to open it now. The right
+response is to leave it and let the first real November arrive.
+
+It does mean the seasonal path gets no live exercise, which is how `tote_count` sat unpopulated
+on it through a whole round — the schema, the DTO and the client all carried the field and the
+server never set it. Anything added to that card needs its own test, because using the app will
+not tell you.
+
 ## A surface that names a problem opens it
 
 `UIUX_REVIEW.md` §4's rule, adopted. Every surface on the Find tab that names something you can
@@ -710,6 +726,17 @@ act on now navigates to where you act on it:
 | `No bin` tile | the loose-ends list |
 | A bin swatch on either card | that bin |
 | The next-size card body | the person |
+
+**A lent thing is not a loose end.** `unfiledItems()` deliberately does not separate loans — its
+predicate is "has no bin", and the ledger keeps *why* — but the **affordance** must, because
+filing something Dave has is the one action on that screen you cannot take: `bulkMove` would move
+it into a bin it is not in. So the row drops its File button, the caption counts only what is
+actually waiting and names the loans beside it, and select-all skips them. The query is untouched,
+so the Totes-tab count and this list still agree.
+
+This became urgent rather than tidy the moment the Find tab's tile started opening that screen.
+Before that the count read 0 (truncated cache), so nothing in the app could reach it — and the
+wrong copy was unreachable too.
 
 **The `Items` tile is deliberately exempt**, and that is the rule working rather than an
 exception to it: a count of everything is not a problem, and there is no all-items screen. A tile
@@ -766,6 +793,17 @@ mark beside a name.
 **`tote_count` on both cards** is how many bins the count spans, before the swatch list is capped
 at three (next-size) or six (seasonal). Without it the sentence and the glyphs described different
 sets, and somebody could visit every swatch on screen and still be short.
+
+**Known tension, not yet resolved: the two lookahead gates are measured in different units.**
+`_LOOKAHEAD_RUNGS = 2` counts rungs while `_LOOKAHEAD_ORDINAL = 1.0` counts axis units, so which
+one binds depends on the ladder — on `toddler` (rungs 1.0 apart) the ordinal gate does the work,
+while on `infant_months` two rungs is only **0.25** axis units and the rung gate bites far
+earlier. Concretely: a 9-month-old whose 12M garments were all unpacked would get **no card**,
+even though 4 garments sit at 1.25 and 54 at 1.5 — both well inside the 1.0 tolerance. That is a
+milder relative of the ±0.5 fault this section documents, and the same species of mistake: a
+constant that behaves differently per ladder. `rung_band` already prevents over-counting, so
+`_LOOKAHEAD_RUNGS` may not need to exist at all. Left alone deliberately rather than tuned
+blind — it wants a real case, not a guess.
 
 ## A photo of the place itself
 

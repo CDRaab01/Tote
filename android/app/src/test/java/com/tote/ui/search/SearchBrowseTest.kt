@@ -1,5 +1,6 @@
 package com.tote.ui.search
 
+import androidx.lifecycle.SavedStateHandle
 import com.tote.data.CatalogRepository
 import com.tote.data.CatalogStats
 import com.tote.data.remote.ApiService
@@ -52,7 +53,7 @@ class SearchBrowseTest {
     fun `only used categories become chips`() = runTest {
         // Eleven empty seeded rows as chips would reproduce, on the home screen, the exact
         // picker clutter this feature removes.
-        val model = SearchViewModel(repo, api)
+        val model = SearchViewModel(repo, api, SavedStateHandle())
         model.refresh()
         dispatcher.scheduler.advanceUntilIdle()
 
@@ -64,7 +65,7 @@ class SearchBrowseTest {
         api.stub {
             onBlocking { categories() } doAnswer { throw java.io.IOException("no route") }
         }
-        val model = SearchViewModel(repo, api)
+        val model = SearchViewModel(repo, api, SavedStateHandle())
         model.refresh()
         dispatcher.scheduler.advanceUntilIdle()
 

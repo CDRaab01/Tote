@@ -406,3 +406,27 @@ async def test_a_reading_too_long_to_be_a_mark_falls_back_to_the_rung(auth_clien
     assert card is not None
     assert card["next_label"] == "15M", "an over-long reading falls back to the rung key"
     assert card["garment_count"] == 1
+
+
+async def test_the_seasonal_swatches_and_its_count_describe_the_same_bins(auth_client, raw_sql):
+    """Eight qualifying bins, six swatches, and a number that owns up to the gap.
+
+    `item_count` sums what EVERY qualifying bin holds while the swatch list is capped at six, so
+    without `tote_count` the card promises a total that the glyphs on screen cannot account for
+    — somebody visits all six and comes up two bins short.
+
+    This is the sibling of `test_the_swatches_and_the_count_describe_the_same_bins`, and it is
+    here because the next-size card got the field and the seasonal one was left on its default:
+    the schema carried it, the DTO carried it, the client rendered it, and the server never set
+    it. A half-wired field that nothing contradicts.
+    """
+    for i in range(8):
+        tote = await _tote(auth_client, f"S{i:02d}")
+        await _item(auth_client, f"Lights {i}", tote["id"])
+        await _unpacked_last_year(auth_client, raw_sql, tote["id"])
+
+    card = (await _home(auth_client))["seasonal"]
+    assert card is not None
+    assert card["item_count"] == 8
+    assert len(card["totes"]) == 6, "the glance stays a glance"
+    assert card["tote_count"] == 8, "and the card says how many bins the count really spans"
