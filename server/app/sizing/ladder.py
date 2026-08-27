@@ -211,6 +211,11 @@ _ALPHA_ALIASES = {
     "2xs": "xxs",
 }
 
+# Youth alphas printed as one token, which `_parse_alpha`'s `youth_`-prefix matcher cannot see
+# because there is no separator to match on. Kept apart from `_ALPHA_ALIASES` because these
+# assert a SYSTEM (youth), not just a spelling of a letter.
+_YOUTH_RUN_TOGETHER = {"ys": "s", "ym": "m", "yl": "l", "yxs": "xs", "yxl": "xl"}
+
 _MONTH_ALIASES = {
     "newborn": "nb",
     "new_born": "nb",
@@ -307,9 +312,15 @@ def _norm_months(text: str) -> str:
     word characters — which silently dropped every tag written `18 mo`, a common one.
     """
     text = text.replace("_", "")
-    # `mth`/`mths` is the other spelling real tags use. The alternation is written so that a
-    # bare `m` still does NOT match: `12m` must survive untouched, being the table's own key.
-    return re.sub(r"m(?:o(?:nth)?|th)s?\b", "m", text)
+    # `mth`/`mths` is the other spelling real tags use, and `mois`/`meses` are what Canadian and
+    # Spanish-market tags print — both turn up in this household's bins. The alternation is
+    # written so that a bare `m` still does NOT match: `12m` must survive untouched, being the
+    # table's own key.
+    text = re.sub(r"m(?:o(?:nth|is)?|th|es(?:es)?)s?\b", "m", text)
+    # A range that carries the unit on BOTH sides: `18m-24m`, `3M-6M`. The table's keys carry it
+    # once (`18-24m`), so the leading one is dropped. Written as one rewrite rather than a set of
+    # new keys because it is a spelling of a rung, not a rung — the #55 rule.
+    return re.sub(r"\b(\d+)m-(\d+)m\b", r"\1-\2m", text)
 
 
 def parse_size(raw: str | None, department: str | None = None) -> SizeReading | None:
@@ -353,6 +364,9 @@ def _parse_one(original: str, text: str, dept: str | None) -> SizeReading | None
         _parse_mens_waist,
         _parse_marked_youth,
         _parse_marked_womens,
+        # Before `_parse_alpha`: `M(8)` must be read as the youth size the tag says it is, not
+        # as the adult M that a bare `M` correctly falls back to.
+        _parse_alpha_with_youth_number,
         _parse_alpha,
         _parse_bare_number,
     ):
@@ -519,6 +533,37 @@ def _womens_reading(original: str, number: int) -> SizeReading | None:
     return SizeReading(original, SYSTEM_WOMENS_NUMERIC, 18.0 + number / 2.0)
 
 
+def _parse_alpha_with_youth_number(
+    original: str, text: str, dept: str | None
+) -> SizeReading | None:
+    """`M(8)`, `XS (4/5)`, `L (10-12)` — an alpha size the tag itself qualifies with a number.
+
+    This is **not** an inference from context, which is why it is allowed. `M` alone is genuinely
+    ambiguous (adult M or youth M) and `_parse_alpha` correctly answers adult without a
+    department. But a tag printed `M(8)` has said which: 8 is a youth numeric size, and no adult
+    M is an 8. The disambiguator is on the garment, not guessed from the item's name.
+
+    The number must land on a **youth numeric rung** for this to fire. That guard is the whole
+    safety of it: `M (38)` is a chest measurement in inches and must stay an adult M, and
+    `S (2)` — where 2 is a real youth rung — correctly becomes youth.
+
+    A range is accepted (`4-5`, `10/12`) and only its endpoints are checked, because the rung a
+    range spans is not itself a rung; the alpha carries the ordinal. That is the same reasoning
+    as `_RANGE_TO_POINT`: the range is a spelling of a size, not a new position.
+    """
+    match = re.match(r"^([a-z]+)_(\d+)(?:[-/](\d+))?$", text)
+    if match is None:
+        return None
+    alpha, first, second = match.group(1), match.group(2), match.group(3)
+    if alpha not in _YOUTH_ALPHA and _ALPHA_ALIASES.get(alpha) not in _YOUTH_ALPHA:
+        return None
+    numbers = [n for n in (first, second) if n is not None]
+    if not all(float(n) in _YOUTH_NUMERIC.values() for n in numbers):
+        return None
+    key = _ALPHA_ALIASES.get(alpha, alpha)
+    return SizeReading(original, SYSTEM_YOUTH_ALPHA, _YOUTH_ALPHA[key])
+
+
 def _parse_alpha(original: str, text: str, dept: str | None) -> SizeReading | None:
     """XS/S/M/L/XL and friends, youth or adult.
 
@@ -539,6 +584,9 @@ def _parse_alpha(original: str, text: str, dept: str | None) -> SizeReading | No
             body = adult_marker.group(2)
 
     key = body.replace("_", "").replace("-", "")
+    if key in _YOUTH_RUN_TOGETHER:
+        youthish = True
+        key = _YOUTH_RUN_TOGETHER[key]
     key = _ALPHA_ALIASES.get(key, key)
     if key not in _ADULT_ALPHA and key not in _YOUTH_ALPHA:
         return None

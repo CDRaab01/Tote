@@ -1427,3 +1427,41 @@ Android, `:app:assembleDebug` green. Each fix-encoding test was checked against 
 first: the seasonal `tote_count` test reports `assert 0 == 8` there, both unfiled-loan cases fail,
 and both search-wiring cases fail. `unfiled_dark` re-recorded and `unfiled_loaned_dark` added and
 looked at.
+
+
+## The ladder learned four more real spellings — and refused seventeen (#63)
+
+Owner: "Can you fix sizing errors in the db?" The first thing worth recording is that **there
+were none in the sense asked**: re-running `rederive_sizes` over all 540 sized rows with the
+department passed (the write path's own signature) changed **nothing**. The stored index was
+already consistent with the ladder. The first measurement said 34 rows disagreed — that was
+`parse_size(raw)` called **without** the department, which is the documented reason a bare number
+refuses. Measure with the same arguments the writer uses or the answer is noise.
+
+What was actually wrong: **65 of 540 garment tags the ladder could not read**, up from #55's 4
+because the catalogue quadrupled. Widening covers **18** of them, all cases where the
+disambiguator is printed on the garment: `M(8)`/`XS (4/5)`/`L (10-12)`, `18m-24m`/`3M-6M`,
+`6 MESES`/`6 MOIS`, `YS`. Migration `0011` re-derives, which is the mechanism #55 built so a
+ladder change would be three lines.
+
+**The other 47 stay unread on purpose, and one group is the whole reason the rule exists.**
+Production holds `18` and `24` on rows named "Baby bodysuit". They are months. Handed a
+department the ladder reads them as **women's 27 and 30**; `12/18` on a baby shirt reads as
+**youth 12**. The obvious fix — backfill the missing `department` — would produce confidently
+wrong ordinals, and it would derive them from the item's *name*, which is usually
+model-generated: a guess built on a guess. `test_the_bare_numbers_on_baby_clothes_are_still_refused`
+pins it, and its docstring says so, because this is the rule most likely to be "improved" away.
+
+**Measured against a copy of production**, per #55's precedent rather than a fixture: unread
+65 → 47, placed 473 → 493, and `size_raw` hashes **byte-identical** before and after
+(`md5(string_agg(...))` on both databases) — the sacred column proven untouched rather than
+asserted.
+
+**Left for a human, and blocked for me:** `person_sizes` holds Cedric's typo `9 moth`, which is
+currently **beating** `9 month` for bottoms, so `fits` answers "cannot say" for every pair of
+trousers he owns. #55 added the `created_at` tiebreaker for exactly this and named
+delete-and-re-record as the repair; the row was never deleted. Attempting the DELETE through the
+API was **blocked by the tooling classifier** — the same block that stranded #36's backfill
+script for months. The repair is ten seconds in the app: People → Cedric → size history → remove
+the `9 moth` row. Christian's shoes read `10.5, 11`, which is two sizes and not a size; same
+screen, his call which to keep.

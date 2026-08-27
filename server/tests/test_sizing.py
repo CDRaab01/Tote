@@ -527,3 +527,99 @@ def test_next_sizes_up_returns_rungs_in_order_and_stops_at_the_top():
     # And the one-element case is exactly what next_size_up has always answered.
     assert next_sizes_up(nine_months, 1)[0].ordinal == next_size_up(nine_months).ordinal
     assert next_sizes_up(SizeReading("5T", "toddler", 5.0), 3) == []
+
+
+# ── Spellings a real bin turned up, and the guards that keep them honest ─────────────────────
+
+
+def test_an_alpha_the_tag_qualifies_with_a_youth_number_is_youth():
+    """`M(8)` is not an ambiguous M. The tag has said which one.
+
+    A bare `M` really is ambiguous and correctly answers adult without a department. But no adult
+    M is an 8 — the parenthetical is a statement printed ON the garment, not an inference from
+    the item's name, which is what makes reading it allowed.
+    """
+    from app.sizing import SYSTEM_YOUTH_ALPHA, parse_size
+
+    for raw in ("M(8)", "M (8)", "m (8)"):
+        r = parse_size(raw)
+        assert r is not None, raw
+        assert (r.system, r.ordinal) == (SYSTEM_YOUTH_ALPHA, 8.0), raw
+
+    # A range endpoint works the same way, and both spellings of the separator.
+    for raw in ("XS (4-5)", "XS(4-5)", "XS (4/5)", "XS(4/5)"):
+        assert parse_size(raw).ordinal == 5.0, raw
+    assert parse_size("L (10-12)").ordinal == 11.0
+
+
+def test_a_measurement_in_parentheses_is_not_a_youth_size():
+    """The guard that makes the rule above safe.
+
+    `M (38)` is a chest in inches. 38 is not a youth rung, so nothing fires and the tag stays the
+    adult M it is. Without this check the parenthetical rule would quietly relabel menswear.
+    """
+    from app.sizing import SYSTEM_ADULT_ALPHA, parse_size
+
+    r = parse_size("M (38)")
+    assert r is None or (r.system, r.ordinal) == (SYSTEM_ADULT_ALPHA, 22.0)
+    assert parse_size("L (44)") is None or parse_size("L (44)").system == SYSTEM_ADULT_ALPHA
+
+
+def test_a_bare_alpha_is_still_adult_without_a_department():
+    """Restated as a guard: the widening above must not leak into the plain case."""
+    from app.sizing import SYSTEM_ADULT_ALPHA, parse_size
+
+    for raw in ("M", "XS", "L"):
+        assert parse_size(raw).system == SYSTEM_ADULT_ALPHA, raw
+
+
+def test_a_month_range_carrying_its_unit_twice_reads_as_the_rung():
+    """`18m-24m` and `3M-6M` are how real tags print ranges the table keys once."""
+    from app.sizing import parse_size
+
+    assert parse_size("18m-24m").ordinal == parse_size("18-24m").ordinal
+    assert parse_size("3M-6M").ordinal == parse_size("3-6m").ordinal
+
+
+def test_months_in_spanish_and_french():
+    """`6 MESES` and `6 MOIS` are what Spanish- and Canadian-market tags say.
+
+    #55 already handled `12 months/mois` — but only because the *English* half of that slash
+    parsed. A tag printed only in the other language had nothing to fall back on.
+    """
+    from app.sizing import parse_size
+
+    assert parse_size("6 MESES").ordinal == parse_size("6m").ordinal
+    assert parse_size("6 MOIS").ordinal == parse_size("6m").ordinal
+    assert parse_size("12 meses").ordinal == parse_size("12m").ordinal
+
+
+def test_a_bare_m_still_survives_the_widened_month_unit():
+    """The regex above must not swallow the table's own key. `12m` is a rung, not `12` + a unit."""
+    from app.sizing import SYSTEM_INFANT_MONTHS, parse_size
+
+    r = parse_size("12m")
+    assert (r.system, r.ordinal) == (SYSTEM_INFANT_MONTHS, 1.0)
+
+
+def test_a_youth_alpha_printed_as_one_token():
+    from app.sizing import SYSTEM_YOUTH_ALPHA, parse_size
+
+    r = parse_size("YS")
+    assert (r.system, r.ordinal) == (SYSTEM_YOUTH_ALPHA, 6.5)
+
+
+def test_the_bare_numbers_on_baby_clothes_are_still_refused():
+    """The most important test in this file, and the one most likely to be "improved" away.
+
+    Production holds `18` and `24` on rows named "Baby bodysuit". They are months. Handed a
+    department, the ladder reads them as **women's 27 and 30** — a wrong ordinal that sends
+    somebody to the wrong bin twice, which is the failure the never-infer rule exists to prevent.
+    So they stay unread and `size_raw` keeps them for a human.
+
+    Asserted for the no-department case, which is how they are actually stored.
+    """
+    from app.sizing import parse_size
+
+    for raw in ("18", "24", "2", "12", "8", "10", "12/18"):
+        assert parse_size(raw) is None, f"{raw!r} must not parse without evidence"

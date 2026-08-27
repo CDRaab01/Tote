@@ -354,6 +354,28 @@ Room stays at v5.
 
 ## The ladder reads what is on the tag
 
+**A widening is allowed only when the disambiguator is ON the garment.** This is the line the
+module is built around, and 2026-08-27 is a good worked example of both sides of it.
+
+Read now, because the tag itself says which size it is: `M(8)`, `XS (4/5)`, `L (10-12)` (an alpha
+qualified by a youth number — no adult M is an 8, and the guard is that the number must land on a
+youth rung, so `M (38)` stays the menswear chest measurement it is); `18m-24m` and `3M-6M` (a
+month range carrying its unit twice); `6 MESES` and `6 MOIS` (#55 handled `12 months/mois` only
+because the English half parsed — a tag printed in one other language had nothing to fall back
+on); and `YS`.
+
+**Still refused, and this is the important half.** Production holds `18` and `24` on rows named
+"Baby bodysuit". They are months. Handed a department the ladder reads them as **women's 27 and
+30**, and `12/18` on a baby shirt reads as **youth 12**. Every one of those is a wrong ordinal,
+which sends somebody to the wrong bin twice — strictly worse than the null that sends them to
+read the tag. The tempting fix here is to backfill the missing `department` from the item's name,
+and the item's name is frequently model-generated: that would be a guess derived from a guess.
+`size_raw` keeps them and a human decides.
+
+Centimetre sizing (`128cm`, `130`, `UP TO 92cm`) is a ladder that does not exist yet, not a
+spelling — it needs a height-to-body-size mapping, which is new ground rather than a widening.
+
+
 `parse_size` resolves a system from a marker in the string — `W8`, `Women's 8` — and falls back
 to the `department` argument only for a **bare** number, where the ambiguity is real (youth 8 and
 women's 8 are different garments for different people).
