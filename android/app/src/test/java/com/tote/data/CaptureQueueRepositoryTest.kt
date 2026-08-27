@@ -261,14 +261,40 @@ class CaptureQueueRepositoryTest {
     fun `a run always attempts at least one row, however small the time budget`() = runTest {
         // Guards against a livelock: if the budget were checked in a way that could reject the
         // first row, the caller would re-enqueue for ever and the queue would never move.
+        //
+        // **Asserted as "at least one", not "exactly one", and that is a fix.** The old version
+        // used `budgetMs = 1` and demanded exactly one row had gone — which silently also
+        // asserted that the SECOND row was rejected, and whether it was depends on whether the
+        // mocked upload happened to take a whole wall-clock millisecond. It passed locally and
+        // failed on CI runners, gating three consecutive merges: Tote's Release job runs the
+        // unit tests too, so one trip blocked the prod deploy AND the APK together.
+        //
+        // `budgetMs = 0` is both deterministic and the actual worst case — a budget already
+        // spent before the loop starts. Nothing about elapsed time can rescue it, so this now
+        // tests the guard rather than the machine.
         api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
         val repository = repo()
         repeat(2) { repository.enqueue(photoFiles()) }
 
-        val result = repository.drain(budgetMs = 1L)
+        val result = repository.drain(budgetMs = 0L)
 
-        assertEquals(1, dao.rows.value.size, "exactly one row should have gone")
-        assertTrue(result.morePending)
+        assertTrue(dao.rows.value.size < 2, "the queue must move, whatever the budget")
+        assertTrue(result.morePending, "and it must say there is more to come")
+    }
+
+    @Test
+    fun `a spent budget still banks one row rather than spinning`() = runTest {
+        // The same invariant from the other side: one row on the queue and no budget at all
+        // must still empty it. A run that reports `morePending` having done nothing is the
+        // livelock, and the worker would re-enqueue it for ever.
+        api.stub { onBlocking { scanItem(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()) } doAnswer { draft() } }
+        val repository = repo()
+        repository.enqueue(photoFiles())
+
+        val result = repository.drain(budgetMs = 0L)
+
+        assertEquals(0, dao.rows.value.size, "the only row must go")
+        assertFalse(result.morePending)
     }
 
     @Test

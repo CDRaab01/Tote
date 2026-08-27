@@ -1377,6 +1377,23 @@ has no JVM test and `stagingDir` is `internal` to let the location be asserted d
 
 ### Three drain outcomes, because there are three different situations
 
+**The first row of a drain is unconditional.** The bail-out is guarded on `attempted > 0`, so a
+budget already spent when the loop starts still banks one row. Without that, such a run returns
+`morePending = true` having done nothing, the worker re-enqueues, and the queue never moves —
+the livelock #53's batching exists to prevent, avoided until now only by accident because
+`elapsed` is usually 0 on the first pass.
+
+That accident is also what made its test flaky: it used `budgetMs = 1` and asserted *exactly* one
+row had gone, which silently also asserted the second was rejected — true only if the mocked
+upload took a whole wall-clock millisecond. It passed locally and failed on CI, and because
+Tote's Release job runs the unit tests too, one trip blocked the prod deploy **and** the APK
+together; it gated three consecutive merges. The test now uses `budgetMs = 0` (deterministic, and
+the real worst case) and asserts the invariant the comment always claimed: at least one row moves.
+
+**Rule: assert the invariant, not the incidental count.** "Exactly one" was never the guarantee —
+"at least one" was — and the extra specificity was carried entirely by the clock.
+
+
 | Failure | State | Next |
 |---|---|---|
 | `IOException` | `pending` | offline/transient — WorkManager retries with backoff |
