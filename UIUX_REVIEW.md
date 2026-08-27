@@ -61,6 +61,10 @@ scale, for the capture screen's permanent "Scanning books?" card: a niche flow h
 slot of the app's second-most-used screen. One line of link-styled text would do.
 
 ### 3. Rose is over-assigned, which blunts the one channel that must stay sharp
+> **Addressed 2026-08-26 (#61)** — Home's OUT tile is now "No bin" and speaks electric
+> blue: it is a cross-reference, not an alarm. The unfiled screen's own header and
+> `NO LOCATION YET` were left rose — flagged, not fixed.
+
 
 §3: rose = *needs you*. But Home's `OUT` stat tile is rose always (`search_idle_dark`), and
 "out" is a normal, frequently deliberate state — unpacked for the season, lent on time. The
@@ -72,6 +76,11 @@ to share it with routine facts. The gate on the channel's value is that it is ra
 not a problem); placeless bins likewise. Rose keeps: overdue, mismatch, stuck, unfiled-drafts.
 
 ### 4. Attention surfaces name problems but don't open them
+> **Addressed 2026-08-26 (#61)** — on the Find tab. Overdue rows open the item sheet, the
+> Totes and No-bin tiles open their screens, and card swatches open their bin. The Items
+> tile stays inert deliberately: a count of everything is not a problem and there is no
+> all-items screen. `SearchTapTest` presses the pixels so this cannot silently rot.
+
 
 - The overdue card (`search_overdue_dark`) names the drill, Dave, and the date — and is inert.
   No tap-through to the item sheet (where Return lives) or the person. Acting on it means
@@ -114,6 +123,9 @@ invites consideration. Convention worth adopting: destructive verbs are text-sty
 visually small — the confirm dialog carries the gravity, the button shouldn't advertise.
 
 ### 8. Machine formats leak into sentences
+> **Partly addressed 2026-08-26 (#61)** — the overdue card reads "due Aug 1" via
+> `formatDue`. `ItemRow`'s "since {expectedBack}" is still ISO.
+
 
 "due 2026-08-01" on the overdue card; "since {expectedBack}" in row status. The copy voice is
 warm everywhere else — ISO dates read like a debug build. Format as "due Aug 1."

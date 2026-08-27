@@ -552,7 +552,7 @@ from inside Pydantic's `from_attributes`, on paths that never mention apparel.
 The client adds the clothing section to review, the tag's words on search and tote-detail rows,
 and Room **v3** caching `size_raw` for offline search. (This line used to claim the client did
 `GET /items?size=` matching by ordinal. **It does not** — the endpoint is real and tested, but
-`ApiService.items()` passes only `tote_id` and nothing has ever called it with a size. A
+`ApiService.items()` carries no `size` and nothing has ever called it with one. A
 size-filter bar is on the deliberately-not-doing list; the claim was just wrong.)
 Two client rules worth knowing: an **untouched** clothing section is omitted from the confirm body
 (the server reads omitted as "leave what the label read"), and only `size_raw` is cached — never
@@ -1310,3 +1310,66 @@ attic for nothing. Locations gained one photograph each, so the bins list is nav
 contrast guard were both **checked against the broken code first**: 4 of 6 and 2 of 3 fail there,
 and they are exactly the cases that encode the change.
 
+
+## The Find tab was counting a third of the catalogue (#61, Pulse #21)
+
+Owner: "It is showing inaccurate numbers. Also, I feel this screen is a little... Useless?" Both
+true, and the first was much worse than it looked.
+
+**One line caused four wrong numbers.** `GET /items` has always defaulted to `limit=200`
+(`le=500`) and `ApiService.items()` sent neither a limit nor an offset, so `fetchAll()` cached the
+**alphabetically-first 200 of 578 items**. Everything computed off that cache inherited the lie:
+the Items tile read 200, the **Out tile read 0** (none of the twenty out-items sorted into the
+first page), and the Totes tab's "Not in a bin (0)" meant `UnfiledScreen` — built for exactly
+those — **had no reachable door anywhere in the app**. Worst of all, offline search covered 35% of
+the catalogue: the one function the Room cache exists for, degraded exactly where it was designed
+to matter, silently. The catalogue went 342 → 578 in one session the day before; the cap had been
+biting since ~200.
+
+The walk pages at 500 and writes **once** — `replaceAll` clears before it inserts, so a partial
+walk would replace a complete snapshot with a truncated one, and truncated is worse than stale
+(stale is labelled). Both guards throw rather than truncate. And `GET /items` now orders by
+**`(name, id)`**: ties on `name` are ordinary here (six rows reading "Shirt", #36) and offset
+paging over an unstable sort drops one row and duplicates another.
+
+**The three tiles became Room `Flow`s**, which fixes a second staleness bug nobody had noticed:
+they were sampled once right after `refresh()`, and `refresh(force = false)` returns immediately
+when another refresh holds the lock — so the read could land on the snapshot about to be replaced.
+
+**The next-size card named a size the household owned nothing in.** `_NEXT_SIZE_TOLERANCE = 0.5`
+was documented as "half a rung either side", true only for the coarse ladders: `infant_months`
+rungs are **0.125** apart, so ±0.5 spanned up to nine of them. The card read "Cedric is nearly
+into **9-12M** · 58 garments" over 0 garments at 9-12M — 54 tagged `12M` and 4 tagged `12-18M`.
+`rung_band` derives the interval from the rungs' own neighbours; an empty rung is skipped rather
+than named; and `next_label` is now the counted garments' **own most common tag**, which makes the
+failure structurally impossible because the label and the count come from one set.
+
+**Four tests in `test_home.py` encoded the bug as correct**, one with a docstring explaining
+approvingly that `12-18M` tags "sit inside the half-rung tolerance, so they are exactly what the
+card counts". That sentence was the defect. They were rewritten from the production numbers before
+`home.py` was touched — the cheap move when they went red would have been to widen `rung_band`
+until they passed, restoring everything.
+
+**And the tiles could not be tapped, because Pulse was lying.** `StatTile.onClick` was honoured
+only in the `dense` branch; the standard layout accepted the parameter and dropped it. The node
+was there, the tap landed, nothing fired — and neither existing caller could have caught it, since
+both pass `dense = true`. Fixed in [Pulse #21](https://github.com/CDRaab01/Pulse/pull/21), which
+**must merge first**: Tote's composite build checks out the sibling. `SearchTapTest` is what found
+it, which is the third time an interaction test has caught what ViewModel tests and screenshots
+both missed.
+
+Also here: the Out tile is **"No bin"** in the electric-blue channel (it counts the same rows
+`unfiledItems()` returns — the movement invariant guarantees it — so two labels on two tabs were
+one fact looking like two; and rose is for what needs you, while most of these are a deliberate
+seasonal unpack), overdue rows and bin swatches open what they name, and ISO dates read "due Aug
+1". The **Items tile stays inert on purpose** — a count of everything is not a problem, and there
+is no all-items screen.
+
+**Verified:** 533 server tests (the one red is the pre-existing local-only webp case, #54), 355
+Android, `:app:assembleDebug` green. Every fix-encoding test was **checked against the broken code
+first**: 5 of the home tests fail on the old semantics, 3 of the paging tests fail against the
+unpaged fetch, and the Pulse test fails on the standard tile while passing on the dense one. Nine
+Find-tab baselines re-recorded and looked at — which is how the first draft's "NOT IN A BIN" was
+caught wrapping to two lines and making that tile taller than its neighbours. The blue-on-panel
+contrast was **measured off the rendered PNGs** rather than eyeballed (4.87:1 dark, 5.20:1 light);
+it looked weak in dark mode and is fine.

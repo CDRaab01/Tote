@@ -20,7 +20,9 @@ from app.sizing.ladder import (
     exact,
     lineage_of,
     next_size_up,
+    next_sizes_up,
     parse_size,
+    rung_band,
     sizes_in_system,
     within_tolerance,
 )
@@ -41,7 +43,9 @@ __all__ = [
     "exact",
     "lineage_of",
     "next_size_up",
+    "next_sizes_up",
     "parse_size",
+    "rung_band",
     "sizes_in_system",
     "within_tolerance",
 ]

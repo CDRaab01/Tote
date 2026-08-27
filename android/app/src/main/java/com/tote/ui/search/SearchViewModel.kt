@@ -51,7 +51,11 @@ data class SearchUiState(
     val sizeFilter: String? = null,
     val totes: Int = 0,
     val items: Int = 0,
-    val out: Int = 0,
+    /**
+     * Catalogued, in no bin — the same set the Totes tab calls "Not in a bin" and the Unfiled
+     * screen lists, which is why it is named for that rather than for "out".
+     */
+    val notInABin: Int = 0,
     /**
      * The browse entry point: categories that actually hold something, most-used first (the
      * server's order). Empty both when the household has filed nothing into any category AND
@@ -92,6 +96,18 @@ class SearchViewModel @Inject constructor(
     private var searchJob: Job? = null
 
     init {
+        // Collected, not sampled. The counts follow the cache for the ViewModel's whole life, so
+        // a refresh that lands later — or one that returned early because another already held
+        // the lock — still reaches the tiles.
+        viewModelScope.launch {
+            repo.cachedStats.collect { stats ->
+                _state.value = _state.value.copy(
+                    totes = stats.totes,
+                    items = stats.items,
+                    notInABin = stats.notInABin,
+                )
+            }
+        }
         refresh()
     }
 
@@ -101,8 +117,6 @@ class SearchViewModel @Inject constructor(
             // the last good snapshot, and this screen's job is to answer questions, not to
             // report on connectivity. The offline flag on a search result is where that gets said.
             runCatching { repo.refresh() }
-            val (t, i, o) = repo.stats()
-            _state.value = _state.value.copy(totes = t, items = i, out = o)
             // Silent on failure, like the refresh above: this screen answers questions, and an
             // empty overdue list reads the same as a healthy one — which is honest, because an
             // unreachable server genuinely cannot tell you that anything is late.

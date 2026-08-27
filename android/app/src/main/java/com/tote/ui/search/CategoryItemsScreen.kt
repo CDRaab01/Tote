@@ -22,7 +22,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
-import com.tote.data.remote.ApiService
+import com.tote.data.CatalogRepository
 import com.tote.data.remote.ItemDto
 import com.tote.ui.components.HazardRule
 import com.tote.ui.components.RefreshOnResume
@@ -57,7 +57,7 @@ data class CategoryItemsState(
 
 @HiltViewModel
 class CategoryItemsViewModel @Inject constructor(
-    private val api: ApiService,
+    private val repo: CatalogRepository,
     savedState: SavedStateHandle,
 ) : ViewModel() {
 
@@ -70,7 +70,10 @@ class CategoryItemsViewModel @Inject constructor(
 
     fun refresh() {
         viewModelScope.launch {
-            runCatching { api.items(categoryId = categoryId) }
+            // Paged, via the same walker the snapshot uses. Unpaged, this listed at most 200
+            // rows under a chip carrying an uncapped server count — a contradiction one tap
+            // apart, and the same truncation that hollowed out the offline cache.
+            runCatching { repo.allItems(categoryId = categoryId) }
                 .onSuccess {
                     _state.value = _state.value.copy(
                         items = it, loaded = true, unreachable = false

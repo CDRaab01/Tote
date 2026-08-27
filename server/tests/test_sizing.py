@@ -448,3 +448,82 @@ def test_36_months_lands_where_3T_does():
     # But the SYSTEM is still reported honestly — they are not the same garment vocabulary.
     assert parse_size("36m").system == SYSTEM_INFANT_MONTHS
     assert parse_size("3T").system == SYSTEM_TODDLER
+
+
+# ── Rung bands: "at this size" has to mean this size ─────────────────────────────────────────
+
+
+def test_a_rung_band_never_reaches_a_neighbouring_rung():
+    """The exhaustive guard the old fixed tolerance could never have passed.
+
+    For every system with a rung table, every rung's band must contain that rung's ordinal and
+    no other rung's. This is the property a single number cannot have across these ladders:
+    `adult_alpha` rungs sit 1.0-2.0 apart while `infant_months` gets down to **0.125**, so the
+    ±0.5 the next-size card used spanned as many as nine infant rungs while being exactly right
+    for toddler sizing.
+    """
+    from app.sizing import SIZE_SYSTEMS, rung_band, sizes_in_system
+
+    for system in SIZE_SYSTEMS:
+        rungs = sizes_in_system(system)
+        if len(rungs) < 2:
+            continue
+        ordinals = sorted({o for _, o in rungs})
+        for ordinal in ordinals:
+            lo, hi = rung_band(system, ordinal)
+            assert lo <= ordinal < hi, f"{system} {ordinal} outside its own band"
+            inside = [o for o in ordinals if lo <= o < hi]
+            assert inside == [ordinal], f"{system} band around {ordinal} also holds {inside}"
+
+
+def test_the_production_case_that_named_a_size_nobody_owned():
+    """2026-08-26, from the live catalogue.
+
+    A 9-month-old's next rung is `9-12M` (0.875). The household owned nothing at that rung, 54
+    garments tagged `12M` (1.0) and 4 tagged `12-18M` (1.25) — and the card announced "9-12M ·
+    58 garments", counting two rungs it had not named. The band around 9-12M must exclude both.
+    """
+    from app.sizing import rung_band
+
+    lo, hi = rung_band("infant_months", 0.875)
+    assert not lo <= 1.0 < hi, "12M must not fall inside the 9-12M band"
+    assert not lo <= 1.25 < hi, "12-18M must not fall inside the 9-12M band"
+
+
+def test_the_top_rung_is_bounded_above():
+    """An unbounded top would sweep in every comparable size in the ladder above it.
+
+    5T is the top of toddler sizing, and toddler and youth_numeric are comparable — so a band of
+    (4.5, ∞) around 5T would count youth 6, 10 and 16 as "the next size", which is the same
+    failure the fixed tolerance produced one ladder over.
+    """
+    from app.sizing import rung_band
+
+    lo, hi = rung_band("toddler", 5.0)
+    assert lo <= 5.0 < hi
+    assert hi < 6.0, f"the top band must not reach youth 6 (got {hi})"
+
+
+def test_a_formula_system_has_no_rung_band():
+    """No table, no neighbours, no honest width — so the caller is refused rather than guessed at."""
+    from app.sizing import rung_band
+
+    for system in ("womens_numeric", "mens_waist", "shoe_us_child", "shoe_us_adult"):
+        assert rung_band(system, 22.0) is None, system
+
+
+def test_an_ordinal_that_is_not_a_rung_has_no_band():
+    """A band is a property of a rung. 0.9 is between two of them and belongs to neither."""
+    from app.sizing import rung_band
+
+    assert rung_band("infant_months", 0.9) is None
+
+
+def test_next_sizes_up_returns_rungs_in_order_and_stops_at_the_top():
+    from app.sizing import SizeReading, next_size_up, next_sizes_up
+
+    nine_months = SizeReading("9 month", "infant_months", 0.75)
+    assert [r.ordinal for r in next_sizes_up(nine_months, 3)] == [0.875, 1.0, 1.25]
+    # And the one-element case is exactly what next_size_up has always answered.
+    assert next_sizes_up(nine_months, 1)[0].ordinal == next_size_up(nine_months).ordinal
+    assert next_sizes_up(SizeReading("5T", "toddler", 5.0), 3) == []

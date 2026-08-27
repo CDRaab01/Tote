@@ -338,6 +338,11 @@ fun ToteNavHost(
                     // names are the answer, and the person's screen is where the question ("what
                     // fits her now") already lives.
                     onOpenPerson = { nav.navigate(Routes.personDetail(it)) },
+                    // The two tiles that name something you can act on. Totes is a tab, so it
+                    // switches rather than pushes; the loose ends are a pushed screen with a
+                    // back arrow, reached the same way the Totes tab reaches them.
+                    onOpenTotes = { nav.tabTo(Routes.TOTES) },
+                    onOpenNotInABin = { nav.navigate(Routes.UNFILED) },
                 )
             }
             composable(Routes.TOTES) {

@@ -604,11 +604,70 @@ def next_size_up(reading: SizeReading) -> SizeReading | None:
     misleading one across it (youth 5, which is a different cut for a taller child). Crossing is
     the caller's decision to make explicitly, with `comparable` and the approximate label.
     """
+    found = next_sizes_up(reading, limit=1)
+    return found[0] if found else None
+
+
+def next_sizes_up(reading: SizeReading, limit: int = 1) -> list[SizeReading]:
+    """The next `limit` rungs within the SAME system, ascending; fewer near the top.
+
+    Same no-crossing rule as [next_size_up], which is now this function's one-element case. The
+    reason to look past the very next rung is that a rung the catalogue holds nothing in is not
+    worth naming: on the infant ladder `9-12M` and `12M` are 0.125 apart, and a household can
+    easily own everything in one and nothing in the other because those are two ways of printing
+    almost the same garment size. The CALLER decides how far is still "nearly" — this only
+    reports what the ladder has.
+    """
     rungs = sizes_in_system(reading.system)
+    out: list[SizeReading] = []
     for label, ordinal in rungs:
         if ordinal > reading.ordinal:
-            return SizeReading(label.upper() if label != "6x" else "6X", reading.system, ordinal)
-    return None
+            out.append(
+                SizeReading(label.upper() if label != "6x" else "6X", reading.system, ordinal)
+            )
+            if len(out) == limit:
+                break
+    return out
+
+
+def rung_band(system: str, ordinal: float) -> tuple[float, float] | None:
+    """The half-open ordinal interval `[lo, hi)` that belongs to ONE rung.
+
+    Bounded by the midpoints to the neighbouring rungs, so "at this size" means what it says.
+    Returns None for a system with no rung table (`womens_numeric`, `mens_waist`, the shoe
+    systems are formula-based), because a band with no rungs to bound it is a band with no
+    meaning — better that a caller cannot ask than that it silently gets an arbitrary width.
+
+    **This exists because a fixed tolerance cannot work across these ladders**, and the way that
+    failed is worth keeping. The next-size card used `±0.5`, documented as "half a rung either
+    side" — true only where rungs are ~1.0 apart. Measured across every table: `adult_alpha`,
+    `toddler` and `youth_alpha` do sit that far apart, `youth_numeric` gets down to 0.5, and
+    `infant_months` to **0.125** — so ±0.5 spanned as many as **nine** infant rungs. In
+    production that made a card announce "9-12M" over 54 garments tagged 12M and 4 tagged
+    12-18M: a size the household owned nothing in, and a count of two other sizes.
+
+    The top rung is bounded by MIRRORING the gap below it rather than running to infinity. An
+    unbounded top would let a band around `5T` sweep in every comparable `youth_numeric` size up
+    to 16, which is the same failure one ladder over.
+    """
+    rungs = sizes_in_system(system)
+    if not rungs:
+        return None
+    ordinals = sorted({o for _, o in rungs})
+    try:
+        i = ordinals.index(ordinal)
+    except ValueError:
+        return None
+    below = ordinals[i - 1] if i > 0 else None
+    above = ordinals[i + 1] if i + 1 < len(ordinals) else None
+    if below is None and above is None:
+        # A one-rung system: nothing to be adjacent to, so the rung is exactly itself.
+        return (ordinal, ordinal)
+    if below is None:
+        below = ordinal - (above - ordinal)
+    if above is None:
+        above = ordinal + (ordinal - below)
+    return ((ordinal + below) / 2, (ordinal + above) / 2)
 
 
 def within_tolerance(

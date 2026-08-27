@@ -141,12 +141,30 @@ interface CatalogDao {
     )
     suspend fun search(q: String): List<CachedItem>
 
-    @Query("SELECT COUNT(*) FROM cached_items") suspend fun itemCount(): Int
+    // The Find tab's three headline numbers.
+    //
+    // `Flow`, not `suspend`, and that is a fix rather than a style choice. Read once into state,
+    // they never reacted to a later cache write — and worse, they raced the refresh they depend
+    // on: `refresh(force = false)` returns immediately when another refresh holds the lock, so
+    // the read could land on the previous snapshot with nothing to correct it. Room re-emits on
+    // any write to the table, and `replaceAll` is a write, so the counts now follow the cache
+    // the way the bin list already does.
 
-    @Query("SELECT COUNT(*) FROM cached_totes WHERE archived = 0") suspend fun toteCount(): Int
+    @Query("SELECT COUNT(*) FROM cached_items") fun itemCount(): Flow<Int>
 
+    @Query("SELECT COUNT(*) FROM cached_totes WHERE archived = 0") fun toteCount(): Flow<Int>
+
+    /**
+     * Catalogued, in no bin — **the same rows [unfiledItems] returns**, counted.
+     *
+     * Not a coincidence and not worth "tidying" into one predicate: the movement invariant is
+     * `current_tote_id IS NOT NULL <=> status == 'stored'`, so "not stored and not disposed" and
+     * "no bin and not disposed" select the same set by construction. They were rendered as two
+     * different labels with two different numbers on two different tabs, which is how one fact
+     * came to look like two. If you change one of these queries, change the other.
+     */
     @Query("SELECT COUNT(*) FROM cached_items WHERE status != 'stored' AND status != 'disposed'")
-    suspend fun outCount(): Int
+    fun outCount(): Flow<Int>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertItems(items: List<CachedItem>)
 

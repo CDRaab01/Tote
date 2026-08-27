@@ -3,6 +3,12 @@
 package com.tote.ui.search
 
 import androidx.compose.foundation.layout.Arrangement
+import com.tote.data.remote.SeasonalToteDto
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -71,6 +77,10 @@ fun SearchScreen(
     hasInvite: Boolean = false,
     onOpenCategory: (String, String) -> Unit = { _, _ -> },
     onOpenPerson: (String) -> Unit = {},
+    /** The bins tab, from the Totes tile. */
+    onOpenTotes: () -> Unit = {},
+    /** The loose ends, from the Not-in-a-bin tile. */
+    onOpenNotInABin: () -> Unit = {},
     viewModel: SearchViewModel = hiltViewModel(),
     itemSheet: ItemSheetViewModel = hiltViewModel(),
 ) {
@@ -89,6 +99,9 @@ fun SearchScreen(
         onOpenCategory = onOpenCategory,
         onSizeSelect = viewModel::onSizeSelect,
         onOpenPerson = onOpenPerson,
+        onOpenTotes = onOpenTotes,
+        onOpenNotInABin = onOpenNotInABin,
+        onOpenTote = onOpenTote,
     )
 
     // A hit opens the item, not the bin. Tapping one used to be guarded on `currentToteId`, so a
@@ -117,6 +130,10 @@ fun SearchContent(
     onOpenCategory: (String, String) -> Unit = { _, _ -> },
     onSizeSelect: (String?) -> Unit = {},
     onOpenPerson: (String) -> Unit = {},
+    onOpenTotes: () -> Unit = {},
+    onOpenNotInABin: () -> Unit = {},
+    /** One bin, from a card's swatch. A search HIT still opens the item sheet, not the bin. */
+    onOpenTote: (String) -> Unit = {},
 ) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
@@ -247,12 +264,21 @@ fun SearchContent(
                         // Body text, not Caption: Pulse's caption is upper-cased and
                         // letter-spaced, which is right for a label and wrong for a sentence
                         // naming a person — it shouts, and it wraps badly at these lengths.
+                        // Each named row OPENS that item, where Return lives. The card used
+                        // to name the drill, the person and the date and then do nothing, so
+                        // acting on it meant retyping "drill" into the search box above it.
+                        // A surface that names a problem has to open it.
                         state.overdue.take(OVERDUE_SHOWN).forEach { item ->
                             Text(
                                 "${item.name} · ${item.loanedTo ?: "someone"} · " +
-                                    "due ${item.expectedBack}",
+                                    "due ${formatDue(item.expectedBack)}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 44.dp)
+                                    .clickable { onOpenItem(item) }
+                                    .padding(vertical = spacing.xs),
                             )
                         }
                         if (state.overdue.size > OVERDUE_SHOWN) {
@@ -273,17 +299,55 @@ fun SearchContent(
                 // urgency first, invitations second, furniture last. Each is simply absent when
                 // the server had nothing to say — or could not be asked (the 0-out rule).
                 state.seasonal?.let { card ->
-                    item { SeasonalCard(card) }
+                    item { SeasonalCard(card, onOpenTote = onOpenTote) }
                 }
                 state.nextSize?.let { card ->
-                    item { NextSizeCard(card, onOpenPerson = onOpenPerson) }
+                    item { NextSizeCard(card, onOpenPerson = onOpenPerson, onOpenTote = onOpenTote) }
                 }
 
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(spacing.md)) {
-                        StatTile("Totes", state.totes.toString(), channel = colors.slate.base, modifier = Modifier.weight(1f))
-                        StatTile("Items", state.items.toString(), channel = colors.stored.base, modifier = Modifier.weight(1f))
-                        StatTile("Out", state.out.toString(), channel = colors.attention.base, modifier = Modifier.weight(1f))
+                        StatTile(
+                            "Totes",
+                            state.totes.toString(),
+                            channel = colors.slate.base,
+                            onClick = onOpenTotes,
+                            modifier = Modifier.weight(1f),
+                        )
+                        // Deliberately NOT tappable. The rule is that a surface naming a
+                        // *problem* must open it; a count of everything is not a problem, and
+                        // there is no all-items screen to open. A tile that invites a tap and
+                        // goes nowhere is worse than one that never invited it — so please do
+                        // not "finish the job" by wiring this to something approximate.
+                        StatTile(
+                            "Items",
+                            state.items.toString(),
+                            channel = colors.stored.base,
+                            modifier = Modifier.weight(1f),
+                        )
+                        // "Not in a bin", not "Out", and the electric-blue channel rather than
+                        // rose. Two corrections in one tile:
+                        //
+                        // The LABEL, because this counts exactly the rows the Totes tab already
+                        // calls "Not in a bin" and the Unfiled screen already lists — the
+                        // movement invariant guarantees it — so calling it something else here
+                        // made one fact look like two, with two numbers on two tabs. It now
+                        // opens that list, which until this change nothing in the app could
+                        // reach: the count was truncated to 0, so the door was invisible.
+                        //
+                        // The CHANNEL, because rose means *needs you* and most of these are
+                        // deliberate — a bin unpacked for the season. This is a
+                        // cross-reference, which is what electric blue is for.
+                        // "No bin", not "Not in a bin": at a third of the width the longer
+                        // phrase wraps to two lines and makes this tile taller than the two
+                        // beside it. The screen it opens says the whole sentence.
+                        StatTile(
+                            "No bin",
+                            state.notInABin.toString(),
+                            channel = colors.search.base,
+                            onClick = onOpenNotInABin,
+                            modifier = Modifier.weight(1f),
+                        )
                     }
                 }
 
@@ -442,8 +506,46 @@ internal fun SearchHitRow(item: ItemDto, onClick: () -> Unit) {
  * before anyone has to remember they exist. Slate, not attention — this is tote identity
  * speaking ("your Christmas bins"), and nothing here is late or wrong.
  */
+/**
+ * A row of bin swatches, each opening its bin, with an honest overflow mark.
+ *
+ * Both cards count household-wide and show a capped handful of bins, so without the "+N" the
+ * sentence and the swatches describe different sets — "58 items" over six glyphs when the items
+ * live across nine bins sends somebody to count the wrong shelf.
+ */
 @Composable
-private fun SeasonalCard(card: SeasonalCardDto) {
+private fun ToteGlyphRow(
+    totes: List<SeasonalToteDto>,
+    toteCount: Int,
+    onOpenTote: (String) -> Unit,
+) {
+    val spacing = ToteTheme.spacing
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
+        totes.forEach { tote ->
+            Box(
+                Modifier
+                    // The glyph itself is 42dp compact; the tap target must not be.
+                    .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                    .clickable { onOpenTote(tote.id) },
+                contentAlignment = Alignment.Center,
+            ) {
+                ToteGlyph(code = tote.code, colorHex = tote.colorHex, compact = true)
+            }
+        }
+        if (toteCount > totes.size) {
+            Box(Modifier.heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    "+${toteCount - totes.size}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SeasonalCard(card: SeasonalCardDto, onOpenTote: (String) -> Unit) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
 
@@ -466,15 +568,9 @@ private fun SeasonalCard(card: SeasonalCardDto) {
         )
         Spacer(Modifier.height(spacing.sm))
         // The bins themselves, as swatches: the card's job is to be matched against a memory
-        // of coloured boxes on an attic shelf, and a list of codes cannot do that.
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(spacing.sm),
-            verticalArrangement = Arrangement.spacedBy(spacing.xs),
-        ) {
-            card.totes.forEach { tote ->
-                ToteGlyph(code = tote.code, colorHex = tote.colorHex, compact = true)
-            }
-        }
+        // of coloured boxes on an attic shelf, and a list of codes cannot do that. Each one
+        // opens its bin now — the card named the boxes and then went nowhere.
+        ToteGlyphRow(card.totes, card.toteCount, onOpenTote)
         Spacer(Modifier.height(spacing.xs))
         Caption(text = "${card.itemCount} items")
     }
@@ -486,7 +582,11 @@ private fun SeasonalCard(card: SeasonalCardDto) {
  * the door: it opens the person screen, which holds the full fits list this summarises.
  */
 @Composable
-private fun NextSizeCard(card: NextSizeCardDto, onOpenPerson: (String) -> Unit) {
+private fun NextSizeCard(
+    card: NextSizeCardDto,
+    onOpenPerson: (String) -> Unit,
+    onOpenTote: (String) -> Unit,
+) {
     val colors = ToteTheme.colors
     val spacing = ToteTheme.spacing
 
@@ -509,20 +609,21 @@ private fun NextSizeCard(card: NextSizeCardDto, onOpenPerson: (String) -> Unit) 
             )
         }
         Spacer(Modifier.height(spacing.xs))
+        // The number is ATTRIBUTED to the size it counted. It used to read "58 garments already
+        // catalogued" beside a label naming a different rung entirely, so the sentence and the
+        // mark above it described two different piles and nothing on screen said which was
+        // which. Naming the tag inside the sentence makes the count checkable against a bin.
         Text(
-            "${card.garmentCount} garments already catalogued — one trip to the bins.",
+            "${card.garmentCount} garments tagged ${card.nextLabel} are already in bins — " +
+                "one trip.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(spacing.sm))
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(spacing.sm),
-            verticalArrangement = Arrangement.spacedBy(spacing.xs),
-        ) {
-            card.totes.forEach { tote ->
-                ToteGlyph(code = tote.code, colorHex = tote.colorHex, compact = true)
-            }
-        }
+        // The swatches are the sharper action: the card body opens the person (whose fits list
+        // answers a deliberately wider question), while a glyph opens a bin that actually holds
+        // some of the garments just counted.
+        ToteGlyphRow(card.totes, card.toteCount, onOpenTote)
     }
 }
 
@@ -535,6 +636,21 @@ private fun formatDay(iso: String): String =
     runCatching {
         LocalDate.parse(iso).format(DateTimeFormatter.ofPattern("MMMM d", Locale.getDefault()))
     }.getOrDefault(iso)
+
+/**
+ * `2026-08-01` → "Aug 1", for dates that sit inside a running sentence.
+ *
+ * Shorter than [formatDay] because this one appears mid-line after a person's name, where a
+ * full month name pushes the row to wrap. The copy voice is warm everywhere else in the app and
+ * an ISO date in the middle of it reads like a debug build. Same forgiving shape: an
+ * unparseable string renders verbatim rather than taking the card down with it.
+ */
+private fun formatDue(iso: String?): String =
+    iso?.let {
+        runCatching {
+            LocalDate.parse(it).format(DateTimeFormatter.ofPattern("MMM d", Locale.getDefault()))
+        }.getOrDefault(it)
+    } ?: "no date"
 
 @Preview(name = "Search — results, dark")
 @Composable

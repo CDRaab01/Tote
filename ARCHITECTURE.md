@@ -633,8 +633,28 @@ about to write the same rows, and Room's flows push them out regardless of who a
 `force = true` is for **writes**, which must observe their own change and therefore wait for the
 lock rather than skipping. Every `.also { refresh(...) }` on a write path passes it.
 
+**The snapshot is PAGED, and it is all-or-nothing.** `GET /items` has always capped at
+`limit=200` (`le=500`) and the client sent neither a limit nor an offset, so for months the
+"snapshot" was the alphabetically-first page. Measured in production on 2026-08-26: **200 of 578
+items cached**. `pagedItems()` now walks at 500 a page until a short page ends it, accumulates
+every page in memory, and calls `replaceAll` **exactly once**. Never stream pages into Room: that
+method clears before it inserts, so a partial walk would replace a complete snapshot with a
+truncated one, and a truncated cache is worse than a stale one — stale is labelled ("From the last
+sync") while truncated silently says an item does not exist.
+
+Both guards on that walk **throw rather than truncate**, for the same reason: a ceiling of 40
+pages, and a check that a page returned at least one id not already seen (a server ignoring
+`offset` would otherwise loop for ever). Throwing leaves the previous good snapshot in place,
+because the caller never reaches the one writer.
+
+**`GET /items` orders by `(name, id)`, and that is a paging contract rather than presentation.**
+Postgres makes no promise about the order of rows with equal `name`, and this catalogue has real
+duplicate names — six rows reading "Shirt" is what prompted #36 — so offset paging over an
+unstable sort puts one row on two pages and another on none. The damage is an item that exists
+and cannot be found offline. `Item.id` is unique, so it makes the order total.
+
 Still linear in the whole catalogue, and knowingly: a write downloads every item, not the one
-that changed. That is ~31 KB at 43 items and ~585 KB at 800. Patching the cache locally instead
+that changed, and now costs ceil(n/500) requests to do it — 2 at 578, 10 at 5,000. That is ~31 KB at 43 items and ~585 KB at 800. Patching the cache locally instead
 was considered and rejected — bin counts are derived server-side precisely because a stored count
 is the first thing to drift, and reconstructing them on the client would reintroduce that. The
 real fix is a conditional fetch, which needs server support.
@@ -662,6 +682,45 @@ from 7pm local. That is the same class of failure as a test that passes in CI's 
 home. An unrecognised zone degrades to UTC rather than raising — a nudge a few hours eager beats
 a dead endpoint. `tzdata` is a runtime dependency because slim images ship no tz database.
 
+## The Find tab's three counts
+
+`CatalogRepository.cachedStats` combines three Room `Flow`s and `SearchViewModel` collects it in
+`init`. They used to be a one-shot `suspend` read taken straight after `refresh()`, which was
+wrong twice over: a later cache write never reached them, and `refresh(force = false)` returns
+immediately when another refresh already holds the lock, so the read could sample the snapshot
+that was about to be replaced. As flows the question does not arise — the in-flight refresh's
+`replaceAll` pushes new counts out by itself, exactly as the bin list has always worked.
+
+**`outCount()` and `unfiledItems()` select the same rows, by construction.** The movement
+invariant is `current_tote_id IS NOT NULL <=> status == 'stored'`, so "not stored and not
+disposed" and "in no bin and not disposed" cannot disagree. They were rendered as two different
+labels with two different numbers on two different tabs, which is how one fact came to look like
+two; the tile is now "No bin" and opens the list the Totes tab already links to. If you change one
+of those queries, change the other.
+
+## A surface that names a problem opens it
+
+`UIUX_REVIEW.md` §4's rule, adopted. Every surface on the Find tab that names something you can
+act on now navigates to where you act on it:
+
+| Surface | Opens |
+|---|---|
+| An overdue card row | that item's sheet, where Return lives |
+| `Totes` tile | the bins tab |
+| `No bin` tile | the loose-ends list |
+| A bin swatch on either card | that bin |
+| The next-size card body | the person |
+
+**The `Items` tile is deliberately exempt**, and that is the rule working rather than an
+exception to it: a count of everything is not a problem, and there is no all-items screen. A tile
+that invites a tap and opens nothing is worse than one that never invited it.
+
+The next-size card's **swatches** are the sharper action: the body opens the person, whose fits
+list answers a deliberately wider question (tolerance 1.0, any status, no floor), while a glyph
+opens a bin that actually holds some of the garments just counted. The two numbers differ on
+purpose — "what is waiting in a bin in the next size" is not "what fits her, wherever it is" —
+and widening the card to match would undo the fix below.
+
 ## The Find tab's volunteered cards
 
 `GET /home` is the only place the app speaks unprompted, and both cards are read-side
@@ -673,13 +732,40 @@ hard-coding — the user's own unpacking is the signal, and the card's title use
 shared category name only when every bin agrees (the user's own vocabulary or nothing).
 Bins unpacked last year and never refilled produce no card.
 
-**Next-size** is built on the recorded size history and the ladder's `next_size_up` — never on
-age guesses. It counts garments currently **`stored`** (unlike `fits_query`, which deliberately
-has no status filter — a suggestion card about a bin trip must not count the drill someone is
-holding), matched within 0.5 of the next rung across comparable systems, shoes gated from
-garments exactly as `fits` gates them. The label is a real ladder rung ("12M" above "9-12M" —
-not the "12-18M" range spelling, which is an alias of 15M), and the best (person, rung) by
-count wins. Nulls are absent cards; absent cards are absent panels — the 0-out rule.
+**Next-size** is built on the recorded size history and the ladder — never on age guesses. It
+counts garments currently **`stored`** (unlike `fits_query`, which deliberately has no status
+filter — a suggestion card about a bin trip must not count the drill someone is holding), shoes
+gated from garments exactly as `fits` gates them, and the best (person, rung) by count wins.
+Nulls are absent cards; absent cards are absent panels — the 0-out rule.
+
+**The band is one rung, derived from the rungs themselves — never a fixed tolerance.** It used to
+be ±0.5, documented as "half a rung either side", which is true only of the coarse ladders.
+Measured across every table: `adult_alpha`, `toddler` and `youth_alpha` do sit about 1.0 apart,
+`youth_numeric` narrows to 0.5, and `infant_months` to **0.125** — so ±0.5 spanned as many as
+**nine** infant rungs, on the one ladder a household with a baby lives in. In production the card
+announced **"9-12M · 58 garments"** for a household owning nothing at 9-12M: the 58 were 54 tagged
+`12M` and 4 tagged `12-18M`. `rung_band` returns the half-open interval bounded by the midpoints
+to a rung's neighbours (the top rung mirrors the gap below it, or a band around `5T` would sweep
+every comparable youth size), and returns `None` for the formula-based systems, which have no
+rungs to bound anything with.
+
+**A rung the catalogue holds nothing in is skipped, not named.** The card walks the next couple of
+rungs and takes the nearest one with a non-zero count, gated so a rung more than 1.0 away on the
+shared axis is never called "nearly" (two rungs of `toddler` is two years of a child). Naming an
+empty rung is what forced the band to be wide enough to find something to count in the first
+place.
+
+**And `next_label` is the counted garments' own most common tag**, not the ladder's table key — a
+reversal of what `schemas/home.py` used to promise. One rung has several spellings (`12-18M` and
+`15M` are one ordinal), so a card could name a rung correctly and still print words that appear on
+nothing in the bin. Deriving the label from the rows the count came from makes "named a size you
+own nothing in" structurally impossible. A reading longer than a dozen characters falls back to
+the rung key, because a real tag can read `12-18 months/mois` and the card renders this as a mono
+mark beside a name.
+
+**`tote_count` on both cards** is how many bins the count spans, before the swatch list is capped
+at three (next-size) or six (seasonal). Without it the sentence and the glyphs described different
+sets, and somebody could visit every swatch on screen and still be short.
 
 ## A photo of the place itself
 
@@ -858,6 +944,18 @@ first would make the common case the second thing someone sees. The tote list is
 tote detail is a pushed route, not a tab, so the bottom bar hides there.
 
 ### The offline cache, and its limits
+
+**It held a third of the catalogue for weeks, and said nothing.** The truncation above meant
+offline search — the entire reason this cache exists, because "the attic and the garage have bad
+Wi-Fi" — covered 200 of 578 items, and the Find tab's counters, being counts over the same
+truncated table, were wrong in a way that read as a fact: "Items 200", and an "Out" tile showing
+**0** because none of the twenty out-items happened to sort into the first page. The Totes tab's
+"Not in a bin (0)" came from the same place, which meant `UnfiledScreen` — built for exactly
+those loose ends — had no reachable door anywhere in the app.
+
+The lesson is not "page your endpoints". It is that **a count computed over a cache inherits every
+lie the cache tells**, silently and with total confidence, and that the app's own screens were the
+last place the problem was visible.
 
 `CatalogCache` (Room) holds a snapshot of the catalog so the app works in the attic and the
 garage, which is exactly where the Wi-Fi is worst. A catalog you cannot read standing in front of
